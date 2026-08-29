@@ -1,0 +1,45 @@
+{
+  "name": "@uniweb/api",
+  "version": "0.1.0",
+  "description": "The client for a Uniweb site's own backend — session, records, entities — imported by a foundation the way it imports @uniweb/kit.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js"
+  },
+  "files": [
+    "src"
+  ],
+  "sideEffects": false,
+  "keywords": [
+    "uniweb",
+    "api",
+    "session",
+    "records",
+    "entities",
+    "foundation"
+  ],
+  "author": "Proximify",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/uniweb/api.git"
+  },
+  "homepage": "https://github.com/uniweb/api#readme",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@uniweb/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.7"
+  }
+}
