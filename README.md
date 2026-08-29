@@ -21,20 +21,36 @@ stable yet, and nothing here talks to a backend.
 ## What it does today
 
 ```js
-import { isEnabled, useSession } from '@uniweb/api'
+import { useSession, useSignIn, useEntity, SignedIn, SignedOut } from '@uniweb/api'
 
-// true only when the site declares a backend — draw the sign-in affordance,
-// or don't, on that answer alone.
-isEnabled(website)
+const { status, viewer, canSignIn, error, signOut, refresh } = useSession()
+// status: 'loading' | 'anonymous' | 'authenticated' — `anonymous` synchronously on
+// a site with no backend. One session per page, however many foundations it loads.
 
-// { status, viewer, canSignIn } — `anonymous` synchronously on a site with no
-// backend; `loading` on one that declares a backend, until it has answered.
-// One session per page, however many foundations the page loads.
-const { status, viewer, canSignIn } = useSession()
+const { signIn, completeChallenge, challenge, status: signInStatus } = useSignIn()
+// signIn(credentials) posts the object unchanged; a second factor parks in
+// `challenge`, and completeChallenge(code) finishes it.
+
+const lesson = useEntity({ schema: '@/lesson', uuid, via: course.uuid })
+// status: 'loading' | 'ready' | 'absent' | 'error' — `absent` is one word for
+// not-found-and-not-permitted, so render the wall on it and never say "deleted".
+
+<SignedIn fallback={<Wall />}><Roster /></SignedIn>
 ```
 
-The probe that turns `loading` into an answer is the next piece; in this version a site that
-declares a backend stays `loading`, and a development build says so once.
+Outside React the same calls are plain functions from `@uniweb/api/client` — `probeSession`,
+`signIn`, `completeChallenge`, `signOut`, `signUp`, `requestPasswordReset`,
+`confirmPasswordReset`, `readEntity`. Every refusal is an `ApiError` with a `kind` to branch on:
+`auth`, `absent`, `forbidden`, `invalid`, `conflict`, `csrf`, `step-up`, `rate-limited`,
+`unavailable`, `disabled`.
+
+Not yet: lists of records, writes, commerce, notifications.
+
+## Testing
+
+`pnpm test` runs the suite against a stubbed `fetch` — this package's own logic. The live suite
+runs the same calls against a real backend and is skipped unless `UNIWEB_API_BASE` names one; add
+`UNIWEB_API_LOGIN`, the JSON body of a sign-in, for the signed-in half. No fake backend ships here.
 
 ## How a site declares its backend
 

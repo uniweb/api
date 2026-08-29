@@ -47,8 +47,8 @@ describe('the session on a site with no backend', () => {
 
     const client = getClient()
     expect(client.enabled).toBe(false)
-    expect(client.session).toEqual({ status: 'anonymous', viewer: null })
-    await expect(client.ensureSession()).resolves.toEqual({ status: 'anonymous', viewer: null })
+    expect(client.session).toEqual({ status: 'anonymous', viewer: null, error: null })
+    await expect(client.ensureSession()).resolves.toEqual({ status: 'anonymous', viewer: null, error: null })
     expect(fetchSpy).not.toHaveBeenCalled()
   })
 })
@@ -71,20 +71,24 @@ describe('the session on a site with a backend', () => {
     expect(client.enabled).toBe(false)
   })
 
-  it('shares one in-flight probe, and stays loading until one is implemented', async () => {
+  it('shares one in-flight probe, and stays loading — with the error — when the backend is unreachable', async () => {
     createUniweb(withBackend)
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const client = getClient()
+    client.fetchFn = vi.fn(async () => {
+      throw new TypeError('fetch failed')
+    })
 
     const first = client.ensureSession()
     const second = client.ensureSession()
     expect(second).toBe(first)
     await first
+    expect(client.fetchFn).toHaveBeenCalledTimes(1)
     expect(client.session.status).toBe('loading')
-    expect(warn).toHaveBeenCalledTimes(1)
+    expect(client.session.error.kind).toBe('unavailable')
 
+    // Still unsettled, so asking again asks the backend again.
     await client.ensureSession()
-    expect(warn).toHaveBeenCalledTimes(1)
+    expect(client.fetchFn).toHaveBeenCalledTimes(2)
   })
 
   it('wakes subscribers on a change, not on a no-op, and hands out frozen snapshots', () => {
@@ -99,12 +103,12 @@ describe('the session on a site with a backend', () => {
     const viewer = { id: 1 }
     client.setSession({ status: 'authenticated', viewer })
     expect(fn).toHaveBeenCalledTimes(1)
-    expect(client.session).toEqual({ status: 'authenticated', viewer })
+    expect(client.session).toEqual({ status: 'authenticated', viewer, error: null })
     expect(Object.isFrozen(client.session)).toBe(true)
 
     off()
     client.setSession({ status: 'anonymous' })
     expect(fn).toHaveBeenCalledTimes(1)
-    expect(client.session).toEqual({ status: 'anonymous', viewer: null })
+    expect(client.session).toEqual({ status: 'anonymous', viewer: null, error: null })
   })
 })

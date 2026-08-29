@@ -23,8 +23,16 @@ tree-shaken per import, and inert on a site that declares no backend.
   session is `anonymous` synchronously. That is the ordinary state of a site, not an error.
 - **`src/client.js` imports no React.** Hooks go through `src/index.js`; the functions are usable
   outside React through `@uniweb/api/client`.
+- **The base composes one way.** `${base}/api/<route>` — `src/http.js::composeUrl` is the only
+  composition. On the site's own origin the passthrough forwards the rest verbatim; every other
+  deployment is the same request against a different base.
 - **No fake backend in this repo.** Unit tests cover this package's own logic with a stubbed `fetch`
-  at the boundary; anything that asserts what the backend answers runs against a real one.
+  at the boundary (`client.fetchFn`); anything that asserts what the backend answers runs against a
+  real one — `tests/live/`, skipped unless `UNIWEB_API_BASE` names a backend (and
+  `UNIWEB_API_LOGIN`, a sign-in body, for the signed-in half).
+- **Lists of records are held.** Which door serves a query over the site's live records is the
+  backend's to rule; `readEntity` by id, `via` a container, is the settled door and the only read
+  here until then.
 - **`@uniweb/core` is `workspace:^`** in `dependencies` — the framework's cascade rule; never
   `workspace:*` in a published section.
 

@@ -18,12 +18,12 @@ describe('useSession', () => {
   it('is anonymous, with nothing to sign in to, on a site with no backend', () => {
     createUniweb({ config: {} })
     const { result } = renderHook(() => useSession())
-    expect(result.current).toEqual({ status: 'anonymous', viewer: null, canSignIn: false })
+    expect(result.current).toMatchObject({ status: 'anonymous', viewer: null, error: null, canSignIn: false })
   })
 
   it('is anonymous even with no runtime on the page', () => {
     const { result } = renderHook(() => useSession())
-    expect(result.current).toEqual({ status: 'anonymous', viewer: null, canSignIn: false })
+    expect(result.current).toMatchObject({ status: 'anonymous', viewer: null, error: null, canSignIn: false })
   })
 
   it('is loading on a site with a backend, and re-renders when the session changes', () => {
