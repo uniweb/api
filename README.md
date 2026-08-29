@@ -49,8 +49,14 @@ Not yet: lists of records, writes, commerce, notifications.
 ## Testing
 
 `pnpm test` runs the suite against a stubbed `fetch` — this package's own logic. The live suite
-runs the same calls against a real backend and is skipped unless `UNIWEB_API_BASE` names one; add
-`UNIWEB_API_LOGIN`, the JSON body of a sign-in, for the signed-in half. No fake backend ships here.
+runs the same calls against a real backend and is skipped unless `UNIWEB_API_BASE` names one. For
+the signed-in half, either pass `UNIWEB_API_LOGIN` (the JSON body of a sign-in) or set
+`UNIWEB_API_REGISTER=1` and the suite provisions a throwaway account through the backend's own
+sign-up path. No fake backend ships here.
+
+```bash
+UNIWEB_API_BASE=http://localhost:8080 UNIWEB_API_REGISTER=1 pnpm test
+```
 
 ## How a site declares its backend
 

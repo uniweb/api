@@ -17,14 +17,16 @@ function clientWith(content, handler) {
 }
 
 describe('request — the one composition', () => {
-  it('composes ${base}/api/<path>, with the query and the active locale on a GET', async () => {
+  it('composes ${base}/api/<path> with the query it is given, and nothing it is not', async () => {
     const client = clientWith(WITH_BACKEND, () => json(200, { ok: true }))
     await client.request('GET', '/things', { query: { model: '@/thing', skip: undefined, via: null } })
 
     const [url, init] = client.fetchFn.mock.calls[0]
     const u = parse(url)
     expect(u.pathname).toBe('/_uw/api/things')
-    expect(u.searchParams.get('locale')).toBe('en')
+    // No locale unless the caller adds one: the backend refuses a parameter a
+    // route does not take (400 "Unexpected parameters: locale" on /auth/me).
+    expect(u.searchParams.has('locale')).toBe(false)
     expect(u.searchParams.get('model')).toBe('@/thing')
     expect(u.searchParams.has('skip')).toBe(false)
     expect(u.searchParams.has('via')).toBe(false)

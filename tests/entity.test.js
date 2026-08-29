@@ -26,6 +26,8 @@ describe('readEntity — one entity, by id, through a container', () => {
     expect(u.pathname).toBe('/_uw/api/entities/l-1')
     expect(u.searchParams.get('model')).toBe('@/lesson')
     expect(u.searchParams.get('via')).toBe('c-1')
+    // A read that returns localized values carries the active locale.
+    expect(u.searchParams.get('locale')).toBe('en')
   })
 
   it('answers `absent` on a 404 — not found or not permitted, one word', async () => {

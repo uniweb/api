@@ -156,8 +156,10 @@ export class ApiClient {
    *
    * Sends `Accept: application/json`; a JSON body when one is given; the CSRF
    * header on every unsafe method, which cookie-authenticated mutations
-   * require; credentials only when the base is another origin; and the active
-   * locale on reads. A non-2xx answer becomes an `ApiError`, and a `401` —
+   * require; and credentials only when the base is another origin. The locale
+   * rides only on reads that return localized values — the backend refuses a
+   * parameter a route does not take (`400 "Unexpected parameters: locale"`,
+   * measured on `/auth/me`). A non-2xx answer becomes an `ApiError`, and a `401` —
    * unless the caller says otherwise — means the session is gone: the viewer's
    * cache entries leave memory and the session turns anonymous.
    *
@@ -182,7 +184,7 @@ export class ApiClient {
       throw new ApiError({ status: 0, title: 'No fetch', detail: 'fetch is unavailable in this environment', kind: 'unavailable' })
     }
 
-    const url = composeUrl(base, path, { ...(method === 'GET' ? this._localeQuery() : null), ...query })
+    const url = composeUrl(base, path, query)
     const init = {
       method,
       signal,
@@ -420,7 +422,7 @@ export class ApiClient {
     if (!uuid) throw new ApiError({ status: 0, title: 'No Entity', detail: 'readEntity needs a uuid', kind: 'invalid' })
     try {
       const entity = await this.request('GET', `/entities/${encodeURIComponent(uuid)}`, {
-        query: { model: schema, via },
+        query: { model: schema, via, ...this._localeQuery() },
         signal,
       })
       return { status: 'ready', entity }

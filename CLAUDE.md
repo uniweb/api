@@ -28,8 +28,10 @@ tree-shaken per import, and inert on a site that declares no backend.
   deployment is the same request against a different base.
 - **No fake backend in this repo.** Unit tests cover this package's own logic with a stubbed `fetch`
   at the boundary (`client.fetchFn`); anything that asserts what the backend answers runs against a
-  real one — `tests/live/`, skipped unless `UNIWEB_API_BASE` names a backend (and
-  `UNIWEB_API_LOGIN`, a sign-in body, for the signed-in half).
+  real one — `tests/live/`, skipped unless `UNIWEB_API_BASE` names a backend; the signed-in half
+  takes `UNIWEB_API_LOGIN` (a sign-in body) or `UNIWEB_API_REGISTER=1` (provision a throwaway
+  account through the backend's own sign-up path). Every `uniwebd` is the same daemon, so a local
+  one is a valid target: `UNIWEB_API_BASE=http://localhost:8080 UNIWEB_API_REGISTER=1 pnpm test`.
 - **Lists of records are held.** Which door serves a query over the site's live records is the
   backend's to rule; `readEntity` by id, `via` a container, is the settled door and the only read
   here until then.
