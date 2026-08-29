@@ -40,6 +40,10 @@
     "react": "^19.0.0"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
+    "jsdom": "^25.0.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "vitest": "^4.1.7"
   }
 }

@@ -21,12 +21,20 @@ stable yet, and nothing here talks to a backend.
 ## What it does today
 
 ```js
-import { isEnabled } from '@uniweb/api'
+import { isEnabled, useSession } from '@uniweb/api'
 
 // true only when the site declares a backend — draw the sign-in affordance,
 // or don't, on that answer alone.
 isEnabled(website)
+
+// { status, viewer, canSignIn } — `anonymous` synchronously on a site with no
+// backend; `loading` on one that declares a backend, until it has answered.
+// One session per page, however many foundations the page loads.
+const { status, viewer, canSignIn } = useSession()
 ```
+
+The probe that turns `loading` into an answer is the next piece; in this version a site that
+declares a backend stays `loading`, and a development build says so once.
 
 ## How a site declares its backend
 

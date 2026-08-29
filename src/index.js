@@ -6,8 +6,9 @@
  * way `@uniweb/kit` is, bundled into the foundation, inert on a site that
  * declares no backend.
  *
- * This entry will carry the React hooks. `@uniweb/api/client` carries the
- * plain functions and imports no React. Skeleton: the client's exports only.
+ * This entry carries the React hooks. `@uniweb/api/client` carries the plain
+ * functions and imports no React.
  */
 
 export { SERVICE_NAME, resolveBase, isEnabled } from './client.js'
+export { useSession } from './hooks/useSession.js'
