@@ -4,8 +4,9 @@ The client for a Uniweb site's own backend — session, records, entities, write
 vocabulary, never in routes. A foundation imports it the way it imports `@uniweb/kit`; it is bundled
 into the foundation and is inert on a site that declares no backend.
 
-**Status: skeleton.** The package exists so its shape can be settled in the open. Nothing here is
-stable yet, and nothing here talks to a backend.
+**Status: early.** The session, sign-in, sign-out, sign-up, password reset and single-entity reads
+are built and pass against a real backend; lists of records, writes, commerce and notifications are
+not here yet. The surface may still move before `1.0`.
 
 ## What it will be
 
