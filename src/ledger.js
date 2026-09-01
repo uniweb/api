@@ -2,11 +2,23 @@
  * The concurrency ledger — the last-seen `item_updated_at` per item, and the
  * stamping of `if_unmodified_since` onto the ops that need one.
  *
- * The backend guards writes at the item grain: `update`, `delete` and `move`
- * each carry the target item's last-seen `updated_at`; `create` carries none.
- * A mismatch is a `409` whose `current_updated_at` extension names the item's
- * current token, and every write response carries `item_updated_at` — the
- * next precondition to chain forward. Three sources, one token.
+ * The backend guards writes at the item grain: `update` and `delete` each carry
+ * the target item's last-seen `updated_at`; `create` carries none. A mismatch is
+ * a `409` whose `current_updated_at` extension names the item's current token,
+ * and every write response carries `item_updated_at` — the next precondition to
+ * chain forward. Three sources, one token.
+ *
+ * ⛔ `move` was listed here and is NOT this package's business. It repositions an
+ * item within its parent against a server-managed `position` ("first" | "last" |
+ * { after }), and it exists to serve an EDITOR reordering authored content by
+ * hand. This package manages a site's members and their records, where order is
+ * a property of the query — sort by a field — not a stored fact someone drags.
+ * The lane is `/api/entities*` and a strict subset of what the daemon serves.
+ * [Diego, 2026-09-01.]
+ *
+ * ⚠️ `stamp()` is deliberately unchanged by that: it guards every non-`create`
+ * op, so it stays correct if a token-carrying kind is ever added. The claim that
+ * moved was the docstring's, not the code's.
  *
  * That is the single most reinventable thing on the wire, so it lives here
  * once, as a pure structure with no route knowledge. The writer that composes
