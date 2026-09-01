@@ -1,7 +1,7 @@
 {
   "name": "@uniweb/api",
-  "version": "0.1.0",
-  "description": "The client for a Uniweb site's own backend \u2014 session, records, entities \u2014 imported by a foundation the way it imports @uniweb/kit.",
+  "version": "0.2.0",
+  "description": "The client for a Uniweb site's own backend — session, records, entities — imported by a foundation the way it imports @uniweb/kit.",
   "type": "module",
   "exports": {
     ".": "./src/index.js",
