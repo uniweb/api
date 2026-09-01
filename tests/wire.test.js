@@ -15,6 +15,7 @@ describe('wire — the assumptions are a reviewable set', () => {
     'op-field-names',
     'move-exists',
     'move-position',
+    'viewer-unit-signal',
     'via-and-depth-compose',
   ]
 

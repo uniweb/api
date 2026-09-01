@@ -81,17 +81,41 @@ export function useEntityWriter(target) {
   const api = useMemo(
     () => ({
       /**
-       * Append an item. Tokenless by design — there is no existing item to guard.
-       * `position` and `parent` are the server's ordering vocabulary, passed through
-       * rather than turned into an order number here.
+       * Append an item to a section. Tokenless by design — there is no existing item
+       * to guard. `position` and `parent` are the server's ordering vocabulary,
+       * passed through rather than turned into an order number here.
+       *
+       * ⛔ `section` is REQUIRED and refused when missing, because getting it wrong
+       * fails SILENTLY: an entity has several sections, the item lands in whichever
+       * one the server defaults to, and every rule the author declared on the
+       * intended section — `append_only` above all — is quietly not in force. The
+       * write succeeds, the data looks present, and the guarantee is gone.
+       *
+       * @param {object} data - the item's content
+       * @param {object} opts
+       * @param {string} opts.section - which section of the entity this belongs to
+       * @param {string|number} [opts.parent] - a parent item, for nested sections
+       * @param {'first'|'last'|{after: string}} [opts.position]
        */
-      create: (data, { parent, position } = {}) =>
-        send({
+      create: (data, { section, parent, position } = {}) => {
+        if (!section) {
+          return Promise.reject(
+            new ApiError({
+              status: 0,
+              title: 'No Section',
+              detail: 'create needs a section — an item with no section lands outside the rules declared for it',
+              kind: 'invalid',
+            }),
+          )
+        }
+        return send({
           kind: OP.create,
+          [FIELD.section]: section,
           data,
           ...(parent != null ? { [FIELD.parent]: parent } : {}),
           ...(position != null ? { position } : {}),
-        }),
+        })
+      },
       /** Replace an item's data. ⚠️ Whole-data replace — round-trip what you do not edit. */
       update: (itemId, data) => send({ kind: OP.update, [FIELD.item]: itemId, data }),
       /** Delete one item. */

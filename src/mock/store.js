@@ -104,11 +104,22 @@ export class MockStore {
     return account
   }
 
-  /** The viewer, in the shape `/auth/me` answers. */
+  /**
+   * The viewer, in the shape `/auth/me` answers.
+   *
+   * ⚠️ `acting_unit_id` is the unit signal, and it is the field the CLIENT already
+   * models (`viewer.actingUnitId`) — so a UI asks the package rather than inventing
+   * its own idea of membership. A mock that omitted it would push every consumer to
+   * invent one, which is how two apps end up disagreeing about who an organiser is.
+   */
   viewer() {
     if (!this.session) return null
-    const { uuid, username, handle, roles } = this.session.account
-    return { account: { uuid, username, handle }, roles }
+    const { uuid, username, handle, roles, units } = this.session.account
+    return {
+      account: { uuid, username, handle },
+      roles,
+      acting_unit_id: units?.length ? units[0] : null,
+    }
   }
 
   get account() {
@@ -214,7 +225,12 @@ export class MockStore {
     }
 
     if (kind === OP.create) {
-      const made = this.makeItem({ section: op.section, data: op.data, parent: op[FIELD.parent] ?? null })
+      // ⛔ No default. A create with no section is a client bug, and defaulting it
+      // would place the item outside the rules its author declared — silently.
+      if (!op[FIELD.section]) {
+        return { ok: false, problem: { status: 400, title: 'Validation', detail: 'create needs a section' } }
+      }
+      const made = this.makeItem({ section: op[FIELD.section], data: op.data, parent: op[FIELD.parent] ?? null })
       this.place(entity, made, op.position)
       return { ok: true, result: { [FIELD.item]: made[FIELD.item], [FIELD.token]: made[FIELD.token] } }
     }

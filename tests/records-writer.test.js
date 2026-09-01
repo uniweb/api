@@ -164,3 +164,31 @@ describe('useEntityWriter', () => {
     })
   })
 })
+
+describe('useEntityWriter — create needs a section', () => {
+  it('⛔ refuses a create with no section, because getting it wrong fails silently', async () => {
+    // An entity has several sections. An item that lands in the wrong one is
+    // STORED — the write succeeds, the data looks present — and every rule the
+    // author declared on the intended section is quietly not in force. Measured in
+    // a real browser: check-ins written without a section landed outside the
+    // append_only section, so the tamper-evidence simply did not apply.
+    withBackend(() => json(200, {}))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    await act(async () => {
+      await expect(result.current.create({ session: 's-1' })).rejects.toThrow(/needs a section/)
+    })
+  })
+
+  it('sends the section it was given', async () => {
+    let sent
+    withBackend((url, init) => {
+      sent = JSON.parse(init.body)
+      return json(200, {})
+    })
+    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    await act(async () => {
+      await result.current.create({ session: 's-1' }, { section: 'checkins', position: 'last' })
+    })
+    expect(sent).toMatchObject({ kind: 'create', section: 'checkins', position: 'last' })
+  })
+})

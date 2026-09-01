@@ -154,6 +154,16 @@ export const FIELD = {
   item: 'item_id',
   /** Placement on a `create`. */
   parent: 'parent_item_id',
+  /**
+   * Which section of the entity an item belongs to.
+   *
+   * ⛔ REQUIRED on a create, and its absence is silent. An entity has several
+   * sections and they are not interchangeable: a rule declared on one — an
+   * `append_only`, a field set — simply does not apply to an item that landed in
+   * another. A create with no section is accepted, stored somewhere, and every
+   * guarantee the author declared is quietly not in force.
+   */
+  section: 'section',
   /** The precondition an op carries. */
   precondition: 'if_unmodified_since',
   /** The item's next token, on a write response. */
@@ -217,6 +227,12 @@ export const ASSUMPTIONS = [
     we: 'a move is positioned server-side — "first" | "last" | { after } — and the client never computes an order number',
     from: 'the site-editor lane',
     breaks: 'reordering writes the wrong sequence, or needs a client-side order the store does not want',
+  },
+  {
+    id: 'viewer-unit-signal',
+    we: "read a viewer's unit membership from `acting_unit_id` on /auth/me, surfaced as `viewer.actingUnitId`",
+    from: "the field this package already normalizes; whether it is THE membership signal, or one of several, is unconfirmed",
+    breaks: 'an app cannot tell an operator from a member, so it either shows authoring controls to everyone or to nobody — and the refusal only arrives at the write',
   },
   {
     id: 'via-and-depth-compose',
