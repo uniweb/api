@@ -31,18 +31,26 @@
  * the request is the next slice; it will `stamp()` before sending, `absorb()`
  * what comes back, and `rebase()` on a conflict.
  *
- * Two field names are read from responses — the item's id and its
- * `item_updated_at` — and the first of those is a reading of the design, not
- * yet a pinned wire fact. It is one constant.
+ * ⛔ **Every field name here now comes from `./wire.js`, and that fixed a real
+ * defect rather than tidying one.** This module read an op's target as `op.item`
+ * and probed responses through a guess list, `['item', 'item_id', 'id']`. The wire
+ * field is `item_id`. So a writer composing a correct op would have handed
+ * `stamp()` something whose target it could not see — and `stamp()` returns an
+ * unguarded op when it cannot find one, **by design, because an item it has never
+ * seen is legitimately last-writer-wins.** The two behaviours are identical from
+ * here and opposite in effect: one is "no token known", the other is "the
+ * precondition was silently dropped from every write."
+ *
+ * ⇒ That is the argument for one home per name, in miniature. A guess list cannot
+ * fail loudly, because guessing is what it is for.
  */
 
-const ID_FIELDS = ['item', 'item_id', 'id']
+import { FIELD, OP } from './wire.js'
 
+/** An op's or a response's item id, by the one name the wire uses. */
 function itemIdOf(record) {
-  for (const field of ID_FIELDS) {
-    if (record?.[field] != null) return String(record[field])
-  }
-  return null
+  const id = record?.[FIELD.item]
+  return id == null ? null : String(id)
 }
 
 export class Ledger {
@@ -74,9 +82,11 @@ export class Ledger {
    * @returns {object} the op, with `if_unmodified_since` when known
    */
   stamp(op) {
-    if (!op || op.kind === 'create' || op.item == null) return op
-    const at = this.get(op.item)
-    return at == null ? op : { ...op, if_unmodified_since: at }
+    if (!op || op.kind === OP.create) return op
+    const id = itemIdOf(op)
+    if (id == null) return op
+    const at = this.get(id)
+    return at == null ? op : { ...op, [FIELD.precondition]: at }
   }
 
   /**
@@ -93,9 +103,9 @@ export class Ledger {
       return
     }
     const id = itemIdOf(result)
-    if (id == null || !('item_updated_at' in result)) return
-    if (result.item_updated_at === null) this.forget(id)
-    else this.note(id, result.item_updated_at)
+    if (id == null || !(FIELD.token in result)) return
+    if (result[FIELD.token] === null) this.forget(id)
+    else this.note(id, result[FIELD.token])
   }
 
   /**
@@ -107,7 +117,7 @@ export class Ledger {
    * @returns {boolean} whether a token was recorded
    */
   rebase(itemId, error) {
-    const current = error?.extensions?.current_updated_at
+    const current = error?.extensions?.[FIELD.conflictToken]
     if (current == null) return false
     this.note(itemId, current)
     return true

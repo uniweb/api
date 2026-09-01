@@ -15,6 +15,7 @@ import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core/services'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
+import { AUTH, ROUTES, PARAM } from './wire.js'
 
 /** The site service this package reads its base from — the only name it owns. */
 export const SERVICE_NAME = 'api'
@@ -253,7 +254,7 @@ export class ApiClient {
 
   async _probe() {
     try {
-      const me = await this.request('GET', '/auth/me', { onUnauthorized: 'ignore' })
+      const me = await this.request('GET', AUTH.me, { onUnauthorized: 'ignore' })
       return this._authenticated(me)
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return this._sessionLost()
@@ -289,7 +290,7 @@ export class ApiClient {
    *   with `completeChallenge(code)`. A refused credential throws (`kind: 'auth'`).
    */
   async signIn(credentials) {
-    const body = await this.request('POST', '/auth/login', { body: credentials, onUnauthorized: 'ignore' })
+    const body = await this.request('POST', AUTH.login, { body: credentials, onUnauthorized: 'ignore' })
     if (body?.status === 'totp_required') {
       this._challenge = body.challenge_token ?? null
       return { ok: false, challenge: { kind: 'totp' } }
@@ -309,7 +310,7 @@ export class ApiClient {
     if (!this._challenge) {
       throw new ApiError({ status: 0, title: 'No Challenge', detail: 'no sign-in challenge is pending', kind: 'invalid' })
     }
-    await this.request('POST', '/auth/login/challenge', {
+    await this.request('POST', AUTH.challenge, {
       body: { challenge_token: this._challenge, code },
       onUnauthorized: 'ignore',
     })
@@ -325,7 +326,7 @@ export class ApiClient {
    */
   async signOut() {
     try {
-      await this.request('POST', '/auth/logout', { onUnauthorized: 'ignore' })
+      await this.request('POST', AUTH.logout, { onUnauthorized: 'ignore' })
     } finally {
       this._sessionLost()
     }
@@ -333,17 +334,17 @@ export class ApiClient {
 
   /** Sign up. `202` semantics: the account is inert until verified. */
   signUp(fields) {
-    return this.request('POST', '/auth/register', { body: fields, onUnauthorized: 'ignore' })
+    return this.request('POST', AUTH.register, { body: fields, onUnauthorized: 'ignore' })
   }
 
   /** Ask for a password reset. The backend answers `202` whether or not the account exists. */
   requestPasswordReset(fields) {
-    return this.request('POST', '/auth/reset/request', { body: fields, onUnauthorized: 'ignore' })
+    return this.request('POST', AUTH.resetRequest, { body: fields, onUnauthorized: 'ignore' })
   }
 
   /** Confirm a password reset with the token the viewer received. */
   confirmPasswordReset(fields) {
-    return this.request('POST', '/auth/reset/confirm', { body: fields, onUnauthorized: 'ignore' })
+    return this.request('POST', AUTH.resetConfirm, { body: fields, onUnauthorized: 'ignore' })
   }
 
   // ── The cache ─────────────────────────────────────────────────────────────
@@ -421,8 +422,8 @@ export class ApiClient {
   async readEntity({ schema, uuid, via, signal } = {}) {
     if (!uuid) throw new ApiError({ status: 0, title: 'No Entity', detail: 'readEntity needs a uuid', kind: 'invalid' })
     try {
-      const entity = await this.request('GET', `/entities/${encodeURIComponent(uuid)}`, {
-        query: { model: schema, via, ...this._localeQuery() },
+      const entity = await this.request('GET', ROUTES.read(uuid), {
+        query: { [PARAM.model]: schema, [PARAM.via]: via, ...this._localeQuery() },
         signal,
       })
       return { status: 'ready', entity }

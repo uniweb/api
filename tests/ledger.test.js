@@ -7,9 +7,9 @@ describe('Ledger — the concurrency token per item', () => {
     const ledger = new Ledger()
     ledger.note('i-1', '2026-08-29T10:00:00Z')
 
-    expect(ledger.stamp({ kind: 'update', item: 'i-1', fields: { a: 1 } })).toEqual({
+    expect(ledger.stamp({ kind: 'update', item_id: 'i-1', fields: { a: 1 } })).toEqual({
       kind: 'update',
-      item: 'i-1',
+      item_id: 'i-1',
       fields: { a: 1 },
       if_unmodified_since: '2026-08-29T10:00:00Z',
     })
@@ -18,19 +18,19 @@ describe('Ledger — the concurrency token per item', () => {
 
   it('sends an op on an item it never saw unguarded — last-writer-wins, as the wire does', () => {
     const ledger = new Ledger()
-    expect(ledger.stamp({ kind: 'delete', item: 'i-9' })).toEqual({ kind: 'delete', item: 'i-9' })
+    expect(ledger.stamp({ kind: 'delete', item_id: 'i-9' })).toEqual({ kind: 'delete', item_id: 'i-9' })
   })
 
   it('absorbs a write response, one result or a batch, and forgets a deleted item', () => {
     const ledger = new Ledger()
-    ledger.absorb({ item: 'i-1', item_updated_at: 'T1' })
+    ledger.absorb({ item_id: 'i-1', item_updated_at: 'T1' })
     expect(ledger.get('i-1')).toBe('T1')
 
-    ledger.absorb({ results: [{ item: 'i-1', item_updated_at: 'T2' }, { item: 'i-2', item_updated_at: 'T3' }] })
+    ledger.absorb({ results: [{ item_id: 'i-1', item_updated_at: 'T2' }, { item_id: 'i-2', item_updated_at: 'T3' }] })
     expect(ledger.get('i-1')).toBe('T2')
     expect(ledger.get('i-2')).toBe('T3')
 
-    ledger.absorb({ item: 'i-2', item_updated_at: null })
+    ledger.absorb({ item_id: 'i-2', item_updated_at: null })
     expect(ledger.get('i-2')).toBeNull()
   })
 
