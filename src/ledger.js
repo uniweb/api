@@ -2,23 +2,29 @@
  * The concurrency ledger — the last-seen `item_updated_at` per item, and the
  * stamping of `if_unmodified_since` onto the ops that need one.
  *
- * The backend guards writes at the item grain: `update` and `delete` each carry
- * the target item's last-seen `updated_at`; `create` carries none. A mismatch is
- * a `409` whose `current_updated_at` extension names the item's current token,
- * and every write response carries `item_updated_at` — the next precondition to
- * chain forward. Three sources, one token.
+ * The backend guards writes at the item grain: `update`, `delete` and `move` each
+ * carry the target item's last-seen `updated_at`; `create` carries none. A
+ * mismatch is a `409` whose `current_updated_at` extension names the item's
+ * current token, and every write response carries `item_updated_at` — the next
+ * precondition to chain forward. Three sources, one token.
  *
- * ⛔ `move` was listed here and is NOT this package's business. It repositions an
- * item within its parent against a server-managed `position` ("first" | "last" |
- * { after }), and it exists to serve an EDITOR reordering authored content by
- * hand. This package manages a site's members and their records, where order is
- * a property of the query — sort by a field — not a stored fact someone drags.
- * The lane is `/api/entities*` and a strict subset of what the daemon serves.
- * [Diego, 2026-09-01.]
+ * ⭐ `move` IS IN SCOPE, and the reasoning that briefly removed it is kept here
+ * because it is the mistake this package invites. It was dropped on 2026-09-01 as
+ * "an editor concern — an app's order is a property of the query, sort by a
+ * field". **That is true of a MEMBER LIST and false of the apps this package
+ * exists for.** An LMS instructor authors a course whose lessons are a curriculum
+ * SEQUENCE: the order is authored, stored, and repositioned by hand.
  *
- * ⚠️ `stamp()` is deliberately unchanged by that: it guards every non-`create`
- * op, so it stays correct if a token-carrying kind is ever added. The claim that
- * moved was the docstring's, not the code's.
+ * ⇒ The trap is generalising from the CONSUMING surface. These apps have two, and
+ * both are ours: members read and append (progress, submissions), while OPERATORS
+ * author the app's own content — full CRUD over developer-defined schemas,
+ * hierarchy included. [Diego, 2026-09-01.]
+ *
+ * ⚠️ UNVERIFIED ON OUR LANE: `move` and its server-managed `position` were read
+ * off the site-editor's route, which is not ours. Whether
+ * `POST /api/entities/{uuid}/items` offers `move`, and in what shape, is a
+ * measurement nobody has taken. `stamp()` needs no branch either way — it guards
+ * every non-`create` op — so this docstring is the only thing a finding moves.
  *
  * That is the single most reinventable thing on the wire, so it lives here
  * once, as a pure structure with no route knowledge. The writer that composes
