@@ -89,7 +89,7 @@ export class ApiClient {
     this._listeners = new Set()
     this._pending = null
     this._challenge = null
-    this._keys = new Set()
+    this._keys = new Map()
     this._inflight = new Map()
     // One ledger per client, which is one per page — the right grain, since it is
     // keyed by item and an item is the same item whoever is looking at it.
@@ -366,19 +366,60 @@ export class ApiClient {
     return deriveCacheKey({ ...spec, endpoint: `api:${this.viewerId}:${spec.endpoint ?? ''}` })
   }
 
-  /** Note a key this client wrote, so sign-out can remove it. */
-  remember(key) {
-    this._keys.add(key)
+  /**
+   * Note a key this client wrote, so sign-out can remove it — and remember the
+   * SPEC beside it, so a write can drop what it invalidated.
+   *
+   * ⚠️ The spec is kept because a key is a derived hash: nothing can be recovered
+   * from the key itself, so a cache that only holds keys can be cleared entirely
+   * or not at all.
+   *
+   * @param {string} key
+   * @param {object} [spec] - the spec the key was derived from
+   */
+  remember(key, spec) {
+    this._keys.set(key, spec || null)
   }
 
   /** Remove every entry written for the current viewer. */
   forgetViewer() {
     const store = this.website?.dataStore
-    for (const key of this._keys) {
+    for (const key of this._keys.keys()) {
       store?.delete(key)
       this._inflight.delete(key)
     }
     this._keys.clear()
+  }
+
+  /**
+   * Drop the cached reads a predicate matches — how a write makes its own effect
+   * visible without every caller hand-rolling it.
+   *
+   * ```js
+   * client.invalidate((spec) => spec.schema === '@/session')
+   * ```
+   *
+   * ⛔ **A key with no remembered spec is never matched, and never swept.** It is
+   * not knowable whether it belongs, and dropping an entry a caller still relies on
+   * to be safe about one it might not is the wrong trade: a stale read is visible
+   * and recoverable, an over-eager sweep is a refetch storm nobody attributes to
+   * this line.
+   *
+   * @param {(spec: object) => boolean} match
+   * @returns {number} how many entries were dropped
+   */
+  invalidate(match) {
+    if (typeof match !== 'function') return 0
+    const store = this.website?.dataStore
+    let dropped = 0
+    for (const [key, spec] of this._keys) {
+      if (!spec || !match(spec)) continue
+      store?.delete(key)
+      this._inflight.delete(key)
+      this._keys.delete(key)
+      dropped += 1
+    }
+    return dropped
   }
 
   /**
@@ -387,16 +428,17 @@ export class ApiClient {
    *
    * @param {string} key
    * @param {() => Promise<*>} run
+   * @param {object} [spec] - what the key was derived from, so `invalidate` can match it
    * @returns {Promise<*>}
    */
-  load(key, run) {
+  load(key, run, spec) {
     const store = this.website?.dataStore
     if (store?.has(key)) return Promise.resolve(store.get(key).data)
     if (this._inflight.has(key)) return this._inflight.get(key)
     const pending = run()
       .then((data) => {
         store?.set(key, { data })
-        this.remember(key)
+        this.remember(key, spec)
         return data
       })
       .finally(() => {

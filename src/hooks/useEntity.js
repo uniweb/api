@@ -54,7 +54,7 @@ export function useEntity(ref) {
     if (!key || entry) return undefined
     let live = true
     setError(null)
-    client.load(key, () => client.readEntity(ref)).catch((err) => {
+    client.load(key, () => client.readEntity(ref), { schema: ref.schema, uuid: ref.uuid }).catch((err) => {
       if (live) setError(err)
     })
     return () => {
