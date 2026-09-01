@@ -22,6 +22,10 @@ export {
   requestPasswordReset,
   confirmPasswordReset,
   readEntity,
+  listEntities,
+  writeItems,
+  createEntity,
+  deleteEntity,
   ApiError,
   Ledger,
 } from './client.js'

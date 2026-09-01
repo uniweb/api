@@ -15,7 +15,8 @@ import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core/services'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
-import { AUTH, ROUTES, PARAM } from './wire.js'
+import { AUTH, ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
+import { Ledger } from './ledger.js'
 
 /** The site service this package reads its base from — the only name it owns. */
 export const SERVICE_NAME = 'api'
@@ -90,6 +91,9 @@ export class ApiClient {
     this._challenge = null
     this._keys = new Set()
     this._inflight = new Map()
+    // One ledger per client, which is one per page — the right grain, since it is
+    // keyed by item and an item is the same item whoever is looking at it.
+    this.ledger = new Ledger()
     this._session = this.enabled ? LOADING : ANONYMOUS
     // Stable identity: `useSyncExternalStore` re-subscribes when this changes.
     this.subscribe = this.subscribe.bind(this)
@@ -432,6 +436,164 @@ export class ApiClient {
       throw err
     }
   }
+
+  /**
+   * List the entities of a Model the viewer may see.
+   *
+   * ⭐ **Scoped by the session, not by a filter this package adds.** The answer is
+   * what the viewer may see — an anonymous caller gets what is public, and that is
+   * the gate working rather than an empty result to explain away. ⚠️ A lapsed
+   * session is a `401` and not an empty list (backend, 2026-08-29): treating
+   * `records: []` as "perhaps you are signed out" would re-implement a bug they
+   * already fixed, and tell someone their content was gone when it was not.
+   *
+   * ## Paging is absorbed as far as it can honestly be
+   *
+   * `matched` is the count *before* paging, so `hasMore` is derivable without a
+   * second request. `all: true` asks the server for its own all-mode rather than
+   * looping pages from here — a loop this package ran would be slower, racier, and
+   * a reimplementation of something the route already does.
+   *
+   * ⛔ **No cursor, and no auto-following.** A caller that wants every page of a
+   * large Model says `all: true` and gets one request; a caller that wants pages
+   * gets pages. Inventing a third thing in between would hide which one is
+   * happening, and the cost of "it fetched everything" should be visible in the
+   * call.
+   *
+   * @param {object} args
+   * @param {string} args.schema - the Model, e.g. `@/session`
+   * @param {string} [args.scope] - the visibility scope the route accepts
+   * @param {number} [args.limit]
+   * @param {number} [args.offset]
+   * @param {boolean} [args.all] - one request for the whole slice; ignores limit/offset
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<{ records: object[], matched: number, hasMore: boolean }>}
+   */
+  async listEntities({ schema, scope, limit, offset, all = false, signal } = {}) {
+    if (!schema) {
+      throw new ApiError({ status: 0, title: 'No Model', detail: 'listEntities needs a schema', kind: 'invalid' })
+    }
+    const query = { [PARAM.model]: schema, [PARAM.scope]: scope, ...this._localeQuery() }
+    if (all) query[PARAM.paginate] = false
+    else {
+      if (limit != null) query[PARAM.limit] = limit
+      if (offset != null) query[PARAM.offset] = offset
+    }
+
+    const body = await this.request('GET', ROUTES.list(), { query, signal })
+    const records = Array.isArray(body?.[LIST.records]) ? body[LIST.records] : []
+    // `matched` absent is not zero — it is unknown, and a caller reading zero would
+    // conclude "empty" from a body that just did not say. Fall back to what we hold.
+    const matched = typeof body?.[LIST.matched] === 'number' ? body[LIST.matched] : records.length
+    const seen = (offset || 0) + records.length
+    return { records, matched, hasMore: !all && seen < matched }
+  }
+
+  /**
+   * Write items of one entity — create, update, delete, move — as ONE transaction.
+   *
+   * The ops go out stamped with each item's last-seen token and the response is
+   * absorbed, so a caller never handles a precondition itself. That is the single
+   * most reinventable thing on this wire, and the reason it is absorbed rather
+   * than documented.
+   *
+   * ## ⛔ A conflict is REBASED, never retried
+   *
+   * A `409` means someone else changed the item since this viewer last read it.
+   * The ledger takes the current token off the error, so the caller's *next*
+   * attempt is guarded by the truth rather than by what we believed — and then the
+   * error is thrown.
+   *
+   * ⚖️ **Retrying automatically would be the wrong kind of helpful.** The write
+   * would then succeed, and it would succeed by overwriting a change nobody looked
+   * at. Concurrency is the one place where finishing the job for the caller
+   * destroys the thing the guard exists to protect. ⇒ We remove the *bookkeeping*
+   * and leave the *decision*.
+   *
+   * @param {object} args
+   * @param {string} args.schema - the entity's Model
+   * @param {string} args.uuid - the entity whose items these are
+   * @param {object|object[]} args.ops - one op, or a batch run all-or-nothing
+   * @param {boolean} [args.readback] - ask for the written items back
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<*>} the write response, already absorbed
+   */
+  async writeItems({ schema, uuid, ops, readback = false, signal } = {}) {
+    if (!uuid) {
+      throw new ApiError({ status: 0, title: 'No Entity', detail: 'writeItems needs a uuid', kind: 'invalid' })
+    }
+    const list = Array.isArray(ops) ? ops : [ops]
+    if (list.length === 0) {
+      throw new ApiError({ status: 0, title: 'No Ops', detail: 'writeItems needs at least one op', kind: 'invalid' })
+    }
+    const stamped = list.map((op) => this.ledger.stamp(op))
+    const query = { [PARAM.model]: schema }
+    if (readback) query[PARAM.readback] = true
+
+    try {
+      const result = await this.request('POST', ROUTES.items(uuid), {
+        query,
+        body: Array.isArray(ops) ? stamped : stamped[0],
+        signal,
+      })
+      this.ledger.absorb(result)
+      return result
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        // Rebase whichever item the server named. A batch reports one conflict at a
+        // time — the transaction stopped there — so one id is the whole answer.
+        const id = err.extensions?.[FIELD.item] ?? stamped.find((op) => op?.[FIELD.item] != null)?.[FIELD.item]
+        if (id != null) this.ledger.rebase(id, err)
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Create an entity of a Model, optionally with its first items.
+   *
+   * ⚠️ Not idempotent, and deliberately not made so: two calls make two entities.
+   * A caller that must not double-create holds the result, the way it would with
+   * any other create.
+   *
+   * @param {object} args
+   * @param {string} args.schema
+   * @param {object} [args.data] - the initial content, in the Model's own shape
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<*>}
+   */
+  async createEntity({ schema, data, signal } = {}) {
+    if (!schema) {
+      throw new ApiError({ status: 0, title: 'No Model', detail: 'createEntity needs a schema', kind: 'invalid' })
+    }
+    return this.request('POST', ROUTES.create(), {
+      query: { [PARAM.model]: schema },
+      body: data ?? {},
+      signal,
+    })
+  }
+
+  /**
+   * Delete an entity. Its items cascade.
+   *
+   * ⚠️ `revRefPolicy` decides what happens when another entity references this
+   * one. The route's own default refuses — which is the safe direction, and the
+   * one this package keeps by not choosing for the caller.
+   *
+   * @param {object} args
+   * @param {string} args.uuid
+   * @param {'abort'|'orphan_refs'} [args.revRefPolicy]
+   * @param {AbortSignal} [args.signal]
+   */
+  async deleteEntity({ uuid, revRefPolicy, signal } = {}) {
+    if (!uuid) {
+      throw new ApiError({ status: 0, title: 'No Entity', detail: 'deleteEntity needs a uuid', kind: 'invalid' })
+    }
+    return this.request('DELETE', ROUTES.remove(uuid), {
+      query: { [PARAM.revRefPolicy]: revRefPolicy },
+      signal,
+    })
+  }
 }
 
 // Reached only on a `@uniweb/core` older than the `api` slot, where the sealed
@@ -492,6 +654,14 @@ export const requestPasswordReset = (fields) => required().requestPasswordReset(
 export const confirmPasswordReset = (fields) => required().confirmPasswordReset(fields)
 /** @see ApiClient#readEntity */
 export const readEntity = (args) => required().readEntity(args)
+/** @see ApiClient#listEntities */
+export const listEntities = (args) => required().listEntities(args)
+/** @see ApiClient#writeItems */
+export const writeItems = (args) => required().writeItems(args)
+/** @see ApiClient#createEntity */
+export const createEntity = (args) => required().createEntity(args)
+/** @see ApiClient#deleteEntity */
+export const deleteEntity = (args) => required().deleteEntity(args)
 
 export { ApiError, kindOf } from './errors.js'
 export { Ledger } from './ledger.js'

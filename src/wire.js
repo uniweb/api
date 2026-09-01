@@ -163,6 +163,28 @@ export const FIELD = {
 }
 
 /**
+ * The list response. **MEASURED on this exact route** — a working client of
+ * `GET /api/entities?model=…` documents the body as `{"entities":[],"matched":0}`
+ * and destructures it that way.
+ *
+ * ⭐ `matched` is the count BEFORE paging, which is what makes it worth carrying:
+ * it is the only thing that can answer "is there more" without a second request.
+ *
+ * ⚠️ **An empty list means empty, and has since 2026-08-29.** Before that a lapsed
+ * session was answered anonymously on content routes — a `200` with an empty list,
+ * byte-identical to a genuinely empty result — so a signed-out viewer was told
+ * their content was gone. Every route now answers `401` instead. This package's
+ * default `onUnauthorized: 'session-lost'` is the correct reading of that, and
+ * anything here that treats an empty list as "maybe you are logged out" would be
+ * re-implementing a bug the backend already fixed.
+ */
+export const LIST = {
+  records: 'entities',
+  /** The count before `limit`/`offset` — the total, not the page. */
+  matched: 'matched',
+}
+
+/**
  * ⛔ THE LIST TO HAND BACKEND — everything this package asserts that nobody has
  * confirmed. Each entry says what we do, and what breaks if we are wrong.
  *
