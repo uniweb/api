@@ -6,10 +6,13 @@
   "exports": {
     ".": "./src/index.js",
     "./client": "./src/client.js",
-    "./wire": "./src/wire.js"
+    "./wire": "./src/wire.js",
+    "./mock": "./src/mock/index.js",
+    "./mock/node": "./src/mock/node.js"
   },
   "files": [
-    "src"
+    "src",
+    "bin"
   ],
   "sideEffects": false,
   "keywords": [
@@ -46,5 +49,8 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "vitest": "^4.1.7"
+  },
+  "bin": {
+    "uniweb-api-mock": "./bin/uniweb-api-mock.js"
   }
 }
