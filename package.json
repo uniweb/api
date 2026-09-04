@@ -1,6 +1,6 @@
 {
   "name": "@uniweb/api",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "The client for a Uniweb site's own backend — session, records, entities — imported by a foundation the way it imports @uniweb/kit.",
   "type": "module",
   "exports": {
