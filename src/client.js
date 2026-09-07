@@ -12,7 +12,7 @@
  */
 
 import { getUniweb, deriveCacheKey } from '@uniweb/core'
-import { resolveService } from '@uniweb/core/services'
+import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
