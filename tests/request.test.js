@@ -126,6 +126,20 @@ describe('load — read-through, deduplicated', () => {
     expect(client.website.dataStore.get(key)).toEqual({ data: { n: 1 } })
   })
 
+  it('keys two schemas apart on one endpoint — a page reads several lists at once', () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, {}))
+    const lessons = client.cacheKey({ endpoint: '/entities', schema: '@/lesson' })
+    const quizzes = client.cacheKey({ endpoint: '/entities', schema: '@/quiz' })
+    expect(lessons).not.toBe(quizzes)
+  })
+
+  it('keys the pages of one list apart', () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, {}))
+    const first = client.cacheKey({ endpoint: '/entities', schema: '@/lesson', limit: 10, offset: 0 })
+    const second = client.cacheKey({ endpoint: '/entities', schema: '@/lesson', limit: 10, offset: 10 })
+    expect(first).not.toBe(second)
+  })
+
   it('scopes keys to the viewer, so a different viewer never sees another\'s entry', () => {
     const client = clientWith(WITH_BACKEND, () => json(200, {}))
     const anonymous = client.cacheKey({ endpoint: '/x', schema: 'x' })

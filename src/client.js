@@ -363,7 +363,22 @@ export class ApiClient {
    * @returns {string}
    */
   cacheKey(spec) {
-    return deriveCacheKey({ ...spec, endpoint: `api:${this.viewerId}:${spec.endpoint ?? ''}` })
+    // ⛔ core's `deriveCacheKey` hashes a FIXED field set, and that set has
+    // drifted twice under this call: `schema` was renamed to `as` (2026-09-02),
+    // and `endpoint` was dropped by core 0.24 — so spreading the spec meant the
+    // qualifiers (`schema`, `scope`, `limit`, `offset`, `all`, `via`) fell out
+    // of the hash and every list a viewer read collided on `/entities`; under a
+    // 0.24 core EVERY key of this package degenerated to '{}'.
+    // ⇒ Compose the WHOLE identity into `url` — hashed by every core version —
+    // so this package's keys cannot drift with core's field selection again.
+    // Keys change once; the store is in-memory and repopulates.
+    const { endpoint = '', ...qualifiers } = spec ?? {}
+    const suffix = Object.keys(qualifiers)
+      .filter((k) => qualifiers[k] !== undefined)
+      .sort()
+      .map((k) => `${k}=${qualifiers[k]}`)
+      .join('&')
+    return deriveCacheKey({ url: `api:${this.viewerId}:${endpoint}${suffix ? `?${suffix}` : ''}` })
   }
 
   /**
