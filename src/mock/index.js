@@ -38,11 +38,14 @@ import { DEFAULT_SEED } from './seed.js'
  *
  * @param {object} [options]
  * @param {object} [options.seed] - accounts, schemas and entities to start from
+ * @param {string} [options.signedInAs] - a seeded `username` to start signed in as, for a
+ *        demo whose subject is the signed-in view. Development-only by construction, since
+ *        this whole module is; throws if the username is not seeded.
  * @param {string} [options.prefix] - the path the API is mounted under (default `/api`)
  * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore }}
  */
-export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api' } = {}) {
-  const store = new MockStore(seed)
+export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signedInAs = null } = {}) {
+  const store = new MockStore(seed, { signedInAs })
 
   const json = (status, body) =>
     new Response(body === undefined ? null : JSON.stringify(body), {

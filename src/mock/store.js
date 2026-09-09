@@ -33,8 +33,10 @@ export class MockStore {
    * @param {object[]} [seed.accounts] - `{ username, password, handle, roles?, units? }`
    * @param {object} [seed.schemas] - `{ '@/session': { creatable_by?, append_only? } }`
    * @param {object[]} [seed.entities] - `{ uuid?, model, data?, items? }`
+   * @param {object} [options]
+   * @param {string} [options.signedInAs] - start with this account already signed in.
    */
-  constructor(seed = {}) {
+  constructor(seed = {}, { signedInAs = null } = {}) {
     this.accounts = (seed.accounts || []).map((a) => ({
       uuid: a.uuid || nextId('acct'),
       username: a.username,
@@ -52,6 +54,26 @@ export class MockStore {
     /** The one session. A mock serves one developer, so one is the honest number. */
     this.session = null
     this.resets = new Map()
+
+    // ⭐ `signedInAs` — start already signed in, for a demo whose whole point is the
+    // signed-in view. Without it a visitor must type credentials before seeing
+    // anything, which for a lived-in demo is the experience itself.
+    //
+    // ⛔ THROWS on an unknown username rather than leaving the session null. A typo
+    // here produces "why am I not logged in?" — a question with no visible cause, in
+    // the one place where the answer is a string three lines away. The mock is
+    // development-only, so failing at construction costs nothing and a silent
+    // anonymous session costs an afternoon.
+    if (signedInAs) {
+      const account = this.accounts.find((a) => a.username === signedInAs)
+      if (!account) {
+        const known = this.accounts.map((a) => a.username).join(', ') || '(none)'
+        throw new Error(
+          `[uniweb/api mock] signedInAs: '${signedInAs}' is not a seeded account. Seeded: ${known}`
+        )
+      }
+      this.session = { account, at: now() }
+    }
   }
 
   seedEntity({ uuid, model, data = {}, items = [], owner = null }) {

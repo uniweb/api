@@ -194,3 +194,49 @@ describe('the client against the mock', () => {
     expect(client.ledger.get('sess-2')).toBeNull()
   })
 })
+
+// ── `signedInAs` — start already signed in ───────────────────────────────────
+//
+// A demo whose subject is the signed-in view has to open in it. Without this a
+// visitor types credentials before seeing anything, which for a lived-in demo is
+// the experience itself. Development-only by construction: this whole module is.
+
+describe('signedInAs', () => {
+  const seed = {
+    accounts: [
+      { username: 'alex', password: 'alex', units: ['school'] },
+      { username: 'visitor', password: 'visitor', units: [] },
+    ],
+    entities: [{ uuid: 'e1', model: '@/course', data: { title: 'Intro' }, items: [] }],
+  }
+  const call = async (mock, path, init) => mock.fetch(new Request('http://x' + path, init))
+
+  it('opens with a live session for the named account', async () => {
+    const mock = createMockBackend({ seed, signedInAs: 'alex' })
+    const res = await call(mock, '/auth/me')
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.account.username).toBe('alex')
+  })
+
+  it('is anonymous without it — the default is unchanged', async () => {
+    const mock = createMockBackend({ seed })
+    expect((await call(mock, '/auth/me')).status).toBe(401)
+  })
+
+  it('the session it opens is a REAL one, not a flag', async () => {
+    // The point is that everything session-gated works, not just the probe.
+    const mock = createMockBackend({ seed, signedInAs: 'alex' })
+    expect((await call(mock, '/api/entities?model=@/course')).status).toBe(200)
+    // and it can be ended like any other
+    await call(mock, '/auth/logout', { method: 'POST' })
+    expect((await call(mock, '/auth/me')).status).toBe(401)
+  })
+
+  it('⛔ throws on an unseeded username rather than opening anonymous', () => {
+    // A typo would otherwise produce "why am I not logged in?" — a question with no
+    // visible cause, three lines from its answer.
+    expect(() => createMockBackend({ seed, signedInAs: 'alexx' })).toThrow(/not a seeded account/)
+    expect(() => createMockBackend({ seed, signedInAs: 'alexx' })).toThrow(/alex, visitor/)
+  })
+})
