@@ -32,3 +32,31 @@ describe('the api service', () => {
     expect(isApiEnabled(site({ services: { api: {} } }))).toBe(false)
   })
 })
+
+describe('the no-argument form', () => {
+  // ⛔ THE TRAP THIS PINS. For one commit the website was REQUIRED while every
+  // doc and template showed `isApiEnabled()` — so the documented call resolved
+  // `undefined` and returned false forever, drawing no sign-in UI on a site that
+  // had a backend. Silent, and identical to a site with none.
+  it('reads the ACTIVE website when called with no argument', () => {
+    const site = { config: { api: '/_api' }, basePath: '' }
+    const previous = globalThis.uniweb
+    globalThis.uniweb = { activeWebsite: site }
+    try {
+      expect(isApiEnabled()).toBe(true)
+      expect(isApiEnabled()).toBe(isApiEnabled(site))
+    } finally {
+      globalThis.uniweb = previous
+    }
+  })
+
+  it('is false, not a throw, before the runtime has initialized', () => {
+    const previous = globalThis.uniweb
+    globalThis.uniweb = undefined
+    try {
+      expect(isApiEnabled()).toBe(false)
+    } finally {
+      globalThis.uniweb = previous
+    }
+  })
+})

@@ -50,20 +50,28 @@ export function resolveBase(website) {
  * backend can answer. False means: draw nothing, or the static alternative the
  * site already carries.
  *
- * ⭐ **`@uniweb/kit`'s `isApiEnabled()` is the same question with no argument**,
- * and is the one a foundation normally calls — one predicate per service, the
- * website resolved for you. This form stays for a caller that already holds a
- * website, or is working outside a render.
+ * ⭐ **The website argument is OPTIONAL and defaults to the active one**, so this
+ * is the same call as `@uniweb/kit`'s `isApiEnabled()` — one predicate per
+ * service, no arguments, the website resolved for you. Pass one explicitly only
+ * when you already hold it, or are working outside a render.
+ *
+ * ⛔ **THE DEFAULT IS NOT A CONVENIENCE, IT CLOSES A TRAP.** For one commit this
+ * took a REQUIRED website while every doc and template showed the no-argument
+ * spelling — so `import { isApiEnabled } from '@uniweb/api'` followed by
+ * `isApiEnabled()` resolved `undefined`, returned `false` forever, and drew no
+ * sign-in UI on a site that had a backend. Silent, and indistinguishable from a
+ * site with no backend: exactly the invisible absence this predicate exists to
+ * prevent. Caught in review the same day; pinned by `tests/enabled.test.js`.
  *
  * ⛔ **Renamed from `isEnabled` (2026-09-10).** The old name said nothing about
  * its subject and collided with three unrelated `isEnabled`s in the framework —
  * including the field `useSearch()` returns, which made `uniweb doctor` read a
  * search control as gated when it was gated on this instead.
  *
- * @param {object} website
+ * @param {object} [website] - defaults to the active website
  * @returns {boolean}
  */
-export function isApiEnabled(website) {
+export function isApiEnabled(website = getUniweb()?.activeWebsite ?? null) {
   return resolveBase(website) !== null
 }
 
