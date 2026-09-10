@@ -1,17 +1,17 @@
 # @uniweb/api
 
-The client a foundation uses to talk to **its site's own backend** — sign-in, the
+The client a foundation uses to talk to **its site's `api` service** — sign-in, the
 site's members, and the content they create.
 
 You import it the way you import `@uniweb/kit`. It is bundled into your foundation,
-tree-shaken, and **inert on a site that has no backend**: nothing throws, no request
+tree-shaken, and **inert on a site that has no `api` service**: nothing throws, no request
 leaves, and your components render the version of themselves that does not need one.
 
 ```bash
 npm install @uniweb/api
 ```
 
-## Is there a backend?
+## Does the site have the service?
 
 Ask before you draw. This is a synchronous read of the site's own configuration, not
 a probe — there is nothing to await.
@@ -62,8 +62,8 @@ const { status, records, matched, hasMore } = useRecords({ schema: '@/session' }
 ```
 
 ⭐ **`absent` and an empty `ready` are different answers.** `absent` means there is no
-live source — no backend, or nobody signed in — so render your site's own content.
-`ready` with `records: []` means the backend answered and there is nothing there.
+live source — no `api` service, or nobody signed in — so render your site's own content.
+`ready` with `records: []` means the service answered and there is nothing there.
 Showing "nothing yet" for the first case tells a visitor their content is missing
 when it is simply not being asked for.
 
@@ -100,13 +100,13 @@ Three things it does for you, and one it deliberately does not:
 
 ⚠️ `update` replaces the item's data whole. Spread what you are not editing.
 
-## A backend on your machine
+## The service on your machine
 
-Building against a live backend is slow and puts a shared database behind your
+Building against a live service is slow and puts a shared database behind your
 experiments. Name a local one in `site.yml`:
 
 ```yaml
-api: /_api                 # where the backend answers — the same in production
+api: /_api                 # where the service answers — the same in production
 $devApi: ./mock/api.js     # what answers it locally; never published
 ```
 
@@ -137,7 +137,7 @@ npx uniweb-api-mock --port 8787
 ```
 
 ⛔ **The mock is a fixture of what this package expects, not a model of any real
-backend.** Behaviour it happens to have is evidence about the mock and nothing else.
+server.** Behaviour it happens to have is evidence about the mock and nothing else.
 
 ## Outside React
 
