@@ -20,9 +20,16 @@ describe('the api service', () => {
     expect(isApiEnabled(s)).toBe(true)
   })
 
-  it("lets the site's own declaration win, and passes an absolute URL through", () => {
-    const s = site({ api: 'https://api.example.com', services: { api: { endpoint: '/_uw' } } })
+  it("uses the site's own declaration where the host offers no api service, and passes an absolute URL through", () => {
+    const s = site({ api: 'https://api.example.com', services: { submit: { endpoint: '/forms' } } })
     expect(resolveBase(s)).toBe('https://api.example.com')
+  })
+
+  it("prefers the host's api service over the site's own declaration", () => {
+    // Reversed 2026-09-10: where the host offers the service, its address wins.
+    const s = site({ api: 'https://api.example.com', services: { api: { endpoint: '/_uw' } } })
+    expect(resolveBase(s)).toContain('/_uw')
+    expect(resolveBase(s)).not.toContain('api.example.com')
   })
 
   it('is absent when the host answered and offered no address', () => {

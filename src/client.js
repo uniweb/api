@@ -31,8 +31,8 @@ export const CONTRACT = 1
 /**
  * Where the site's backend is, if it has one.
  *
- * `resolveService` answers with the site's own declaration first (`api:` in
- * `site.yml`), then the host's (`config.services.api`), and `null` when neither
+ * `resolveService` answers with the host's offer first (`config.services.api`),
+ * then the site's own declaration (`api:` in `site.yml`), and `null` when neither
  * names an address. Absence is the ordinary state of a site with no backend,
  * not an error.
  *
