@@ -13,7 +13,7 @@
 export {
   SERVICE_NAME,
   resolveBase,
-  isEnabled,
+  isApiEnabled,
   probeSession,
   signIn,
   completeChallenge,

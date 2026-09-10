@@ -17,9 +17,9 @@ Ask before you draw. This is a synchronous read of the site's own configuration,
 a probe — there is nothing to await.
 
 ```jsx
-import { isEnabled } from '@uniweb/api'
+import { isApiEnabled } from '@uniweb/kit'
 
-if (!isEnabled(website)) return <StaticVersion />
+if (!isApiEnabled()) return <StaticVersion />
 ```
 
 ⛔ **And when the answer is no, draw nothing** — not a disabled button, and not an

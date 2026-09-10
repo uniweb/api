@@ -44,16 +44,26 @@ export function resolveBase(website) {
 }
 
 /**
- * Does this site have a backend the package can talk to?
+ * Does this site have an app backend — the `api` service?
  *
  * The question to ask before drawing a sign-in affordance or any control only a
  * backend can answer. False means: draw nothing, or the static alternative the
  * site already carries.
  *
+ * ⭐ **`@uniweb/kit`'s `isApiEnabled()` is the same question with no argument**,
+ * and is the one a foundation normally calls — one predicate per service, the
+ * website resolved for you. This form stays for a caller that already holds a
+ * website, or is working outside a render.
+ *
+ * ⛔ **Renamed from `isEnabled` (2026-09-10).** The old name said nothing about
+ * its subject and collided with three unrelated `isEnabled`s in the framework —
+ * including the field `useSearch()` returns, which made `uniweb doctor` read a
+ * search control as gated when it was gated on this instead.
+ *
  * @param {object} website
  * @returns {boolean}
  */
-export function isEnabled(website) {
+export function isApiEnabled(website) {
   return resolveBase(website) !== null
 }
 
