@@ -57,17 +57,27 @@ describe('classifySection', () => {
     expect(classifySection(COURSE, 'modules')).toMatchObject({ storage: STORAGE.ITEMS })
   })
 
-  it('a single/brief section is unresolved, not items', () => {
-    expect(classifySection(COURSE, 'course')).toMatchObject({
-      storage: STORAGE.UNRESOLVED,
-      reason: UNRESOLVED_REASON.SINGLE_SECTION,
+  it('a declared SINGLE section is items too — brief is not a storage class', () => {
+    expect(classifySection(COURSE, 'course')).toMatchObject({ storage: STORAGE.ITEMS })
+  })
+
+  it('an undeclared section NOT on the debt list is a violation, not tolerated', () => {
+    expect(classifySection(COURSE, 'oops')).toMatchObject({ storage: STORAGE.UNDECLARED })
+  })
+
+  it('an undeclared section ON the debt list is debt', () => {
+    const withDebt = { ...COURSE, migration_debt: ['meta'] }
+    expect(classifySection(withDebt, 'meta')).toMatchObject({
+      storage: STORAGE.MIGRATION_DEBT,
+      reason: UNRESOLVED_REASON.UNDECLARED_SECTION,
     })
   })
 
-  it('an undeclared section is unresolved for the same reason, not a violation', () => {
-    expect(classifySection(COURSE, 'content')).toMatchObject({
-      storage: STORAGE.UNRESOLVED,
-      reason: UNRESOLVED_REASON.UNDECLARED_SECTION,
+  it('a DECLARED section on the debt list is debt too — divergence, not absence', () => {
+    const withDebt = { ...COURSE, migration_debt: ['modules'] }
+    expect(classifySection(withDebt, 'modules')).toMatchObject({
+      storage: STORAGE.MIGRATION_DEBT,
+      reason: UNRESOLVED_REASON.DIVERGENT_SECTION,
     })
   })
 })
@@ -132,34 +142,59 @@ describe('enforcement — the measured half', () => {
   })
 })
 
-describe('the unresolved branch — DIAGNOSED, never refused', () => {
-  it('does NOT refuse a write to an undeclared section, and says why', () => {
+describe('an undeclared section is REFUSED unless it is owned as debt', () => {
+  it('⭐ a typo section is a 422 — it must not hide in the debt bucket', () => {
     const store = storeWith({ '@/course': COURSE })
     const entity = store.seedEntity({ model: '@/course', data: {} })
     const res = store.applyOp(entity, {
       kind: OP.create,
-      [FIELD.section]: 'content',
-      data: { anything: true },
+      [FIELD.section]: 'moduels',
+      data: { title: 'typo' },
     })
+    expect(res.ok).toBe(false)
+    expect(res.problem).toMatchObject({ status: 422, title: 'SchemaViolation' })
+    expect(res.problem.violations[0].rule).toBe('undeclared-section')
+  })
+
+  it('the SAME section passes once the site owns it as debt', () => {
+    const store = storeWith({ '@/course': { ...COURSE, migration_debt: ['meta'] } })
+    const entity = store.seedEntity({ model: '@/course', data: {} })
+    const res = store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'meta', data: { a: 1 } })
     expect(res.ok).toBe(true)
-    expect(store.diagnostics).toHaveLength(1)
     expect(store.diagnostics[0]).toMatchObject({
-      model: '@/course',
-      section: 'content',
+      section: 'meta',
       reason: UNRESOLVED_REASON.UNDECLARED_SECTION,
     })
   })
 
-  it('does NOT refuse a violating write to a SINGLE section — that mapping is the open question', () => {
+  it('a DECLARED section whose records diverge is tolerated only via the debt list', () => {
+    // @/quiz-key's real case: one record carrying a map, where the schema declares many.
+    const KEY = {
+      sections: { answers: { multiple: true, fields: { question: { type: 'int', required: true } } } },
+    }
+    const strict = storeWith({ '@/quiz-key': KEY })
+    const e1 = strict.seedEntity({ model: '@/quiz-key', data: {} })
+    expect(strict.applyOp(e1, { kind: OP.create, [FIELD.section]: 'answers', data: { answers: {} } }).ok).toBe(false)
+
+    const owned = storeWith({ '@/quiz-key': { ...KEY, migration_debt: ['answers'] } })
+    const e2 = owned.seedEntity({ model: '@/quiz-key', data: {} })
+    const res = owned.applyOp(e2, { kind: OP.create, [FIELD.section]: 'answers', data: { answers: {} } })
+    expect(res.ok).toBe(true)
+    expect(owned.diagnostics[0]).toMatchObject({ reason: UNRESOLVED_REASON.DIVERGENT_SECTION })
+  })
+})
+
+describe('a declared SINGLE section is now ENFORCED', () => {
+  it('refuses a violating write to a single/brief section', () => {
     const store = storeWith({ '@/course': COURSE })
     const entity = store.seedEntity({ model: '@/course', data: {} })
-    // `title` is required and missing: it WOULD be refused on a multi section.
     const res = store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'course', data: {} })
-    expect(res.ok).toBe(true)
-    expect(store.diagnostics[0]).toMatchObject({ reason: UNRESOLVED_REASON.SINGLE_SECTION })
-    expect(store.diagnostics[0].problems[0]).toMatchObject({ field: 'title', rule: 'required' })
+    expect(res.ok).toBe(false)
+    expect(res.problem.violations[0]).toMatchObject({ field: 'title', rule: 'required' })
   })
+})
 
+describe('the create-time data payload — still open', () => {
   it('does NOT refuse the create-time entity data payload, whatever its shape', () => {
     const store = storeWith({ '@/course': COURSE })
     const created = store.create('@/course', { title: 99 })
@@ -170,22 +205,8 @@ describe('the unresolved branch — DIAGNOSED, never refused', () => {
     })
   })
 
-  it('records a clean-looking write too — the mapping is what is unresolved, not the values', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    // Perfectly valid against the brief section's fields, yet still unresolved.
-    const res = store.applyOp(entity, {
-      kind: OP.create,
-      [FIELD.section]: 'course',
-      data: { title: 'Fine', lessons: 3 },
-    })
-    expect(res.ok).toBe(true)
-    expect(store.diagnostics).toHaveLength(1)
-    expect(store.diagnostics[0].problems).toEqual([])
-  })
-
   it('dedupes by (model, op, section, reason) and counts, so the list stays a map', () => {
-    const store = storeWith({ '@/course': COURSE })
+    const store = storeWith({ '@/course': { ...COURSE, migration_debt: ['content'] } })
     const entity = store.seedEntity({ model: '@/course', data: {} })
     for (let i = 0; i < 5; i += 1) {
       store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'content', data: { n: i } })
@@ -255,17 +276,23 @@ describe('the registry lowering spelling (multiple: true)', () => {
 })
 
 describe('the resolution point', () => {
-  it('is one table entry — answering the question does not redesign the validator', () => {
+  it('is a table — what is enforced and what is owed is declared in one place', () => {
     expect(ENFORCEMENT[STORAGE.ITEMS]).toBe('enforce')
+    expect(ENFORCEMENT[STORAGE.UNDECLARED]).toBe('enforce')
+    expect(ENFORCEMENT[STORAGE.MIGRATION_DEBT]).toBe('diagnose')
     expect(ENFORCEMENT[STORAGE.UNRESOLVED]).toBe('diagnose')
   })
 
   it('checkItemWrite reports the classification, so a caller never re-derives it', () => {
-    const res = checkItemWrite({ decl: COURSE, section: 'course', data: {} })
+    const res = checkItemWrite({
+      decl: { ...COURSE, migration_debt: ['meta'] },
+      section: 'meta',
+      data: {},
+    })
     expect(res).toMatchObject({
       outcome: OUTCOME.DIAGNOSED,
-      storage: STORAGE.UNRESOLVED,
-      reason: UNRESOLVED_REASON.SINGLE_SECTION,
+      storage: STORAGE.MIGRATION_DEBT,
+      reason: UNRESOLVED_REASON.UNDECLARED_SECTION,
     })
   })
 })

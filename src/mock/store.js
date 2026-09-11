@@ -32,7 +32,10 @@ export class MockStore {
   /**
    * @param {object} seed
    * @param {object[]} [seed.accounts] - `{ username, password, handle, roles?, units? }`
-   * @param {object} [seed.schemas] - `{ '@/session': { creatable_by?, append_only?, sections? } }`.
+   * @param {object} [seed.schemas] - `{ '@/session': { creatable_by?, append_only?, sections?, migration_debt? } }`.
+   *   `migration_debt` is a list of section names this site KNOWS diverge from the
+   *   declaration and is unwinding — tolerated and recorded, never silently passed.
+   *   Anything undeclared and NOT on that list is refused, so a typo cannot hide in it.
    *   `sections` is the LOWERED sections map (`{ [name]: { kind, brief, fields } }`) as the
    *   framework's own normalizer produces it — supply it and writes are shape-checked
    *   (see `./schema-shape.js`). The mock never parses schema source itself, so there is
@@ -196,6 +199,8 @@ export class MockStore {
     // saving a lesson every few seconds would otherwise bury the distinct findings
     // under thousands of identical rows, and the distinct set is the whole point.
     const key = `${model}|${where.op}|${where.section ?? ''}|${result.reason}`
+    // `storage` travels with the finding: migration debt and a still-open mapping
+    // read the same in a list otherwise, and they have different futures.
     const seen = this.diagnostics.find((d) => d.key === key)
     if (seen) {
       seen.count += 1
@@ -206,6 +211,7 @@ export class MockStore {
       key,
       model,
       ...where,
+      storage: result.storage,
       reason: result.reason,
       problems: result.problems,
       undeclared: result.undeclared,
@@ -269,12 +275,13 @@ export class MockStore {
   /**
    * Shape-check an item write. Returns a refusal to hand straight back, or `null`.
    *
-   * ⭐ **Refuses on ONE classification only** — a `many:`/multi section, the single
-   * shape measured to be stored as items. Everything else is recorded through
-   * `diagnose()` and allowed, because the storage mapping for it is unanswered
-   * (`./schema-shape.js`). That asymmetry is deliberate: enforcing a guess would
-   * make the mock refuse writes the real store accepts, which is the expensive
-   * direction of a fidelity error and exactly what a convincing mock gets believed about.
+   * ⭐ **Refuses a declared section whose data does not fit, and an undeclared
+   * section that nobody owns.** It tolerates exactly two things: a `(model, section)`
+   * the site listed as `migration_debt`, and the create-time `data` payload — the
+   * one shape whose wire contract is still unsettled. See `./schema-shape.js`.
+   *
+   * The debt list is an explicit allowlist rather than a mode precisely so a typo
+   * cannot hide in it: `moduels` is a 422, `modules` is recorded and allowed.
    */
   shapeGuard(model, section, data, itemId) {
     const decl = this.schemas[model]
