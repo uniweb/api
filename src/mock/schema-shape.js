@@ -85,6 +85,34 @@ export const OUTCOME = {
 }
 
 /**
+ * ⚠️ **TWO LOWERED SPELLINGS, and this module accepts both.**
+ *
+ * The framework lowers a schema twice, and the two forms disagree on how they say
+ * "many" — MEASURED 2026-09-11 against `@uniweb/schemas@0.2.13` and
+ * `@uniweb/build@0.44.4`:
+ *
+ * | | a repeating section | a list field |
+ * |---|---|---|
+ * | `validateAndNormalizeSchema` | `kind: 'multi'` | `{ type: 'array', items: {…} }` |
+ * | `toDataSchemaDeclaration` (the **registry** form, what a backend is actually sent) | `multiple: true` | `{ type: 'string', multiple: true }` |
+ *
+ * ⛔ Reading only the first spelling is not a cosmetic bug: every multi section in a
+ * REGISTRY declaration would fall through to "single", so the mock would classify
+ * all of them as unresolved and enforce **nothing**, silently. Caught by feeding it
+ * real declarations rather than only hand-written fixtures.
+ */
+function isMultiSection(section) {
+  return section?.multiple === true || section?.kind === 'multi'
+}
+
+/** The element shape of a list field, in either spelling, or null if it is not a list. */
+function listElement(field) {
+  if (field?.multiple === true) return { type: field.type, fields: field.fields }
+  if (field?.type === 'array') return { type: field.items?.type, fields: field.items?.fields }
+  return null
+}
+
+/**
  * Is this section a multi section of the model's declaration?
  *
  * `decl.sections` is the lowered sections map (`{ [name]: { kind, brief, fields } }`)
@@ -98,7 +126,7 @@ export function classifySection(decl, section) {
   if (!found) {
     return { storage: STORAGE.UNRESOLVED, reason: UNRESOLVED_REASON.UNDECLARED_SECTION, section: null }
   }
-  if (found.kind === 'multi') return { storage: STORAGE.ITEMS, section: found }
+  if (isMultiSection(found)) return { storage: STORAGE.ITEMS, section: found }
   return { storage: STORAGE.UNRESOLVED, reason: UNRESOLVED_REASON.SINGLE_SECTION, section: found }
 }
 
@@ -171,8 +199,31 @@ export function checkFields(fields, data, path = '') {
     }
     if (missing) continue
 
-    const ok = satisfiesType(field.type, value)
-    if (ok === false) {
+    // A list, in either spelling. The VALUE must be an array; each entry is then
+    // checked against the element shape, indexed the way `uniweb validate` names it
+    // (`outcomes[1]`), so one vocabulary covers both lanes.
+    const element = listElement(field)
+    if (element) {
+      if (!Array.isArray(value)) {
+        problems.push({ field: at, rule: 'type', detail: `'${at}' expects a list of ${element.type}` })
+        continue
+      }
+      value.forEach((entry, i) => {
+        const entryAt = `${at}[${i}]`
+        if (satisfiesType(element.type, entry) === false) {
+          problems.push({
+            field: entryAt,
+            rule: 'type',
+            detail: `'${entryAt}' expects ${element.type}, got ${Array.isArray(entry) ? 'array' : typeof entry}`,
+          })
+          return
+        }
+        if (element.fields) problems.push(...checkFields(element.fields, entry, entryAt))
+      })
+      continue
+    }
+
+    if (satisfiesType(field.type, value) === false) {
       problems.push({
         field: at,
         rule: 'type',
@@ -183,25 +234,6 @@ export function checkFields(fields, data, path = '') {
 
     if (Array.isArray(field.enum) && field.enum.length && !field.enum.includes(value)) {
       problems.push({ field: at, rule: 'enum', detail: `'${at}' must be one of ${field.enum.join(', ')}` })
-      continue
-    }
-
-    // A list: check each entry against `items`, naming the index the way
-    // `uniweb validate` does (`outcomes[1]`), so one vocabulary covers both lanes.
-    if (field.type === 'array' && Array.isArray(value) && field.items) {
-      value.forEach((entry, i) => {
-        const entryAt = `${at}[${i}]`
-        const entryOk = satisfiesType(field.items.type, entry)
-        if (entryOk === false) {
-          problems.push({
-            field: entryAt,
-            rule: 'type',
-            detail: `'${entryAt}' expects ${field.items.type}, got ${Array.isArray(entry) ? 'array' : typeof entry}`,
-          })
-          return
-        }
-        if (field.items.fields) problems.push(...checkFields(field.items.fields, entry, entryAt))
-      })
       continue
     }
 

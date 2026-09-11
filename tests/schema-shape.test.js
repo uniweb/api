@@ -203,6 +203,57 @@ describe('the unresolved branch — DIAGNOSED, never refused', () => {
   })
 })
 
+/**
+ * The registry form — what `toDataSchemaDeclaration` produces and what a backend is
+ * actually sent. It spells "many" differently from the normalizer, and reading only
+ * the normalizer's spelling would silently disable ALL enforcement.
+ */
+const COURSE_REGISTRY_FORM = {
+  sections: {
+    course: { brief: true, fields: { title: { type: 'string', required: true } } },
+    modules: {
+      multiple: true,
+      fields: {
+        title: { type: 'string', required: true },
+        lessons: { type: 'string', multiple: true },
+        level: { type: 'string', enum: ['Beginner', 'Advanced'] },
+      },
+    },
+  },
+}
+
+describe('the registry lowering spelling (multiple: true)', () => {
+  it('treats `multiple: true` as a multi section — NOT as single/unresolved', () => {
+    expect(classifySection(COURSE_REGISTRY_FORM, 'modules')).toMatchObject({ storage: STORAGE.ITEMS })
+  })
+
+  it('still ENFORCES against a registry-form declaration', () => {
+    const store = storeWith({ '@/course': COURSE_REGISTRY_FORM })
+    const entity = store.seedEntity({ model: '@/course', data: {} })
+    const res = store.applyOp(entity, {
+      kind: OP.create,
+      [FIELD.section]: 'modules',
+      data: { level: 'Expert' },
+    })
+    expect(res.ok).toBe(false)
+    expect(res.problem.violations.map((v) => v.rule).sort()).toEqual(['enum', 'required'])
+  })
+
+  it('reads `multiple: true` on a FIELD as a list, in the registry form', () => {
+    const problems = checkFields(COURSE_REGISTRY_FORM.sections.modules.fields, {
+      title: 'M',
+      lessons: ['a', 7],
+    })
+    expect(problems).toHaveLength(1)
+    expect(problems[0].field).toBe('lessons[1]')
+  })
+
+  it('a list field given a non-list is a type violation in both spellings', () => {
+    expect(checkFields({ tags: { type: 'string', multiple: true } }, { tags: 'x' })).toHaveLength(1)
+    expect(checkFields({ tags: { type: 'array', items: { type: 'string' } } }, { tags: 'x' })).toHaveLength(1)
+  })
+})
+
 describe('the resolution point', () => {
   it('is one table entry — answering the question does not redesign the validator', () => {
     expect(ENFORCEMENT[STORAGE.ITEMS]).toBe('enforce')
