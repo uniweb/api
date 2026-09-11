@@ -42,7 +42,12 @@ import { DEFAULT_SEED } from './seed.js'
  *        demo whose subject is the signed-in view. Development-only by construction, since
  *        this whole module is; throws if the username is not seeded.
  * @param {string} [options.prefix] - the path the API is mounted under (default `/api`)
- * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore }}
+ * Supply `seed.schemas[model].sections` (the framework's LOWERED sections map) and
+ * item writes are shape-checked: a `many:` section is ENFORCED, everything else is
+ * recorded on `.diagnostics` and allowed — see `./schema-shape.js` for why that
+ * asymmetry is deliberate rather than lenient.
+ *
+ * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore, diagnostics: object[] }}
  */
 export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signedInAs = null } = {}) {
   const store = new MockStore(seed, { signedInAs })
@@ -181,6 +186,16 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
 
   return {
     store,
+    /**
+     * Writes the mock shape-checked but did not refuse.
+     *
+     * ⛔ Each entry is a write whose storage mapping is an OPEN QUESTION
+     * (`./schema-shape.js`), not one that broke a rule and was let through. Empty
+     * is the good state; a long list is a map of what we are still guessing about.
+     */
+    get diagnostics() {
+      return store.diagnostics
+    },
     async fetch(request) {
       try {
         return await route(request)
@@ -195,3 +210,4 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
 
 export { MockStore } from './store.js'
 export { DEFAULT_SEED } from './seed.js'
+export { STORAGE, UNRESOLVED_REASON, ENFORCEMENT, OUTCOME } from './schema-shape.js'
