@@ -1,4 +1,5 @@
 import { FIELD, OP } from '../wire.js'
+import { checkItemWrite, checkEntityDataWrite, OUTCOME, STORAGE } from './schema-shape.js'
 
 /**
  * The mock's state — accounts, one session, entities and their items.
@@ -31,7 +32,11 @@ export class MockStore {
   /**
    * @param {object} seed
    * @param {object[]} [seed.accounts] - `{ username, password, handle, roles?, units? }`
-   * @param {object} [seed.schemas] - `{ '@/session': { creatable_by?, append_only? } }`
+   * @param {object} [seed.schemas] - `{ '@/session': { creatable_by?, append_only?, sections? } }`.
+   *   `sections` is the LOWERED sections map (`{ [name]: { kind, brief, fields } }`) as the
+   *   framework's own normalizer produces it — supply it and writes are shape-checked
+   *   (see `./schema-shape.js`). The mock never parses schema source itself, so there is
+   *   no second copy of the authoring format here to drift from the real one.
    * @param {object[]} [seed.entities] - `{ uuid?, model, data?, items? }`
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
@@ -46,9 +51,18 @@ export class MockStore {
       units: a.units || [],
       ...a,
     }))
-    // What the mock knows about a Model: only the two things it must ENFORCE.
-    // Everything else about a schema is the site's business, not the server's.
+    // What the mock knows about a Model: the two permission rules it must ENFORCE,
+    // and — when the seed supplies `sections` — the field shapes to check writes
+    // against. Everything else about a schema is the site's business.
     this.schemas = seed.schemas || {}
+    /**
+     * Shape findings the mock saw but did not refuse.
+     *
+     * ⛔ Every entry here is a write under `STORAGE.UNRESOLVED` — the open storage
+     * question in `./schema-shape.js`, not a lenient policy. Read it to see exactly
+     * which writes are riding on an unanswered question; `mock.diagnostics` exposes it.
+     */
+    this.diagnostics = []
     this.entities = new Map()
     for (const e of seed.entities || []) this.seedEntity(e)
     /** The one session. A mock serves one developer, so one is the honest number. */
@@ -168,6 +182,39 @@ export class MockStore {
     return false
   }
 
+  /**
+   * Record a shape finding the mock chose not to refuse.
+   *
+   * ⛔ Called ONLY for `STORAGE.UNRESOLVED` writes. A finding here is "we could not
+   * judge this because the storage mapping is an open question", never "this was
+   * wrong but allowed" — see `./schema-shape.js` for the question and for the one
+   * table that resolves it.
+   */
+  diagnose(model, where, result) {
+    // ⭐ Deduped by (model, op, section, reason) with a count, so the list stays a
+    // MAP of what is unresolved rather than a log of every keystroke. An editor
+    // saving a lesson every few seconds would otherwise bury the distinct findings
+    // under thousands of identical rows, and the distinct set is the whole point.
+    const key = `${model}|${where.op}|${where.section ?? ''}|${result.reason}`
+    const seen = this.diagnostics.find((d) => d.key === key)
+    if (seen) {
+      seen.count += 1
+      seen.lastAt = now()
+      return
+    }
+    this.diagnostics.push({
+      key,
+      model,
+      ...where,
+      reason: result.reason,
+      problems: result.problems,
+      undeclared: result.undeclared,
+      count: 1,
+      firstAt: now(),
+      lastAt: now(),
+    })
+  }
+
   /** Is this section insert-only? Existing items may not be edited or removed. */
   isAppendOnly(model, section) {
     const decl = this.schemas[model]?.append_only
@@ -207,12 +254,50 @@ export class MockStore {
   // ── Writes ──────────────────────────────────────────────────────────────────
 
   create(model, data) {
+    // ⛔ Never refused. Whether this payload is the brief section's fields — and so
+    // whether it is checkable against them at all — IS the open question.
+    const check = checkEntityDataWrite({ decl: this.schemas[model], data })
+    if (check.outcome === OUTCOME.DIAGNOSED) this.diagnose(model, { op: 'create-entity' }, check)
     const entity = this.seedEntity({ model, data, owner: this.account?.uuid ?? null })
     return this.hydrate(entity)
   }
 
   remove(uuid) {
     return this.entities.delete(uuid)
+  }
+
+  /**
+   * Shape-check an item write. Returns a refusal to hand straight back, or `null`.
+   *
+   * ⭐ **Refuses on ONE classification only** — a `many:`/multi section, the single
+   * shape measured to be stored as items. Everything else is recorded through
+   * `diagnose()` and allowed, because the storage mapping for it is unanswered
+   * (`./schema-shape.js`). That asymmetry is deliberate: enforcing a guess would
+   * make the mock refuse writes the real store accepts, which is the expensive
+   * direction of a fidelity error and exactly what a convincing mock gets believed about.
+   */
+  shapeGuard(model, section, data, itemId) {
+    const decl = this.schemas[model]
+    if (!decl?.sections) return null
+    const check = checkItemWrite({ decl, section, data })
+
+    if (check.outcome === OUTCOME.VIOLATES) {
+      const first = check.problems[0]
+      return {
+        ok: false,
+        problem: {
+          status: 422,
+          title: 'SchemaViolation',
+          detail: `section '${section}' of ${model}: ${first.detail}`,
+          violations: check.problems,
+          ...(itemId != null ? { [FIELD.item]: itemId } : {}),
+        },
+      }
+    }
+    if (check.outcome === OUTCOME.DIAGNOSED) {
+      this.diagnose(model, { op: itemId == null ? 'create-item' : 'update-item', section }, check)
+    }
+    return null
   }
 
   /**
@@ -252,11 +337,15 @@ export class MockStore {
       if (!op[FIELD.section]) {
         return { ok: false, problem: { status: 400, title: 'Validation', detail: 'create needs a section' } }
       }
+      const refusal = this.shapeGuard(entity.model, op[FIELD.section], op.data, null)
+      if (refusal) return refusal
       const made = this.makeItem({ section: op[FIELD.section], data: op.data, parent: op[FIELD.parent] ?? null })
       this.place(entity, made, op.position)
       return { ok: true, result: { [FIELD.item]: made[FIELD.item], [FIELD.token]: made[FIELD.token] } }
     }
     if (kind === OP.update) {
+      const refusal = this.shapeGuard(entity.model, item.section, op.data, itemId)
+      if (refusal) return refusal
       // Whole-data replace, like the real write: round-trip what you do not edit.
       item.data = op.data ?? {}
       item[FIELD.token] = stamp()
