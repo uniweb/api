@@ -19,19 +19,47 @@ export const DEFAULT_SEED = {
     // that refusal is the demo.
     { username: 'attendee', password: 'attendee', handle: 'attendee', units: [], roles: ['member'] },
   ],
+  // ⭐ `sections` is not optional any more. The mock mints a numeric `section_id` per
+  // declared section, because that is what the real backend addresses items by — so a
+  // model with no sections has nowhere to put an item, exactly as it would in
+  // production.
   schemas: {
-    '@/track': { creatable_by: 'unit_members' },
-    '@/session': { creatable_by: 'unit_members' },
+    '@/track': {
+      creatable_by: 'unit_members',
+      sections: {
+        identity: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
+        sessions: {
+          multiple: true,
+          fields: {
+            title: { type: 'string', required: true },
+            room: { type: 'string' },
+            minutes: { type: 'int' },
+          },
+        },
+      },
+    },
+    '@/session': {
+      creatable_by: 'unit_members',
+      sections: { identity: { kind: 'single', brief: true, fields: { title: { type: 'string' } } } },
+    },
     // Check-ins are insert-only: an attendee may record attending, and nobody —
     // including them — may edit or remove it afterwards.
-    '@/attendance': { creatable_by: 'any_user', append_only: ['checkins'] },
+    '@/attendance': {
+      creatable_by: 'any_user',
+      append_only: ['checkins'],
+      sections: {
+        checkins: { multiple: true, fields: { at: { type: 'string' }, who: { type: 'string' } } },
+      },
+    },
   },
   entities: [
     {
       uuid: 'track-main',
       model: '@/track',
-      data: { name: 'Main hall' },
+      // ⛔ No `data:` — there is no entity-level data. The card's fields are an item in
+      // the brief section, and the server derives `brief` from it.
       items: [
+        { section: 'identity', data: { name: 'Main hall' } },
         { id: 'sess-1', section: 'sessions', data: { title: 'Opening keynote', room: 'Hall A', minutes: 45 } },
         { id: 'sess-2', section: 'sessions', data: { title: 'Designing for the edge', room: 'Hall A', minutes: 30 } },
         { id: 'sess-3', section: 'sessions', data: { title: 'Closing panel', room: 'Hall A', minutes: 60 } },
@@ -40,8 +68,8 @@ export const DEFAULT_SEED = {
     {
       uuid: 'track-workshops',
       model: '@/track',
-      data: { name: 'Workshops' },
       items: [
+        { section: 'identity', data: { name: 'Workshops' } },
         { id: 'sess-4', section: 'sessions', data: { title: 'Hands-on: foundations', room: 'Room 2', minutes: 90 } },
       ],
     },

@@ -1,5 +1,6 @@
 import { FIELD, OP } from '../wire.js'
-import { checkItemWrite, checkEntityDataWrite, OUTCOME, STORAGE } from './schema-shape.js'
+import { checkItemWrite, OUTCOME, STORAGE } from './schema-shape.js'
+import { buildModelSchema, indexModelSchema, resolveSectionPath } from './schema.js'
 
 /**
  * The mock's state — accounts, one session, entities and their items.
@@ -22,6 +23,9 @@ import { checkItemWrite, checkEntityDataWrite, OUTCOME, STORAGE } from './schema
  */
 
 let counter = 0
+// Numeric surrogate keys, as a real store hands out. Meaningless beyond a run.
+let entityCounter = 0
+let itemCounter = 0
 const nextId = (prefix) => `${prefix}-${(counter += 1)}`
 const now = () => new Date().toISOString()
 
@@ -59,6 +63,18 @@ export class MockStore {
     // against. Everything else about a schema is the site's business.
     this.schemas = seed.schemas || {}
     /**
+     * Served model schemas, `model -> { schema, byId, byName }`.
+     *
+     * ⭐ Minting numeric section ids here is what stops the mock inventing a section
+     * NAME on every item. The real backend returns `section_id` and no name, so code
+     * that looks an item up by name has to fail HERE, where a test can see it, rather
+     * than against a real server where it fails silently.
+     */
+    this.models = new Map()
+    for (const [model, decl] of Object.entries(this.schemas)) {
+      this.models.set(model, indexModelSchema(buildModelSchema(model, decl)))
+    }
+    /**
      * Shape findings the mock saw but did not refuse.
      *
      * ⛔ Every entry here is a write under `STORAGE.UNRESOLVED` — the open storage
@@ -93,27 +109,62 @@ export class MockStore {
     }
   }
 
-  seedEntity({ uuid, model, data = {}, items = [], owner = null }) {
+  /**
+   * Seed or create an entity.
+   *
+   * ⛔ **`data` is NOT entity content.** There is no entity-level data on the real
+   * backend — content is always items — so anything passed here is dropped, exactly
+   * as the real create route drops an unknown top-level key. Seeds pass content as
+   * `items: [{ section: '<name>', data }]`.
+   */
+  seedEntity({ uuid, model, items = [], owner = null }) {
     const id = uuid || nextId('ent')
+    const made = []
+    for (const item of items) {
+      const section = this.sectionFor(model, item.section ?? item.section_id)
+      made.push(this.makeItem({ sectionId: section?.id ?? null, data: item.data, parent: item.parent_item_id ?? null, id: item.id }))
+    }
     this.entities.set(id, {
+      id: (entityCounter += 1),
       uuid: id,
       model,
+      model_id: model,
       owner,
-      data,
+      owner_id: owner,
+      unit_id: null,
+      disabled: false,
+      created_by: owner,
+      created_at: now(),
       updated_at: now(),
-      items: items.map((item) => this.makeItem(item)),
+      items: made,
     })
     return this.entities.get(id)
   }
 
-  makeItem({ section = 'items', data = {}, parent = null, id } = {}) {
+  /** A section of a model, by numeric id or by the create route's `/`-joined path. */
+  sectionFor(model, ref) {
+    const index = this.models.get(model)
+    if (!index) return null
+    if (typeof ref === 'number') return index.byId.get(ref) || null
+    return resolveSectionPath(index, ref)
+  }
+
+  /**
+   * An item as the store holds it — **numeric `id`, numeric `section_id`, no name.**
+   *
+   * ⚠️ Two spellings on purpose, because the real backend has two: a READ answers
+   * `id` / `updated_at`, a WRITE RESPONSE answers `item_id` / `item_updated_at`. The
+   * store keeps the read spelling and the write path translates.
+   */
+  makeItem({ sectionId = null, data = {}, parent = null, id } = {}) {
     return {
-      [FIELD.item]: id || nextId('item'),
-      section,
-      [FIELD.parent]: parent,
+      id: id ?? (itemCounter += 1),
+      section_id: sectionId,
+      parent_item_id: parent,
       data,
-      created_at: now(),
-      [FIELD.token]: stamp(),
+      item_date: now(),
+      order_number: 0,
+      updated_at: stamp(),
     }
   }
 
@@ -221,6 +272,11 @@ export class MockStore {
     })
   }
 
+  /** A section's NAME from its numeric id — for rules the seed still states by name. */
+  sectionNameOf(model, sectionId) {
+    return this.models.get(model)?.byId.get(sectionId)?.name ?? null
+  }
+
   /** Is this section insert-only? Existing items may not be edited or removed. */
   isAppendOnly(model, section) {
     const decl = this.schemas[model]?.append_only
@@ -238,34 +294,116 @@ export class MockStore {
     )
     const matched = rows.length
     const page = all ? rows : rows.slice(offset || 0, (offset || 0) + (limit ?? rows.length))
-    return { entities: page.map((e) => this.hydrate(e)), matched }
+    // ⚠️ ASSUMED: backend has not described the LIST entry shape. A list is a card
+    // list and `brief` is defined as "what a card needs", so entries are the entity
+    // record without items — the same thing `?depth=brief` gives on a read. If that
+    // is wrong it is wrong in one place.
+    return { entities: page.map((e) => this.entityRecord(e)), matched }
   }
 
-  read(uuid) {
+  read(uuid, { depth } = {}) {
     const entity = this.entities.get(uuid)
     if (!entity) return null
     if (entity.owner && entity.owner !== this.account?.uuid) return null
-    return this.hydrate(entity)
+    return this.hydrate(entity, { depth })
   }
 
-  hydrate(entity) {
+  /**
+   * The entity half of a read — identity, ownership, flags, timestamps, and a
+   * **server-derived `brief`**.
+   *
+   * ⛔ `brief` is OUTPUT. The real backend rebuilds it after a write to the brief
+   * section and a client must never send one, so it is computed here rather than
+   * stored.
+   */
+  entityRecord(entity) {
     return {
+      id: entity.id,
       uuid: entity.uuid,
-      model: entity.model,
-      ...entity.data,
-      items: entity.items.map((i) => ({ ...i })),
+      model_id: entity.model_id,
+      owner_id: entity.owner_id ?? null,
+      unit_id: entity.unit_id ?? null,
+      sort_date: entity.created_at,
+      brief: this.briefOf(entity),
+      disabled: entity.disabled === false ? false : Boolean(entity.disabled),
+      created_by: entity.created_by ?? null,
+      created_at: entity.created_at,
+      updated_at: entity.updated_at,
+    }
+  }
+
+  /** The brief section's item data, or null — derived, never stored. */
+  briefOf(entity) {
+    const index = this.models.get(entity.model)
+    if (!index) return null
+    const brief = [...index.byId.values()].find((sec) => sec.is_brief)
+    if (!brief) return null
+    return entity.items.find((i) => i.section_id === brief.id)?.data ?? null
+  }
+
+  /**
+   * A read, in the real envelope.
+   *
+   * ⛔ **Items live under `hydrated.items`, not at the root.** They were top-level
+   * here for months, which is a shape no server ever answers.
+   * ⚠️ `?depth=brief` returns NO items — a caller narrowing depth for speed loses all
+   * content, and that is worth being able to reproduce.
+   */
+  hydrate(entity, { depth } = {}) {
+    return {
+      model_uuid: entity.model,
+      model_name: entity.model,
+      can_edit: Boolean(this.account),
+      hydrated: {
+        entity: this.entityRecord(entity),
+        items: depth === 'brief' ? [] : entity.items.map((i) => ({ ...i })),
+      },
     }
   }
 
   // ── Writes ──────────────────────────────────────────────────────────────────
 
-  create(model, data) {
-    // ⛔ Never refused. Whether this payload is the brief section's fields — and so
-    // whether it is checkable against them at all — IS the open question.
-    const check = checkEntityDataWrite({ decl: this.schemas[model], data })
-    if (check.outcome === OUTCOME.DIAGNOSED) this.diagnose(model, { op: 'create-entity' }, check)
-    const entity = this.seedEntity({ model, data, owner: this.account?.uuid ?? null })
-    return this.hydrate(entity)
+  /**
+   * Create an entity, with content supplied as ITEMS.
+   *
+   * Reads exactly what the real route reads — `items`, `uuid`, `owner_id` — and
+   * ⛔ **silently ignores everything else, including a top-level `data`.** That is not
+   * leniency: `CreateBody` is a plain `Deserialize` that flattens `CreateInput`, and
+   * serde cannot combine `deny_unknown_fields` with `flatten`, so the real route
+   * *cannot* reject unknown keys. A caller sending `{ data }` gets **201 and an empty
+   * entity**, and this mock now reproduces exactly that.
+   *
+   * ⚠️ A dev warning is emitted for `data`, because the whole reason this bug survived
+   * is that nothing anywhere said a word about it. The warning is the mock's only
+   * concession — the *behaviour* stays faithful.
+   * ⚠️ `unit_id` is parsed and ignored by the real route (it comes from the caller's
+   * workspace); ignored here too.
+   */
+  create(model, payload = {}) {
+    if (payload && typeof payload === 'object' && payload.data !== undefined) {
+      console.warn(
+        `[mock] create ${model}: a top-level 'data' key was supplied and IGNORED — the real ` +
+          `backend drops unknown keys and answers 201 with an EMPTY entity. Put content under ` +
+          `items: [{ section: '<name>', data: {...} }].`,
+      )
+    }
+    const items = Array.isArray(payload?.items) ? payload.items : []
+    for (const item of items) {
+      const section = this.sectionFor(model, item?.section ?? item?.section_id)
+      if (!section) {
+        return { problem: { status: 400, title: 'Validation', detail: `no section '${item?.section}' on ${model}` } }
+      }
+      if (section.kind === 'binder') {
+        return { problem: { status: 400, title: 'Validation', detail: `'${section.name}' is a binder and holds no items` } }
+      }
+    }
+    const entity = this.seedEntity({
+      uuid: payload?.uuid,
+      model,
+      items,
+      owner: payload?.owner_id ?? this.account?.uuid ?? null,
+    })
+    return { entity: this.hydrate(entity) }
   }
 
   remove(uuid) {
@@ -315,7 +453,9 @@ export class MockStore {
   applyOp(entity, op) {
     const kind = op?.kind
     const itemId = op?.[FIELD.item]
-    const item = itemId != null ? entity.items.find((i) => String(i[FIELD.item]) === String(itemId)) : null
+    // Items are keyed by numeric `id` (the read spelling); an op names its target as
+    // `item_id` (the write spelling). Same item, two names — the real backend's split.
+    const item = itemId != null ? entity.items.find((i) => String(i.id) === String(itemId)) : null
 
     if (kind !== OP.create) {
       if (!item) {
@@ -323,17 +463,18 @@ export class MockStore {
       }
       // Append-only guards EDIT and DELETE. Not `move`: `created_at` is the
       // chronology and a reader orders by it, so repositioning loses no truth.
-      if (kind !== OP.move && this.isAppendOnly(entity.model, item.section)) {
+      const sectionName = this.sectionNameOf(entity.model, item.section_id)
+      if (kind !== OP.move && this.isAppendOnly(entity.model, sectionName)) {
         return {
           ok: false,
-          problem: { status: 409, title: 'AppendOnly', detail: `items of '${item.section}' may be added but not changed`, [FIELD.item]: itemId },
+          problem: { status: 409, title: 'AppendOnly', detail: `items of '${sectionName}' may be added but not changed`, [FIELD.item]: itemId },
         }
       }
       const expected = op?.[FIELD.precondition]
-      if (expected != null && expected !== item[FIELD.token]) {
+      if (expected != null && expected !== item.updated_at) {
         return {
           ok: false,
-          problem: { status: 409, title: 'Conflict', [FIELD.item]: itemId, [FIELD.conflictToken]: item[FIELD.token] },
+          problem: { status: 409, title: 'Conflict', [FIELD.item]: itemId, [FIELD.conflictToken]: item.updated_at },
         }
       }
     }
@@ -341,33 +482,60 @@ export class MockStore {
     if (kind === OP.create) {
       // ⛔ No default. A create with no section is a client bug, and defaulting it
       // would place the item outside the rules its author declared — silently.
-      if (!op[FIELD.section]) {
-        return { ok: false, problem: { status: 400, title: 'Validation', detail: 'create needs a section' } }
+      // ⛔ The item route names a section by NUMERIC `section_id` — not by name. A
+      // name here is a client that has not read the schema, and it is REFUSED rather
+      // than resolved: resolving it is precisely the fiction this mock used to tell.
+      const sectionId = op.section_id
+      if (sectionId == null) {
+        return { ok: false, problem: { status: 400, title: 'Validation', detail: 'create needs a numeric section_id' } }
       }
-      const refusal = this.shapeGuard(entity.model, op[FIELD.section], op.data, null)
+      const section = this.sectionFor(entity.model, typeof sectionId === 'number' ? sectionId : Number(sectionId))
+      if (!section) {
+        return {
+          ok: false,
+          problem: {
+            status: 400,
+            title: 'Validation',
+            detail: `no section ${JSON.stringify(sectionId)} on ${entity.model}` +
+              (typeof sectionId === 'string' ? " — the item route takes a numeric section_id; read it from the model schema" : ''),
+          },
+        }
+      }
+      if (section.kind === 'binder') {
+        return { ok: false, problem: { status: 400, title: 'Validation', detail: `'${section.name}' is a binder and holds no items` } }
+      }
+      // ⛔ A `single` section holds exactly ONE item: a second create is refused, so
+      // the shape is create-once-then-update.
+      if (section.kind === 'single' && entity.items.some((i) => i.section_id === section.id)) {
+        return {
+          ok: false,
+          problem: { status: 409, title: 'Cardinality', detail: `'${section.name}' is a single section and already has an item — update it` },
+        }
+      }
+      const refusal = this.shapeGuard(entity.model, section.name, op.data, null)
       if (refusal) return refusal
-      const made = this.makeItem({ section: op[FIELD.section], data: op.data, parent: op[FIELD.parent] ?? null })
+      const made = this.makeItem({ sectionId: section.id, data: op.data, parent: op[FIELD.parent] ?? null })
       this.place(entity, made, op.position)
-      return { ok: true, result: { [FIELD.item]: made[FIELD.item], [FIELD.token]: made[FIELD.token] } }
+      return { ok: true, result: { [FIELD.item]: made.id, item_uuid: null, [FIELD.token]: made.updated_at } }
     }
     if (kind === OP.update) {
-      const refusal = this.shapeGuard(entity.model, item.section, op.data, itemId)
+      const refusal = this.shapeGuard(entity.model, this.sectionNameOf(entity.model, item.section_id), op.data, itemId)
       if (refusal) return refusal
       // Whole-data replace, like the real write: round-trip what you do not edit.
       item.data = op.data ?? {}
-      item[FIELD.token] = stamp()
-      return { ok: true, result: { [FIELD.item]: item[FIELD.item], [FIELD.token]: item[FIELD.token] } }
+      item.updated_at = stamp()
+      return { ok: true, result: { [FIELD.item]: item.id, item_uuid: null, [FIELD.token]: item.updated_at } }
     }
     if (kind === OP.delete) {
       entity.items = entity.items.filter((i) => i !== item)
       // A null token is how a delete reports itself, so a ledger forgets the item.
-      return { ok: true, result: { [FIELD.item]: item[FIELD.item], [FIELD.token]: null } }
+      return { ok: true, result: { [FIELD.item]: item.id, item_uuid: null, [FIELD.token]: null } }
     }
     if (kind === OP.move) {
       entity.items = entity.items.filter((i) => i !== item)
       this.place(entity, item, op.position)
-      item[FIELD.token] = stamp()
-      return { ok: true, result: { [FIELD.item]: item[FIELD.item], [FIELD.token]: item[FIELD.token] } }
+      item.updated_at = stamp()
+      return { ok: true, result: { [FIELD.item]: item.id, item_uuid: null, [FIELD.token]: item.updated_at } }
     }
     return { ok: false, problem: { status: 400, title: 'Validation', detail: `unknown op kind '${kind}'` } }
   }
@@ -379,7 +547,7 @@ export class MockStore {
       return
     }
     if (position && typeof position === 'object' && position.after != null) {
-      const at = entity.items.findIndex((i) => String(i[FIELD.item]) === String(position.after))
+      const at = entity.items.findIndex((i) => String(i.id) === String(position.after))
       if (at >= 0) {
         entity.items.splice(at + 1, 0, item)
         return
@@ -389,14 +557,41 @@ export class MockStore {
   }
 
   /** A batch is all-or-nothing: apply to a copy, and keep it only if every op lands. */
+  /**
+   * Apply a batch. One transaction: all commit, or none.
+   *
+   * ⛔ **An op may not reference an item created earlier in the same batch** — the
+   * real backend cannot, because the id does not exist until the transaction lands.
+   * Allowing it here would let a client build a create-then-position batch that works
+   * in development and fails in production.
+   */
   applyOps(entity, ops) {
     const snapshot = entity.items.map((i) => ({ ...i }))
+    // ⛔ Only ids MINTED IN THIS BATCH are refused. An id that simply does not exist is
+    // a 404 like any other — conflating the two would turn every typo into a confusing
+    // "you cannot reference a new item" and hide the real constraint.
+    const mintedHere = new Set()
     const results = []
     for (const op of ops) {
+      const target = op?.[FIELD.item] ?? op?.position?.after
+      if (target != null && mintedHere.has(String(target))) {
+        entity.items = snapshot
+        return {
+          ok: false,
+          problem: {
+            status: 400,
+            title: 'Validation',
+            detail: `op references item ${target}, created earlier in this same batch — the real backend cannot, because the id does not exist until the transaction commits`,
+          },
+        }
+      }
       const outcome = this.applyOp(entity, op)
       if (!outcome.ok) {
         entity.items = snapshot
         return { ok: false, problem: outcome.problem }
+      }
+      if (op?.kind === OP.create && outcome.result?.[FIELD.item] != null) {
+        mintedHere.add(String(outcome.result[FIELD.item]))
       }
       results.push(outcome.result)
     }

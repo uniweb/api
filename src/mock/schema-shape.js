@@ -66,26 +66,39 @@ export const STORAGE = {
    * omission, per Diego, not a backend rule. They retire with that route.
    */
   MIGRATION_DEBT: 'migration-debt',
-  /**
-   * A section that is neither declared nor listed as debt. **A violation** — a typo
-   * or an accidental section, which must not be able to hide in the debt bucket.
-   */
-  UNDECLARED: 'undeclared-section',
-  /**
-   * ⛔ STILL OPEN. The create-time `data` payload: the one shape whose wire contract
-   * is genuinely unknown, pending the entity-update route.
-   */
-  UNRESOLVED: 'unresolved-storage-mapping',
 }
+
+/**
+ * ⛔ **`STORAGE.UNDECLARED` is GONE too — deleted 2026-09-17.**
+ *
+ * It caught a write to a section the schema does not declare. That was reachable only
+ * while the item route took a section NAME: you could invent one. The route takes a
+ * **numeric `section_id`**, so an unknown section is refused by the store before any
+ * shape check runs — there is no id to hand over for a section that does not exist.
+ *
+ * The rule it enforced did not weaken; it moved somewhere it cannot be bypassed.
+ */
+
+/**
+ * ⛔ **`STORAGE.UNRESOLVED` is GONE — deleted 2026-09-17, and that is the point.**
+ *
+ * It named one open question: what the create-time `data` payload meant. Backend
+ * answered — **there is no entity-level data at all; content is always items** — so
+ * the state has nothing left to describe. This is the resolution the one-table design
+ * was built for: the answer arrived, and it cost one enum member and one branch, not
+ * a redesign. A state kept alive after its question closes is how "we don't know yet"
+ * quietly becomes "we allow it".
+ */
 
 /** Why a write was tolerated rather than judged. Reported; never changes what happens. */
 export const UNRESOLVED_REASON = {
-  /** On the site's `migration_debt` list: the schema declares no such section. */
-  UNDECLARED_SECTION: 'undeclared-section',
-  /** On the list: declared, but the records stored there do not match the declaration. */
+  /**
+   * On the list: declared, but the records stored there do not match the declaration.
+   *
+   * ⭐ The only remaining reason, and the only one that was ever really ours: a section
+   * the schema declares `many:` while the site stores one record carrying a map.
+   */
   DIVERGENT_SECTION: 'divergent-section',
-  /** The `data` supplied at creation. Awaiting the entity-update wire contract. */
-  ENTITY_DATA_PAYLOAD: 'entity-data-payload',
 }
 
 /**
@@ -97,9 +110,7 @@ export const UNRESOLVED_REASON = {
  */
 export const ENFORCEMENT = {
   [STORAGE.ITEMS]: 'enforce',
-  [STORAGE.UNDECLARED]: 'enforce',
   [STORAGE.MIGRATION_DEBT]: 'diagnose',
-  [STORAGE.UNRESOLVED]: 'diagnose',
 }
 
 /** Outcomes a check can produce. `VIOLATES` is the only one a caller may refuse on. */
@@ -155,18 +166,13 @@ export function classifySection(decl, section) {
   // ⭐ The debt list is consulted FIRST and is an exact `(model, section)` match, so
   // it can excuse a declared section whose records diverge as well as an undeclared
   // one — but only ever the pairs the site named. Anything else falls through.
-  const isDebt = (decl.migration_debt || []).includes(section)
-  if (isDebt) {
-    return {
-      storage: STORAGE.MIGRATION_DEBT,
-      reason: found ? UNRESOLVED_REASON.DIVERGENT_SECTION : UNRESOLVED_REASON.UNDECLARED_SECTION,
-      section: found || null,
-    }
-  }
+  // A section the store could resolve but this module cannot see is not a case any
+  // more: the store refuses an unknown `section_id` before it gets here.
+  if (!found) return null
 
-  // ⛔ Not declared and not owned as debt: a typo or an accidental section. Refused,
-  // so it cannot disappear into the debt bucket — the reason the list is explicit.
-  if (!found) return { storage: STORAGE.UNDECLARED, section: null }
+  if ((decl.migration_debt || []).includes(section)) {
+    return { storage: STORAGE.MIGRATION_DEBT, reason: UNRESOLVED_REASON.DIVERGENT_SECTION, section: found }
+  }
 
   // Declared — single or multi alike. Sections hold items; `single` holds one.
   return { storage: STORAGE.ITEMS, section: found }
@@ -304,22 +310,6 @@ export function checkItemWrite({ decl, section, data }) {
   const where = classifySection(decl, section)
   if (!where) return { outcome: OUTCOME.UNCHECKED, problems: [], undeclared: [] }
 
-  // An undeclared section has no field set to conform to, so the violation is the
-  // section itself — stated here rather than falling out of an empty field check.
-  if (where.storage === STORAGE.UNDECLARED) {
-    return {
-      outcome: OUTCOME.VIOLATES,
-      storage: where.storage,
-      problems: [
-        {
-          field: section,
-          rule: 'undeclared-section',
-          detail: `'${section}' is not a section of this model`,
-        },
-      ],
-      undeclared: [],
-    }
-  }
 
   const fields = where.section?.fields
   const problems = fields ? checkFields(fields, data) : []
@@ -348,27 +338,3 @@ export function checkItemWrite({ decl, section, data }) {
   }
 }
 
-/**
- * Check the `data` supplied at entity creation.
- *
- * ⛔ **Always the unresolved branch, by construction.** Whether this payload is the
- * brief section's fields (and therefore checkable against them) is precisely the
- * open question. We report what we see and refuse nothing.
- */
-export function checkEntityDataWrite({ decl, data }) {
-  if (!decl?.sections) return { outcome: OUTCOME.UNCHECKED, problems: [], undeclared: [] }
-
-  const briefName = Object.keys(decl.sections).find((n) => decl.sections[n]?.brief)
-  const brief = briefName ? decl.sections[briefName] : null
-  const problems = brief?.fields ? checkFields(brief.fields, data) : []
-  const undeclared = brief?.fields ? undeclaredKeys(brief.fields, data) : []
-
-  // Always diagnosed, for the same reason as `checkItemWrite` — see there.
-  return {
-    outcome: OUTCOME.DIAGNOSED,
-    storage: STORAGE.UNRESOLVED,
-    reason: UNRESOLVED_REASON.ENTITY_DATA_PAYLOAD,
-    problems,
-    undeclared,
-  }
-}

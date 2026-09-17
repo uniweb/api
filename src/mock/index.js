@@ -1,4 +1,4 @@
-import { AUTH, ROUTES, PARAM, LIST, FIELD } from '../wire.js'
+import { AUTH, ROUTES, MODELS, PARAM, LIST, FIELD } from '../wire.js'
 import { MockStore } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
 
@@ -52,10 +52,10 @@ import { DEFAULT_SEED } from './seed.js'
 export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signedInAs = null } = {}) {
   const store = new MockStore(seed, { signedInAs })
 
-  const json = (status, body) =>
+  const json = (status, body, headers = {}) =>
     new Response(body === undefined ? null : JSON.stringify(body), {
       status,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...headers },
     })
 
   /**
@@ -111,6 +111,25 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
       return problem({ status: 400, title: 'Validation', detail: 'this mock issues no challenge' })
     }
 
+    // ── Models ──────────────────────────────────────────────────────────────
+    // ⭐ A write cannot be composed without this: the item route names a section by
+    // numeric `section_id`, and a read gives items back carrying no name. Serving the
+    // schema is what makes the mock's own ids reachable.
+    if (path.startsWith(`${MODELS}/`) && method === 'GET') {
+      const parts = path.slice(MODELS.length + 1).split('/').map(decodeURIComponent)
+      if (parts.length !== 2) return problem({ status: 404, title: 'NotFound', detail: 'expected /models/{scope}/{name}' })
+      const ref = `${parts[0]}/${parts[1]}`
+      // A site seeds `@/course`; a caller may ask for either that or a resolved scope.
+      const index = store.models.get(ref) || store.models.get(`@/${parts[1]}`)
+      if (!index) return problem({ status: 404, title: 'NotFound', detail: `no model '${ref}'` })
+
+      const etag = `"${index.schema.model.version}"`
+      if (request.headers.get('if-none-match') === etag) {
+        return new Response(null, { status: 304, headers: { etag } })
+      }
+      return json(200, index.schema, { etag })
+    }
+
     // ── Entities ────────────────────────────────────────────────────────────
     // ⭐ Everything below refuses an anonymous caller. That mirrors the real
     // route's session invariant, and it is the half a mock is tempted to skip —
@@ -135,7 +154,10 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
         if (!store.mayCreate(model)) {
           return problem({ status: 403, title: 'Denied', detail: `not permitted to create '${model}'` })
         }
-        return json(200, store.create(model, (await body(request)) || {}))
+        const created = store.create(model, (await body(request)) || {})
+        if (created.problem) return problem(created.problem)
+        // 201, as the real route answers a create.
+        return json(201, created.entity)
       }
 
       if (rest === '/delete' && method === 'POST') {
@@ -168,7 +190,9 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
       if (one) {
         const uuid = decodeURIComponent(one[1])
         if (method === 'GET') {
-          const entity = store.read(uuid)
+          // ⚠️ `depth=brief` answers with NO items — a caller narrowing depth for speed
+          // loses all content, and that is a thing worth being able to reproduce.
+          const entity = store.read(uuid, { depth: q.get(PARAM.depth) })
           // ⭐ One word for not-found and not-permitted, by the real design: a
           // component renders its paywall on it and never says "deleted".
           return entity ? json(200, entity) : problem({ status: 404, title: 'NotFound', kind: 'entity' })
@@ -211,3 +235,4 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
 export { MockStore } from './store.js'
 export { DEFAULT_SEED } from './seed.js'
 export { STORAGE, UNRESOLVED_REASON, ENFORCEMENT, OUTCOME } from './schema-shape.js'
+export { buildModelSchema, indexModelSchema } from './schema.js'
