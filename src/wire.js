@@ -79,6 +79,91 @@
  * (it touches behaviour); this module's job is to make sure the contract is written
  * down before that happens.
  *
+ * ## THE THREE SHAPES — **MEASURED 2026-09-17** (backend read the structs; no live request)
+ *
+ * ### Reading an entity — `GET /entities/{uuid}?model=…`
+ *
+ * ⛔ **Items are NOT top-level. They are under `hydrated.items`**, and this package
+ * reads them as though they were:
+ *
+ * ```
+ * { model_uuid, model_name,
+ *   container?,        // only when this entity is part of another's composite
+ *   can_edit?,         // omitted for anonymous callers
+ *   hydrated: {
+ *     entity: { id, uuid, model_id, owner_id, unit_id, sort_date, brief,
+ *               disabled, created_by, created_at, updated_at },
+ *     items:  [ { id, section_id, parent_item_id, data,
+ *                 item_date, order_number, updated_at } ] } }
+ * ```
+ *
+ * An item carries **exactly those seven fields** — ⛔ **no section name, and no item
+ * `uuid`** (`HydratedItem`). Note the asymmetry: `create` *accepts* a per-item `uuid`
+ * and a write response *returns* `item_uuid`, but a read never gives one back.
+ *
+ * ⚠️ **`?depth=brief` returns `items: []`.** The default, `shallow`, includes them —
+ * so a caller that narrows depth for speed silently loses all content.
+ *
+ * ⇒ **Finding an item by section name is impossible from a read alone.** Read the
+ * model schema once and build an `id ⇄ name` map. A name-based lookup against the
+ * real backend matches nothing **and reports no error**.
+ *
+ * ### Creating an entity — `POST /entities?model=…`
+ *
+ * Everything the route reads, and nothing else:
+ *
+ * | where | field | notes |
+ * |---|---|---|
+ * | query | `model=<name\|uuid>` | **required** |
+ * | body | `items: [{ section, data, parent_item_id?, uuid? }]` | optional; missing or empty ⇒ an EMPTY entity |
+ * | body | `uuid` | optional; pins the new entity's uuid |
+ * | body | `owner_id` | optional; used only when the model is owned |
+ * | body | `unit_id` | ⚠️ **parsed and IGNORED** — taken from the caller's workspace |
+ *
+ * A missing or null body is all-defaults. **`CreateBody` neither rejects unknown keys
+ * nor could**: it is a plain `Deserialize` that `#[serde(flatten)]`s `CreateInput`, and
+ * serde cannot combine `deny_unknown_fields` with `flatten`. ⇒ a stray top-level
+ * `data` is dropped for a **201 and an empty entity**, which is the trap described
+ * above, now confirmed at the struct.
+ *
+ * ### Naming a section — two schemes, one per route
+ *
+ * | route | how |
+ * |---|---|
+ * | `POST /entities` (create) | a **path of names**, `/`-joined top-down: `"pages/page_sections"` |
+ * | `POST /entities/{uuid}/items` (after) | the **numeric `section_id`** from the schema |
+ *
+ * On the create path: a **bare name works only if exactly one section in the whole
+ * model carries it**, else the call is refused as ambiguous. Empty paths and empty
+ * segments (`a//b`, leading/trailing `/`) are refused. **`binder` sections cannot hold
+ * items.**
+ *
+ * `parent_item_id` is **separate from the path** and optional. When given it must name
+ * an item of the same entity, in the nearest non-`binder` ancestor section — or the
+ * same section, if that section nests. ⛔ **It cannot name an item created in the same
+ * call**: create the parent, then add children through the item route.
+ *
+ * ### The schema — `GET /api/models/{scope}/{name}`
+ *
+ * `{ model, sections }`, with an **ETag of `"<model.version>"`**.
+ *
+ * ```
+ * sections: [ { id, model_id, name,
+ *               kind,              // "single" | "multi" | "binder"
+ *               is_brief, parent_section_id,   // null at top level
+ *               fields: [ { key, required, multi,
+ *                           type: { id, name, kind, data } } ],
+ *               other_data, constraints } ]
+ * ```
+ *
+ * Sorted by `parent_section_id` (top level first), then `name`. In `fields[].type`,
+ * `id` is always `-1`, `name` and `kind` are both the field's kind string, and `data`
+ * is the raw field declaration including `key`, `kind` and constraints.
+ *
+ * ⛔ **Section names are unique only among SIBLINGS.** Two sections may share a name
+ * under different parents, so a bare-name map is ambiguous by construction — **key it
+ * by `id`, or by path.**
+ *
  * ⚠️ **Provenance of the above: MEASURED BY BACKEND, reading backend's own source —
  * not observed on the wire by us, and the ignored-`data` behaviour was explicitly
  * described as read-not-tested.** That is stronger than anything else we have on this
