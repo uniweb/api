@@ -37,6 +37,55 @@
  * note to MEASURED and delete its entry — the test on that array makes the change
  * deliberate and visible rather than a quiet edit.
  *
+ * ## ⭐ THE ENTITY CONTENT MODEL — **MEASURED 2026-09-17**, and it corrects this package
+ *
+ * Backend read its own source and answered three questions we put to it. The answer
+ * to the third replaced a premise this package was built on, so it is recorded here
+ * first, before any route or field:
+ *
+ * ⛔ **THERE IS NO ENTITY-LEVEL DATA. Entity content is ALWAYS items.**
+ *
+ * An entity stores identity, ownership, flags, timestamps, and a `brief` /
+ * `sort_date` **the server maintains itself**. There is no separate data record, and
+ * therefore no route that updates one. Everything an author writes is an item in a
+ * section.
+ *
+ *   - **A `single` section — `brief: true` included — holds an ORDINARY ITEM**, with
+ *     its own `item_id`, updated through the same item route as any other. It takes
+ *     exactly ONE item: a second `create` into it is refused, so the shape is
+ *     create-once-then-update.
+ *   - **Never send `brief`.** The server rebuilds `brief` and `sort_date` after a
+ *     write to the brief section. It is output, not input.
+ *   - ⚠️ **Two spellings for one flag:** `brief: true` is how a model *file* is
+ *     written; a schema *read* returns **`is_brief`**.
+ *   - **Creating with content puts items under `items`, addressed BY NAME:**
+ *     `POST /entities?model=…` · `{ items: [ { section: 'profile', data: {…} } ] }`.
+ *     Entity and items commit in one transaction. A nested section uses a
+ *     parent/child path.
+ *   - **After creation, item ops address a section by NUMERIC `section_id`** — not by
+ *     name (see `FIELD.section`).
+ *   - Site content, folder and deployment entities answer **409** on the item route;
+ *     they are written through `/api/sites/…` and `/api/folders/…`. That is the same
+ *     boundary the RULED lane below draws, enforced from the other side.
+ *   - A batch runs in one transaction, but **an op may not reference an item created
+ *     earlier in the same batch.**
+ *
+ * ⛔ **WHAT THIS PACKAGE GETS WRONG TODAY — do not read the code as the contract.**
+ * `createEntity({ schema, data })` sends content as a **top-level `data` key**, which
+ * the create route does not accept. The create body **does not reject unknown keys**,
+ * so that payload is *silently dropped*: **201, and an empty entity, with no error.**
+ * Our own mock accepts the same shape, so the fiction is symmetrical and nothing in
+ * this repo currently fails because of it. Correcting the client is a separate change
+ * (it touches behaviour); this module's job is to make sure the contract is written
+ * down before that happens.
+ *
+ * ⚠️ **Provenance of the above: MEASURED BY BACKEND, reading backend's own source —
+ * not observed on the wire by us, and the ignored-`data` behaviour was explicitly
+ * described as read-not-tested.** That is stronger than anything else we have on this
+ * lane and weaker than a response we have held in our hands. It earns MEASURED under
+ * the table above ("or in backend's own source"); the untested corner is flagged
+ * where it matters rather than promoted.
+ *
  * @module @uniweb/api/wire
  */
 
@@ -122,11 +171,16 @@ export const PARAM = {
  * mismatch is `409` with `current_updated_at`; a gone item is `404`; an absent
  * token is last-writer-wins, guarded same-transaction.
  *
- * ⛔ **`move` is ASSUMED.** It is in scope as a product requirement — an operator
- * arranging authored content by hand, where order is a stored fact and not a sort
- * key — but it was read off the **site** lane, and this lane's own documentation
- * names only `update` and `delete` as token-carrying. Whether `move` exists here at
- * all is unconfirmed.
+ * ✅ **`move` is MEASURED (2026-09-17).** It exists on this lane, carries a
+ * precondition, and takes `{ item_id, parent_item_id, position, if_unmodified_since }`.
+ * **Position is decided server-side** — `"first"`, `"last"` or `{ after: <item_id> }` —
+ * and the client never computes an order number. Both assumptions that stood here are
+ * retired. *(It had been read off the site lane, whose documentation names only
+ * `update` and `delete` as token-carrying; the doubt was reasonable and wrong.)*
+ *
+ * ⚠️ **Batch caveat, MEASURED:** an array of ops runs in ONE transaction — all commit
+ * or none — but **an op may not reference an item created earlier in the same batch.**
+ * A create-then-position sequence is therefore two round trips, not one batch.
  */
 export const OP = {
   create: 'create',
@@ -141,13 +195,24 @@ export const GUARDED_OPS = new Set([OP.update, OP.delete, OP.move])
 /**
  * Field names on an op and on a write response.
  *
- * ⛔ **ASSUMED, all of them.** These were read off `POST /api/sites/{id}/content/items`
- * — a *different route* of the same binary — because the working client of *our*
- * route returns its responses unnormalized and so reveals no names at all.
+ * ✅ **MEASURED 2026-09-17** — backend confirmed these against its own source, and the
+ * four assumptions that stood here are retired (see `ASSUMPTIONS`). Three of the four
+ * names held exactly: `item_id`, `parent_item_id`, `if_unmodified_since`.
  *
- * The shapes are very likely identical: both are `…/items` routes with the same op
- * vocabulary, and this lane's documentation says its concurrency is "aligned with
- * the sites lane". **Likely is not measured**, and this comment is the difference.
+ * ⛔ **The fourth did not.** `section` is wrong for the item route — see `section`
+ * below, where the divergence is documented in full. It is left wrong deliberately:
+ * correcting it changes behaviour, which is a separate change.
+ *
+ * A write answers `{ entity, item_id, item_uuid, item_updated_at }`, and
+ * **`item_uuid` is set on `create` only** — a field this module does not yet name.
+ * `item_updated_at` is the token to send back as `if_unmodified_since` on the next
+ * write to that item; omitting it is last-writer-wins, and the check is per item, so
+ * two people editing different sections do not collide.
+ *
+ * *(Historical: these were originally read off `POST /api/sites/{id}/content/items` —
+ * a different route of the same binary — because the working client of our route
+ * returns responses unnormalized and reveals no names. The guess was right on three
+ * of four, which is roughly the hit rate this file exists to make visible.)*
  */
 export const FIELD = {
   /** Names the target item on an op, and the affected item on a response. */
@@ -162,6 +227,32 @@ export const FIELD = {
    * `append_only`, a field set — simply does not apply to an item that landed in
    * another. A create with no section is accepted, stored somewhere, and every
    * guarantee the author declared is quietly not in force.
+   *
+   * ⛔ **DIVERGENT FROM THE BACKEND — MEASURED 2026-09-17. This value is wrong for
+   * the item route, and is left wrong on purpose until the client change lands.**
+   *
+   * The backend takes a section **two different ways, on two different routes**:
+   *
+   * | route | how a section is named |
+   * |---|---|
+   * | `POST /entities` (create with content) | **by NAME** — `{ items: [{ section: 'profile', … }] }` |
+   * | `POST /entities/{uuid}/items` (everything after) | **by NUMERIC `section_id`** |
+   *
+   * We send `section: '<name>'` on the item route, where the backend wants
+   * `section_id: <number>`.
+   *
+   * ⚠️ **And the cost is larger than the field name**, because the id is needed to
+   * *find* an item as well as to create one. An entity read returns `items[]` with
+   * `id`, `section_id` and `updated_at` — **no section name at all**. Code that
+   * locates an item by name (`items.find(i => i.section === 'content')`) works only
+   * against a mock that invents the name, and against the real backend returns
+   * `undefined`: the update silently never happens, or a duplicate is created.
+   *
+   * ⇒ A client needs **`GET /api/models/{scope}/{name}`** — `sections[]` with `id`,
+   * `name`, `kind`, `is_brief`, `parent_section_id` — to resolve a name, plus a
+   * path-aware resolver for nested sections. That route is **not in `ROUTES`**: it is
+   * outside the `/entities` lane this module pins, so adding it is a deliberate
+   * change, not a drive-by.
    */
   section: 'section',
   /** The precondition an op carries. */
@@ -203,31 +294,25 @@ export const LIST = {
  * edit here plus a moved comment above; `tests/wire.test.js` pins the set so the
  * change cannot be quiet.
  */
+/**
+ * ⭐ **Four entries were RETIRED on 2026-09-17** — backend confirmed them against its
+ * own source, and the rule above is to move the note to MEASURED and delete the entry:
+ *
+ * | retired | confirmed as |
+ * |---|---|
+ * | `write-response-fields` | a write answers `{ entity, item_id, item_uuid, item_updated_at }`; `item_uuid` is set on **create only** |
+ * | `move-exists` | `move` is an op here and carries a precondition |
+ * | `move-position` | positioned server-side — `"first"` \| `"last"` \| `{ after }`; the client never computes an order |
+ * | `op-field-names` | `item_id`, `parent_item_id`, `if_unmodified_since` all confirmed — **but the section field is NOT**, and that is now a recorded DIVERGENCE on `FIELD.section`, not an open question |
+ *
+ * ⛔ `op-field-names` left this list by being **answered, not by being right**. Three
+ * of its four names held; the fourth is wrong and is documented where the wrong value
+ * lives. An assumption that turns out false is not an assumption any more — it is a
+ * defect, and hiding it in a list of open questions is how it stays unfixed.
+ *
+ * What remains below is genuinely unconfirmed.
+ */
 export const ASSUMPTIONS = [
-  {
-    id: 'write-response-fields',
-    we: `a write response names its item as '${FIELD.item}' and its next token as '${FIELD.token}'`,
-    from: 'the site-editor lane, which is a different route',
-    breaks: 'the ledger records nothing, so every second write on an item goes out unguarded — last-writer-wins instead of a 409',
-  },
-  {
-    id: 'op-field-names',
-    we: `an op names its target '${FIELD.item}', its placement '${FIELD.parent}', and its precondition '${FIELD.precondition}'`,
-    from: 'the site-editor lane, which is a different route',
-    breaks: 'writes are refused, loudly — the cheapest of these to be wrong about',
-  },
-  {
-    id: 'move-exists',
-    we: `'${OP.move}' is an op on this lane, and carries a precondition`,
-    from: 'the site-editor lane; this lane documents only update and delete as token-carrying',
-    breaks: 'an operator cannot reorder authored content, which is half of what makes an app an app rather than a CMS',
-  },
-  {
-    id: 'move-position',
-    we: 'a move is positioned server-side — "first" | "last" | { after } — and the client never computes an order number',
-    from: 'the site-editor lane',
-    breaks: 'reordering writes the wrong sequence, or needs a client-side order the store does not want',
-  },
   {
     id: 'viewer-unit-signal',
     we: "read a viewer's unit membership from `acting_unit_id` on /auth/me, surfaced as `viewer.actingUnitId`",

@@ -10,14 +10,14 @@ describe('wire — the assumptions are a reviewable set', () => {
   // ⭐ The list backend was asked to confirm. A new assumption added without an
   // entry here, or one quietly dropped, fails this — which is the whole point: the
   // cost of building ahead is paid in bookkeeping, not in surprises.
-  const EXPECTED = [
-    'write-response-fields',
-    'op-field-names',
-    'move-exists',
-    'move-position',
-    'viewer-unit-signal',
-    'via-and-depth-compose',
-  ]
+  //
+  // ⭐ Four entries left this list on 2026-09-17, confirmed by backend against its own
+  // source: write-response-fields, move-exists, move-position, and op-field-names.
+  // The last of those was ANSWERED rather than vindicated — three of its four field
+  // names held and the section field did not — so it is recorded as a divergence on
+  // `FIELD.section` instead of lingering here. A false belief parked in a list of open
+  // questions is how it stays unfixed.
+  const EXPECTED = ['viewer-unit-signal', 'via-and-depth-compose']
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)
