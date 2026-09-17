@@ -26,9 +26,24 @@ export {
   writeItems,
   createEntity,
   deleteEntity,
+  readModelSchema,
   ApiError,
   Ledger,
 } from './client.js'
+
+// Section lookup. A foundation names sections; the backend's item route wants numeric
+// ids and its reads give back no names at all, so these are how the two meet.
+// ⛔ `resolveSection` refuses an ambiguous bare name rather than picking one — section
+// names are unique only among siblings.
+export {
+  indexSchema,
+  resolveSection,
+  sectionIdFor,
+  sectionPathFor,
+  sectionOfItem,
+  briefSection,
+  parseModelRef,
+} from './models.js'
 
 export { useSession } from './hooks/useSession.js'
 export { useSignIn } from './hooks/useSignIn.js'

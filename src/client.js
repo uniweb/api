@@ -15,7 +15,8 @@ import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
-import { AUTH, ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
+import { AUTH, ROUTES, MODEL_ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
+import { parseModelRef, indexSchema } from './models.js'
 import { Ledger } from './ledger.js'
 
 /** The site service this package reads its base from — the only name it owns. */
@@ -109,6 +110,10 @@ export class ApiClient {
     this._challenge = null
     this._keys = new Map()
     this._inflight = new Map()
+    // Model schemas, keyed `scope/name`, each `{ index, etag }`. Read on the write
+    // path (a section id cannot be derived without one), so caching is not an
+    // optimisation here — it keeps a schema fetch off every item write.
+    this._schemas = new Map()
     // One ledger per client, which is one per page — the right grain, since it is
     // keyed by item and an item is the same item whoever is looking at it.
     this.ledger = new Ledger()
@@ -669,6 +674,67 @@ export class ApiClient {
       signal,
     })
   }
+
+  /**
+   * Read a model's schema, indexed for section lookup, cached per model.
+   *
+   * ⭐ **A write needs this.** After creation an item op names its section by numeric
+   * `section_id`, and a read gives items back carrying `section_id` and no name — so
+   * without the schema a client cannot address a section it can name, in either
+   * direction. See `./models.js`.
+   *
+   * **Cached because it is read on the write path.** A schema changes when someone
+   * edits the model, which is rare and nothing a foundation does mid-session, so a
+   * per-client cache is right — but it is keyed on the ETag the backend sends
+   * (`"<model.version>"`) so `refresh: true` revalidates rather than re-downloads,
+   * and a genuinely changed model is picked up.
+   *
+   * @param {object} args
+   * @param {string} args.schema - a SCOPED model ref, `'@proximify/course'`
+   * @param {boolean} [args.refresh] - revalidate against the ETag instead of using the cache
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<object>} the indexed schema from `indexSchema`
+   */
+  async readModelSchema({ schema, refresh = false, signal } = {}) {
+    const { scope, name } = parseModelRef(schema)
+    const key = `${scope}/${name}`
+    const cached = this._schemas.get(key)
+    if (cached && !refresh) return cached.index
+
+    const headers = cached?.etag ? { 'if-none-match': cached.etag } : undefined
+
+    let result
+    try {
+      result = await this.request('GET', MODEL_ROUTES.schema(scope, name), { headers, signal })
+    } catch (err) {
+      // ⭐ 304 is the SUCCESS case of a conditional request, but `request` treats any
+      // non-2xx as an error — rightly, since this is the only call site that sends
+      // `if-none-match`, and teaching every route that 304 is fine would be a much
+      // larger claim than this one needs.
+      if (err instanceof ApiError && err.status === 304 && cached) return cached.index
+      throw err
+    }
+
+    // A 200 with no body: nothing to index, and nothing cached to fall back on.
+    if (result === undefined || result === null) {
+      if (cached) return cached.index
+      throw new ApiError({
+        status: 0,
+        kind: 'invalid',
+        title: 'Empty schema',
+        detail: `the backend answered no body for ${key} and nothing was cached`,
+      })
+    }
+
+    const index = indexSchema(result)
+    this._schemas.set(key, { index, etag: result?.model?.version ? `"${result.model.version}"` : null })
+    return index
+  }
+
+  /** Forget cached schemas. Exposed for tests and for a model edited in the same session. */
+  forgetSchemas() {
+    this._schemas.clear()
+  }
 }
 
 // Reached only on a `@uniweb/core` older than the `api` slot, where the sealed
@@ -737,6 +803,8 @@ export const writeItems = (args) => required().writeItems(args)
 export const createEntity = (args) => required().createEntity(args)
 /** @see ApiClient#deleteEntity */
 export const deleteEntity = (args) => required().deleteEntity(args)
+/** @see ApiClient#readModelSchema */
+export const readModelSchema = (args) => required().readModelSchema(args)
 
 export { ApiError, kindOf } from './errors.js'
 export { Ledger } from './ledger.js'

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES } from '../src/wire.js'
+import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODEL_ROUTES, MODELS } from '../src/wire.js'
 
 /**
  * The wire module is the one place this package states what it believes about the
@@ -31,6 +31,28 @@ describe('wire — the assumptions are a reviewable set', () => {
       expect(a.from, `${a.id}.from`).toBeTruthy()
       expect(a.breaks, `${a.id}.breaks`).toBeTruthy()
     }
+  })
+})
+
+describe('wire — the model lane is separate, and stays separate', () => {
+  it('lives under /models, never /entities', () => {
+    // ⭐ The entity-lane test below asserts ROUTES is pure. This lane exists because a
+    // write CANNOT be composed without a schema — an item op names its section by
+    // numeric id, and a read gives back no names — so it is a deliberate second lane
+    // rather than an entry quietly appended to ROUTES.
+    expect(MODEL_ROUTES.schema('@acme', 'person')).toMatch(/^\/models\//)
+    expect(MODELS).toBe('/models')
+  })
+
+  it('is not reachable through ROUTES, so the entity-lane guard keeps its meaning', () => {
+    expect(Object.keys(ROUTES)).not.toContain('schema')
+    for (const build of Object.values(ROUTES)) {
+      expect(build('u-1')).not.toContain('/models')
+    }
+  })
+
+  it('encodes a scope, which carries an @ and would otherwise break the path', () => {
+    expect(MODEL_ROUTES.schema('@acme', 'person')).toBe('/models/%40acme/person')
   })
 })
 

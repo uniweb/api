@@ -226,6 +226,54 @@ export const ROUTES = {
 }
 
 /**
+ * The MODEL lane — `/models`, and it is a **second lane, added deliberately.**
+ *
+ * ⛔ The lane rule above says this package addresses **entities**. That ruling was
+ * about not creating sites; it did not anticipate that writing an entity would
+ * *require* reading a model. It does: after creation, an item op names its section by
+ * **numeric `section_id`**, and an entity read returns items carrying `section_id`
+ * and **no name**. Without the schema there is no way to turn `'content'` into an id,
+ * or an id back into a name — so a client that only speaks `/entities` cannot write
+ * to one correctly.
+ *
+ * ⇒ This is kept **out of `ROUTES`** rather than quietly appended to it, so the test
+ * that pins the entity lane keeps its meaning and this exception stays visible.
+ *
+ * **MEASURED 2026-09-17** — `GET /models/{scope}/{name}` answers `{ model, sections }`
+ * with an **ETag of `"<model.version>"`** (the revalidation key a resolver should
+ * cache on). See the schema shape in the header.
+ */
+export const MODELS = '/models'
+
+/** Routes on the model lane. Read-only: this package never writes a schema. */
+export const MODEL_ROUTES = {
+  /** `GET /models/{scope}/{name}` — one model's definition and its sections. */
+  schema: (scope, name) => `${MODELS}/${encodeURIComponent(scope)}/${encodeURIComponent(name)}`,
+}
+
+/**
+ * Field names on the model-schema response. **MEASURED 2026-09-17.**
+ *
+ * ⛔ `name` is unique only among SIBLINGS, so it is never a key on its own — see
+ * `resolveSection` in `./models.js`.
+ */
+export const SECTION_FIELD = {
+  id: 'id',
+  name: 'name',
+  kind: 'kind',
+  isBrief: 'is_brief',
+  parent: 'parent_section_id',
+  fields: 'fields',
+}
+
+/** Section kinds. A `binder` is organisational — it cannot hold items. */
+export const SECTION_KIND = {
+  single: 'single',
+  multi: 'multi',
+  binder: 'binder',
+}
+
+/**
  * Query parameter names. **MEASURED**, with one open question.
  *
  * ⚠️ `via` vs `depth`: this package sends `via` on a single-entity read — reading
