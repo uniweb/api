@@ -25,7 +25,7 @@
  * ⭐ Read-only. This package never writes a schema.
  */
 
-import { MODEL_ROUTES, SECTION_FIELD, SECTION_KIND } from './wire.js'
+import { FIELD, MODEL_ROUTES, SECTION_FIELD, SECTION_KIND } from './wire.js'
 import { ApiError } from './errors.js'
 
 /**
@@ -171,9 +171,16 @@ export function sectionPathFor(index, ref) {
   return resolveSection(index, ref).path
 }
 
-/** The section an item belongs to, from the `section_id` a read gives back. */
+/**
+ * The section an item belongs to, from the `section_id` a read gives back.
+ *
+ * ⭐ **The only way back to a name.** A read answers items carrying `section_id` and
+ * nothing else about where they live, so every `items.find(i => i.section === '…')` in
+ * a consumer has to become a lookup through here, or through `byPath.get(name).id` and
+ * a match on the id.
+ */
 export function sectionOfItem(index, item) {
-  return index.byId.get(item?.section_id) || null
+  return index.byId.get(item?.[FIELD.sectionId]) || null
 }
 
 /** The brief section, or null. ⚠️ A schema READ spells it `is_brief`; a model FILE spells it `brief`. */
