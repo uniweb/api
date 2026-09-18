@@ -71,6 +71,38 @@ when it is simply not being asked for.
 not-found and not-permitted, on purpose: render your paywall or sign-in prompt on it
 and never say "deleted".
 
+### ⭐ What an entity IS — content is always items
+
+An entity carries identity, ownership, flags, timestamps, and a `brief` **the server
+maintains itself**. ⛔ **There is no entity-level `data`.** Everything an author wrote
+is an item in a section:
+
+```jsx
+const { entity } = useEntity({ schema: '@/course', uuid })
+
+entity.uuid            // identity
+entity.brief           // the card record — SERVER-DERIVED from the brief section
+entity.items           // [{ id, section_id, parent_item_id, data, order_number, updated_at }]
+entity.canEdit         // false when the viewer may not, and when nobody asked
+```
+
+⛔ **An item carries `section_id` and NO section name.** `items.find(i => i.section === 'body')`
+matches nothing — it is not an error, it is `undefined`, and the update you were about
+to make silently never happens. Resolve the name once instead:
+
+```jsx
+import { readModelSchema, sectionOfItem } from '@uniweb/api'
+
+const schema = await readModelSchema({ schema: '@/course' })
+const body = schema.byPath.get('body').id
+const item = entity.items.find((i) => i.section_id === body)
+sectionOfItem(schema, item).name          // and back the other way
+```
+
+⚠️ **A `single` section — `brief: true` included — is an ordinary one-item section.**
+Create into it once, then update. Never send `brief`: it is output, rebuilt after every
+write to the brief section.
+
 ## Writing
 
 ```jsx
@@ -138,6 +170,35 @@ npx uniweb-api-mock --port 8787
 
 ⛔ **The mock is a fixture of what this package expects, not a model of any real
 server.** Behaviour it happens to have is evidence about the mock and nothing else.
+
+### Creating an entity
+
+```js
+import { createEntity } from '@uniweb/api/client'
+
+const course = await createEntity({
+  schema: '@/course',
+  items: [
+    { section: 'course',  data: { title: 'Open water' } },   // the brief section
+    { section: 'modules', data: { title: 'Week 1' } },
+  ],
+})
+```
+
+The entity and its items commit in one transaction, and the created entity comes back
+with both. ⚠️ **This is the one route that names a section rather than numbering it** —
+`items[].section` is a `/`-joined path of names (`'pages/page_sections'`); a bare name
+works when exactly one section in the model carries it. Everywhere after creation, an
+item op addresses a numeric `section_id`, and `useEntityWriter` resolves that for you
+from the name you pass.
+
+⛔ **There is no top-level `data`, and passing one is refused.** The route reads
+`items`, `uuid` and `owner_id` and ignores everything else — not by rejecting it, but
+by dropping it: a stray `data` gets you **201 and an empty entity, with no error
+anywhere**. This package refuses it up front rather than reproducing that silence.
+
+⚠️ `parent_item_id` may not name an item created in the same call, and no op in a batch
+may reference one created earlier in that batch. Create the parent, then the children.
 
 ## Outside React
 
