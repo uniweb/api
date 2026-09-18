@@ -567,9 +567,9 @@ export class ApiClient {
    * there is nothing to list — the backend answers `401`, and a lapsed session is
    * a `401` too, never an empty list (so `records: []` means empty).
    *
-   * ⚠️ **`scope` decides whose.** The default, `accessible`, is everything the
-   * viewer may read — on a site's `api` service that is every member's entities
-   * of the Model, not only the viewer's. `mine` is only what the viewer owns.
+   * `scope` decides whose: the default, `accessible`, is everything the viewer may
+   * read — for a member of a site, their own entities and what was shared with them;
+   * for the operator, everything. `mine` is only what the viewer owns.
    *
    * ## Paging, as far as it can honestly be absorbed
    *

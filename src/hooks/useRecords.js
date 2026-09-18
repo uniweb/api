@@ -34,8 +34,9 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * entity for those. ⚠️ `matched` counts the records in this answer, not a total:
  * `hasMore` is true when the page came back full.
  *
- * ⚠️ The default scope is everything the viewer may read, which on a site's `api`
- * service includes other members' entities. `scope: 'mine'` is only the viewer's.
+ * The default scope is everything the viewer may read — for a member, their own
+ * entities and what was shared with them; for the operator, everything.
+ * `scope: 'mine'` is only the viewer's own.
  *
  * Cached under a key scoped to the viewer, so a sign-in re-reads the list for who
  * is now looking, and a write through `useEntityWriter` drops it.

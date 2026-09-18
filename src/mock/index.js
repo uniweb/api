@@ -36,8 +36,9 @@ import { DEFAULT_SEED } from './seed.js'
  *
  * ## What it models, and what it does not
  *
- * One operator (`operator: true` on a seeded account) and members; every
- * signed-in account reads every entity, the owner and the operator write it;
+ * One operator (`operator: true` on a seeded account) and members; a member reads
+ * and writes their own entities and nothing of another's (unless the seed's
+ * `memberFloor` says the service lets them), the operator reads and writes all;
  * `creatable_by: 'unit_members'` Models are created by the operator only; sign-up
  * leaves an account unverified until the link in `mock.outbox` is followed. It
  * does not model entitlements behind `via`, nested sections, or second factors.
@@ -323,7 +324,8 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         if (!b || !Array.isArray(b.uuids)) return badRequest('invalid batch body: missing field `uuids`')
         const invalid = b.uuids.find((u) => !isUuid(u))
         if (invalid) return badRequest(`invalid uuid: ${invalid}`)
-        const entities = b.uuids.map((u) => store.entities.get(u)).filter(Boolean)
+        // Unreadable ones drop, like missing ones — the batch shows what the caller can see.
+        const entities = b.uuids.map((u) => store.entities.get(u)).filter((e) => e && store.mayRead(e))
         return json(200, { entities: entities.map((e) => store.read(e, { canEdit: false })) })
       }
 
@@ -369,8 +371,9 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         if (via && !isUuid(via)) return badRequest(`invalid via uuid: ${via}`)
         const found = target(one[1], q.get(PARAM.model))
         if (found.response) return found.response
-        // The mock models no entitlements: a `via` read is the same read, once the
-        // container exists. Not found and not permitted are one answer, as ever.
+        // Not found and not permitted are one answer. The mock models no entitlements:
+        // a `via` read is the same read, once the container exists.
+        if (!store.mayRead(found.entity)) return notFound('entity', one[1])
         if (via && !store.entities.has(via)) return notFound('entity', one[1])
         return json(200, store.read(found.entity, { locales: locales(q), withItems: depth === 'shallow' || depth === 'deep' }))
       }

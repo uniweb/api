@@ -212,10 +212,14 @@ export const PARAM = {
 }
 
 /**
- * The list's `scope`. **MEASURED.** Default `accessible` — everything the viewer
- * may read. ⚠️ On a site's `api` service that is **every member's** entities of
- * the Model, not only the viewer's own: members of a site read each other's
- * content. `mine` is only what the viewer owns.
+ * The list's `scope`. Default `accessible` — everything the viewer may read; `mine`
+ * — only what the viewer owns.
+ *
+ * What a member of a site may read: their own entities, and what was shared with
+ * them. Other members' entities are private to their owners unless the site's
+ * service was set up to let members read each other's. The operator reads
+ * everything. *(A site's service let every member read every other member's
+ * entities until 2026-09-18 — measured, and changed on the backend.)*
  */
 export const SCOPE = {
   mine: 'mine',

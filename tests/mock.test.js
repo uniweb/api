@@ -36,19 +36,28 @@ describe('the client against the mock — reading', () => {
     const { client } = stack()
     await expect(client.listEntities({ schema: '@/track' })).rejects.toMatchObject({ kind: 'auth' })
 
-    await signIn(client, 'attendee')
+    await signIn(client, 'organiser')
     const { records, matched, hasMore } = await client.listEntities({ schema: '@/track' })
     expect(matched).toBe(2)
     expect(hasMore).toBe(false)
     expect(records.map((r) => r.brief.name).sort()).toEqual(['Main hall', 'Workshops'])
     // A row carries no items — read one entity for those.
     expect('items' in records[0]).toBe(false)
-    expect(records[0]).toMatchObject({ model_name: '@/track', via: 'unit_member' })
+    // The operator reads everything as `system_admin` — `rbac`, even on their own rows.
+    expect(records[0]).toMatchObject({ model_name: '@/track', via: 'rbac' })
+  })
+
+  it('⭐ gives a member nothing of anyone else\'s — sharing is explicit', async () => {
+    const { client } = stack()
+    await signIn(client, 'attendee')
+    await expect(client.listEntities({ schema: '@/track' })).resolves.toMatchObject({ records: [], matched: 0 })
+    // Not found and not permitted are one answer.
+    await expect(client.readEntity({ schema: '@/track', uuid: TRACK })).resolves.toEqual({ status: 'absent', entity: null })
   })
 
   it('pages: `matched` is the page, and a full page may have more', async () => {
     const { client } = stack()
-    await signIn(client, 'attendee')
+    await signIn(client, 'organiser')
     const page = await client.listEntities({ schema: '@/track', limit: 1, offset: 0 })
     expect(page.records).toHaveLength(1)
     expect(page.matched).toBe(1)
@@ -61,11 +70,11 @@ describe('the client against the mock — reading', () => {
 
   it('reads one entity: content is items, the brief is the summary, can_edit is the gate\'s answer', async () => {
     const { client } = stack()
-    await signIn(client, 'attendee')
+    await signIn(client, 'organiser')
     const { status, entity } = await client.readEntity({ schema: '@/track', uuid: TRACK })
     expect(status).toBe('ready')
     expect(entity.model_name).toBe('@/track')
-    expect(entity.can_edit).toBe(false)
+    expect(entity.can_edit).toBe(true)
     expect(entity.hydrated.entity.brief).toEqual({ name: 'Main hall' })
     expect(entity.hydrated.items.map((i) => i.data.title).filter(Boolean)).toEqual([
       'Opening keynote',
@@ -88,7 +97,7 @@ describe('the client against the mock — reading', () => {
     await expect(client.readEntity({ schema: '@/track', uuid: 'track-main' })).rejects.toMatchObject({ kind: 'invalid' })
   })
 
-  it('lists only the viewer\'s own with `scope: "mine"` — the default reads every member\'s', async () => {
+  it('lists only the viewer\'s own with `scope: "mine"`', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
     expect((await client.listEntities({ schema: '@/track', scope: 'mine' })).records).toEqual([])
@@ -222,43 +231,51 @@ describe('the client against the mock — writing', () => {
     expect(client.ledger.get(panel.id)).toBeNull()
   })
 
-  it('lets members read each other\'s entities, and write only their own — the operator writes all', async () => {
-    // Measured on a site's api service: every member acts in the site's one unit,
-    // and a member of it may READ what is in it. Writing is the owner's and the
-    // operator's.
-    const { client } = stack({
-      seed: {
-        accounts: [
-          { username: 'organiser', password: 'organiser', operator: true },
-          { username: 'ada', password: 'ada' },
-          { username: 'bo', password: 'bo' },
-        ],
-        schemas: {
-          '@/attendance': {
-            sections: {
-              attendance: { kind: 'single', brief: true, fields: { who: { type: 'string' } } },
-              checkins: { kind: 'multi', append_only: true, fields: { at: { type: 'string' } } },
-            },
+  it('keeps members\' entities private to them by default — and a service that chose a floor shares them', async () => {
+    // Measured on a site's api service: a member reads and writes their own entities and
+    // nothing of another's; the operator reads and writes all. A service can be set up
+    // to let members read each other's — the seed's `memberFloor`.
+    const seed = (memberFloor) => ({
+      memberFloor,
+      accounts: [
+        { username: 'organiser', password: 'organiser', operator: true },
+        { username: 'ada', password: 'ada' },
+        { username: 'bo', password: 'bo' },
+      ],
+      schemas: {
+        '@/attendance': {
+          sections: {
+            attendance: { kind: 'single', brief: true, fields: { who: { type: 'string' } } },
+            checkins: { kind: 'multi', append_only: true, fields: { at: { type: 'string' } } },
           },
         },
       },
     })
-    await signIn(client, 'ada')
-    const adas = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
-    await client.signOut()
 
-    await signIn(client, 'bo')
-    const seen = await client.readEntity({ schema: '@/attendance', uuid: adas.uuid })
+    const privately = stack({ seed: seed(undefined) }).client
+    await signIn(privately, 'ada')
+    const adas = await privately.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    await privately.signOut()
+    await signIn(privately, 'bo')
+    await expect(privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    expect((await privately.listEntities({ schema: '@/attendance' })).records).toEqual([])
+    await expect(
+      privately.writeItems({ schema: '@/attendance', uuid: adas.uuid, ops: { kind: 'create', section: 'checkins', data: { at: 'x' } } }),
+    ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'edit' } })
+    await privately.signOut()
+    await signIn(privately, 'organiser')
+    expect((await privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).entity.can_edit).toBe(true)
+    delete globalThis.uniweb
+
+    const shared = stack({ seed: seed('read') }).client
+    await signIn(shared, 'ada')
+    const adas2 = await shared.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    await shared.signOut()
+    await signIn(shared, 'bo')
+    const seen = await shared.readEntity({ schema: '@/attendance', uuid: adas2.uuid })
     expect(seen.entity.hydrated.entity.brief).toEqual({ who: 'Ada' })
     expect(seen.entity.can_edit).toBe(false)
-    expect((await client.listEntities({ schema: '@/attendance' })).records.map((r) => r.via)).toEqual(['unit_member'])
-    await expect(
-      client.writeItems({ schema: '@/attendance', uuid: adas.uuid, ops: { kind: 'create', section: 'checkins', data: { at: 'x' } } }),
-    ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'edit' } })
-    await client.signOut()
-
-    await signIn(client, 'organiser')
-    expect((await client.readEntity({ schema: '@/attendance', uuid: adas.uuid })).entity.can_edit).toBe(true)
+    expect((await shared.listEntities({ schema: '@/attendance' })).records.map((r) => r.via)).toEqual(['unit_member'])
   })
 })
 

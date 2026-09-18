@@ -13,10 +13,12 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *   is the entity's `brief`, which the backend maintains — derived here on read.
  * - **Ids are integers, entities are addressed by UUID.** A section, an item, an
  *   entity and an account each have an integer id; an entity's path id is its UUID.
- * - **Every signed-in account reads every entity.** On a site's `api` service
- *   every member acts in the site's one unit, and a member of it may read what is
- *   in it — so members read each other's entities. Writing is for the owner and
- *   the operator.
+ * - **A member reads and writes their own entities, and nothing of another's.**
+ *   Every member of a site acts in the site's one unit, and membership of it
+ *   conveys nothing by itself: another member's entity is private to its owner
+ *   unless shared. A service can be set up to let members read (or edit) each
+ *   other's — the seed's `memberFloor` models that choice. *(Until 2026-09-18 the
+ *   backend gave every member read access to every other member's entities.)*
  * - **The operator** — the account that runs the site's service — holds
  *   `system_admin`, creates the Models only the operator may, and may write
  *   anything. A seeded account is the operator with `operator: true`.
@@ -85,6 +87,8 @@ export class MockStore {
    *   seed's items and `append_only` use.
    * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, items?: [{ section, data, parent? }] }`.
    *   `uuid` must be a UUID. (`data`, the older spelling, becomes the brief section's item.)
+   * @param {'read'|'edit'} [seed.memberFloor] - what membership lets one member do to
+   *   ANOTHER member's entities. Absent — the default — nothing: each member's are private.
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
    */
@@ -95,6 +99,11 @@ export class MockStore {
     for (const a of seed.accounts || []) this.addAccount(a, { verified: true })
 
     this.schemas = seed.schemas || {}
+    if (seed.memberFloor != null && !['read', 'edit'].includes(seed.memberFloor)) {
+      throw new Error(`[uniweb/api mock] memberFloor is 'read' or 'edit', or absent — got ${JSON.stringify(seed.memberFloor)}`)
+    }
+    /** What membership lets one member do to another's entities: `null` (nothing), `read` or `edit`. */
+    this.memberFloor = seed.memberFloor ?? null
     this.models = new Map()
     const itemSections = new Map()
     for (const e of seed.entities || []) {
@@ -406,12 +415,22 @@ export class MockStore {
     return siblings[siblings.length - 1].order_number + GAP
   }
 
-  mayEdit(entity) {
+  /** The operator, the owner — or any member, when the service lets members read each other's. */
+  mayRead(entity) {
     const me = this.account
-    return !!me && (me.operator || entity.owner_id === me.id)
+    return !!me && (me.operator || entity.owner_id === me.id || this.memberFloor != null)
   }
 
-  /** Which branch lets the viewer read a row, as the backend names it. */
+  mayEdit(entity) {
+    const me = this.account
+    return !!me && (me.operator || entity.owner_id === me.id || this.memberFloor === 'edit')
+  }
+
+  /**
+   * Which branch lets the viewer read a row, as the backend names it. The operator's
+   * is `rbac` even on their own rows: ownership speaks only for a member of the site's
+   * unit, and the operator reads everything as `system_admin` without being one.
+   */
   via(entity) {
     const me = this.account
     if (me?.operator) return 'rbac'
@@ -506,7 +525,7 @@ export class MockStore {
   list(model, { scope, limit, offset, paginate, locales }) {
     const me = this.account
     const rows = [...this.entities.values()]
-      .filter((e) => e.model === model.name && (scope !== 'mine' || e.owner_id === me?.id))
+      .filter((e) => e.model === model.name && this.mayRead(e) && (scope !== 'mine' || e.owner_id === me?.id))
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : b.id - a.id))
     const page = paginate ? rows.slice(offset, offset + limit) : rows
     // `matched` counts the rows in THIS answer — the page, when paging.

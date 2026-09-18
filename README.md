@@ -83,9 +83,10 @@ live source — no `api` service, or nobody signed in — so render your site's 
 Showing "nothing yet" for the first case tells a visitor their content is missing
 when it is simply not being asked for.
 
-⚠️ **Whose records.** The default `scope` is everything the viewer may read, and on a
-site's `api` service **members can read each other's entities**. For "my submissions",
-"my progress", pass `scope: 'mine'`.
+**Whose records.** A member reads their own entities and what was shared with them;
+other members' are private unless the site's service was set up to let members read
+each other's. The site's operator reads everything. `scope: 'mine'` lists only the
+viewer's own.
 
 A record is a summary: `record.brief` holds the fields of the Model's brief section. It
 carries no items — read the entity for those. `hasMore` is true when a page came back
@@ -202,9 +203,11 @@ will in production, and your site's configuration is identical either way.
 refusals, for every route this package uses. It enforces what your schemas declare —
 who may create entries, which sections are insert-only, the fields a section takes —
 and it is as strict as the backend about requests, so a mistake fails here rather
-than in front of a user. Members read each other's entities and write their own; the
-operator writes everything. A new sign-up must be verified: the link is in
-`mock.outbox` (the standalone server prints it). State is in memory: restart to reset.
+than in front of a user. Members read and write their own entities and nothing of each
+other's; the operator reads and writes everything (`memberFloor: 'read'` in the seed
+models a service set up to let members read each other's). A new sign-up must be
+verified: the link is in `mock.outbox` (the standalone server prints it). State is in
+memory: restart to reset.
 
 There is also a standalone server, for a frontend that is not a Uniweb site:
 
