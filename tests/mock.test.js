@@ -43,8 +43,18 @@ describe('the client against the mock — reading', () => {
     expect(records.map((r) => r.brief.name).sort()).toEqual(['Main hall', 'Workshops'])
     // A row carries no items — read one entity for those.
     expect('items' in records[0]).toBe(false)
-    // The operator reads everything as `system_admin` — `rbac`, even on their own rows.
-    expect(records[0]).toMatchObject({ model_name: '@/track', via: 'rbac' })
+    // The seeded programme is the operator's own, so its rows are `owner`.
+    expect(records[0]).toMatchObject({ model_name: '@/track', via: 'owner' })
+  })
+
+  it('shows the operator a member\'s row as `rbac` — it reads what is not its own as `system_admin`', async () => {
+    const { client } = stack()
+    await signIn(client, 'attendee')
+    await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    await client.signOut()
+    await signIn(client, 'organiser')
+    const { records } = await client.listEntities({ schema: '@/attendance' })
+    expect(records.map((r) => r.via)).toEqual(['rbac'])
   })
 
   it('⭐ gives a member nothing of anyone else\'s — sharing is explicit', async () => {

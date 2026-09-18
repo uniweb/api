@@ -21,7 +21,8 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *   backend gave every member read access to every other member's entities.)*
  * - **The operator** — the account that runs the site's service — holds
  *   `system_admin`, creates the Models only the operator may, and may write
- *   anything. A seeded account is the operator with `operator: true`.
+ *   anything. It is a member of the site's unit like everyone else, so what it
+ *   makes is its own. A seeded account is the operator with `operator: true`.
  *
  * ⛔ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
  * A mock that grows a schema and migrations becomes a second implementation that
@@ -427,14 +428,17 @@ export class MockStore {
   }
 
   /**
-   * Which branch lets the viewer read a row, as the backend names it. The operator's
-   * is `rbac` even on their own rows: ownership speaks only for a member of the site's
-   * unit, and the operator reads everything as `system_admin` without being one.
+   * Which branch lets the viewer read a row, as the backend names it — the first to
+   * answer in its order: `owner`, `grant`, `rbac`, `unit_member`. The operator's own rows
+   * are `owner` like anyone's, and the rest it reads as `system_admin`. *(Until
+   * 2026-09-18 the operator was not a member of the site's unit, and ownership speaks
+   * only for a member — so its own rows answered `rbac` too.)*
    */
   via(entity) {
     const me = this.account
+    if (entity.owner_id === me?.id) return 'owner'
     if (me?.operator) return 'rbac'
-    return entity.owner_id === me?.id ? 'owner' : 'unit_member'
+    return 'unit_member'
   }
 
   /** The entity's summary: its brief section's item, projected like any read. */

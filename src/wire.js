@@ -333,8 +333,10 @@ export const CREATE = {
  * paging; a page that came back full is the only sign there may be more.
  *
  * `via` names why the viewer can read the row — `owner`, `grant`, `rbac`,
- * `unit_member`, `entitlement`; treat an unknown value as "no opinion". ⚠️ An
- * empty list means empty: a lapsed session is a `401`, never `200 []`.
+ * `unit_member`, `entitlement`; treat an unknown value as "no opinion". The
+ * operator's own rows are `owner` and the rest `rbac` — since 2026-09-18; an older
+ * backend answers `rbac` on the operator's own rows too. ⚠️ An empty list means
+ * empty: a lapsed session is a `401`, never `200 []`.
  */
 export const LIST = {
   records: 'entities',
