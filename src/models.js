@@ -29,24 +29,40 @@ import { MODEL_ROUTES, SECTION_FIELD, SECTION_KIND } from './wire.js'
 import { ApiError } from './errors.js'
 
 /**
- * Split a model ref into `{ scope, name }`.
+ * Split a model ref into `{ scope, name, selfScoped }`.
  *
- * `'@proximify/course'` → `{ scope: '@proximify', name: 'course' }`. A ref with no
- * scope is rejected rather than defaulted: `@/course` is the *unresolved* form, which
- * only means something before registration, and quietly turning it into a request
- * would ask the backend about a model that cannot exist.
+ * `'@proximify/course'` → `{ scope: '@proximify', name: 'course', selfScoped: false }`.
+ *
+ * ## ⭐ `@/name` is CARRIED, not refused — corrected 2026-09-18
+ *
+ * This function used to reject the self-scoped `@/course` form on the reasoning that
+ * it "only resolves at registration", so asking the backend about it would name a
+ * model that cannot exist. ⛔ **That reasoning was not shared by the rest of this
+ * client.** `listEntities`, `readEntity` and `createEntity` all put the caller's ref
+ * on the wire verbatim as `?model=`, and `@/course` is what every foundation in
+ * development passes. So the entity lane already asks about the self-scoped form on
+ * every request, and only the model lane refused to — which made section resolution
+ * unreachable in exactly the lane that needs it, since a name cannot become a
+ * `section_id` without a schema read.
+ *
+ * ⇒ One ref, one treatment: `@/course` goes out as `/models/%40/course`, the same way
+ * it goes out as `?model=@/course`. Whatever resolves the self scope for one resolves
+ * it for the other. `selfScoped` is set so a caller that cares can tell.
+ *
+ * A ref with **no** scope at all (`'course'`) is still refused — that is a malformed
+ * ref, not a namespace.
  */
 export function parseModelRef(ref) {
-  const m = /^(@[^/]+)\/(.+)$/.exec(String(ref || ''))
+  const m = /^(@[^/]*)\/(.+)$/.exec(String(ref || ''))
   if (!m) {
     throw new ApiError({
       status: 0,
       kind: 'invalid',
       title: 'Bad model ref',
-      detail: `'${ref}' is not a scoped model name — expected '@scope/name'. '@/name' is the pre-registration form and has no scope to ask about.`,
+      detail: `'${ref}' is not a model name — expected '@scope/name', or the self-scoped '@/name'.`,
     })
   }
-  return { scope: m[1], name: m[2] }
+  return { scope: m[1], name: m[2], selfScoped: m[1] === '@' }
 }
 
 /**

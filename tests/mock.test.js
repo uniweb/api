@@ -94,12 +94,14 @@ describe('the client against the mock', () => {
     const { client } = stack()
     await signIn(client, 'organiser')
     client.ledger.note('sess-1', 'a-token-from-yesterday')
+    // ⚠️ Valid data throughout: the mock shape-checks item writes against the
+    // declared section, so an empty `data` is a 422 about `title`, not a conflict.
 
     await expect(
       client.writeItems({
         schema: '@/track',
         uuid: 'track-main',
-        ops: { kind: 'update', item_id: 'sess-1', data: {} },
+        ops: { kind: 'update', item_id: 'sess-1', data: { title: 'Opening keynote' } },
       }),
     ).rejects.toMatchObject({ status: 409 })
 
@@ -109,7 +111,7 @@ describe('the client against the mock', () => {
       client.writeItems({
         schema: '@/track',
         uuid: 'track-main',
-        ops: { kind: 'update', item_id: 'sess-1', data: {} },
+        ops: { kind: 'update', item_id: 'sess-1', data: { title: 'Opening keynote' } },
       }),
     ).resolves.toBeTruthy()
   })
@@ -117,7 +119,15 @@ describe('the client against the mock', () => {
   it('orders by position, server-side, with no number from the client', async () => {
     const { client, mock } = stack()
     await signIn(client, 'organiser')
-    const order = () => mock.store.entities.get('track-main').items.map((i) => i.item_id)
+    // ⛔ An item is `id` / `section_id` as the store holds it — `item_id` is the WRITE
+    // spelling and appears only on an op and a write response. And the entity has a
+    // brief item too, so the sessions are read by their section rather than by slicing.
+    const sessions = mock.store.models.get('@/track').byName.get('sessions').id
+    const order = () =>
+      mock.store.entities
+        .get('track-main')
+        .items.filter((i) => i.section_id === sessions)
+        .map((i) => i.id)
     expect(order()).toEqual(['sess-1', 'sess-2', 'sess-3'])
 
     await client.writeItems({

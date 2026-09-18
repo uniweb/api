@@ -16,7 +16,7 @@ import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, MODEL_ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
-import { parseModelRef, indexSchema } from './models.js'
+import { parseModelRef, indexSchema, sectionIdFor } from './models.js'
 import { normalizeEntity, normalizeEntities } from './entities.js'
 import { Ledger } from './ledger.js'
 
@@ -612,7 +612,10 @@ export class ApiClient {
     if (list.length === 0) {
       throw new ApiError({ status: 0, title: 'No Ops', detail: 'writeItems needs at least one op', kind: 'invalid' })
     }
-    const stamped = list.map((op) => this.ledger.stamp(op))
+    // ⛔ A `create` op names its section BY NAME everywhere above this line, and the
+    // item route wants a numeric id. Translated here, once, from the model schema.
+    const addressed = await this._addressSections(schema, list, signal)
+    const stamped = addressed.map((op) => this.ledger.stamp(op))
     const query = { [PARAM.model]: schema }
     if (readback) query[PARAM.readback] = true
 
@@ -633,6 +636,53 @@ export class ApiClient {
       }
       throw err
     }
+  }
+
+  /**
+   * Turn every `create` op's section NAME into the numeric `section_id` the item
+   * route addresses by.
+   *
+   * ## ⭐ Why the translation lives here and not in the caller
+   *
+   * A foundation names things: `create(data, { section: 'modules' })`. A numeric id
+   * is a fact about one backend's storage, it is not stable across deployments, and a
+   * component that held one would have coupled itself to a database. So the vocabulary
+   * boundary is the same one `useEntityWriter` draws for ops — names above, wire below.
+   *
+   * ⛔ **The schema is fetched only when an op actually needs it.** Every `update`,
+   * `delete` and `move` addresses an item by `item_id` and needs no section at all, so
+   * the common write costs no extra request; `readModelSchema` caches per model with
+   * ETag revalidation, so even a burst of creates costs one.
+   *
+   * A numeric `section_id` already on the op is honoured as given — but still resolved,
+   * so an id belonging to no section of this model is named here rather than becoming a
+   * confusing refusal from the server.
+   *
+   * @param {string} schema
+   * @param {object[]} ops
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<object[]>} the ops, addressed
+   */
+  async _addressSections(schema, ops, signal) {
+    const needs = (op) =>
+      op?.kind === OP.create && (op[FIELD.section] != null || op[FIELD.sectionId] != null)
+    if (!ops.some(needs)) return ops
+
+    if (!schema) {
+      throw new ApiError({
+        status: 0,
+        kind: 'invalid',
+        title: 'No Model',
+        detail: 'a create op names a section, and resolving it to a section_id needs the schema — pass `schema`',
+      })
+    }
+    const index = await this.readModelSchema({ schema, signal })
+
+    return ops.map((op) => {
+      if (!needs(op)) return op
+      const { [FIELD.section]: named, [FIELD.sectionId]: id, ...rest } = op
+      return { ...rest, [FIELD.sectionId]: sectionIdFor(index, id ?? named) }
+    })
   }
 
   /**

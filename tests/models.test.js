@@ -28,14 +28,22 @@ const index = indexSchema(SCHEMA)
 
 describe('parseModelRef', () => {
   it('splits a scoped ref', () => {
-    expect(parseModelRef('@proximify/course')).toEqual({ scope: '@proximify', name: 'course' })
+    expect(parseModelRef('@proximify/course')).toEqual({ scope: '@proximify', name: 'course', selfScoped: false })
   })
 
-  it('⭐ REFUSES the unresolved `@/name` form rather than defaulting a scope', () => {
-    // `@/course` means "whoever ends up owning this" and only resolves at
-    // registration. Asking the backend about it would name a model that cannot exist.
-    expect(() => parseModelRef('@/course')).toThrow(ApiError)
+  it('⭐ CARRIES the self-scoped `@/name` form, the way every other route already does', () => {
+    // ⛔ This refused `@/course` until 2026-09-18, on the reasoning that the self scope
+    // only resolves at registration. But `?model=@/course` goes out verbatim on every
+    // entity request, and `@/course` is what a foundation passes in development — so
+    // only the MODEL lane refused it, which made section resolution unreachable in the
+    // one lane that needs it. One ref, one treatment.
+    expect(parseModelRef('@/course')).toEqual({ scope: '@', name: 'course', selfScoped: true })
+  })
+
+  it('still refuses a ref with no scope at all — that is malformed, not a namespace', () => {
     expect(() => parseModelRef('course')).toThrow(ApiError)
+    expect(() => parseModelRef('')).toThrow(ApiError)
+    expect(() => parseModelRef('@proximify')).toThrow(ApiError)
   })
 })
 

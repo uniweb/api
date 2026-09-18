@@ -122,6 +122,77 @@ describe('writeItems', () => {
     expect('if_unmodified_since' in sent).toBe(false)
   })
 
+  describe('⭐ addressing a section — the item route takes an id, a foundation holds a name', () => {
+    const SCHEMA = {
+      model: { name: 'course', version: 3 },
+      sections: [
+        { id: 51, name: 'identity', kind: 'single', is_brief: true, parent_section_id: null, fields: [] },
+        { id: 52, name: 'modules', kind: 'multi', is_brief: false, parent_section_id: null, fields: [] },
+        { id: 53, name: 'shelf', kind: 'binder', is_brief: false, parent_section_id: null, fields: [] },
+      ],
+    }
+    const answering = (onWrite) => (url, init) => {
+      if (parse(url).pathname.includes('/models/')) return json(200, SCHEMA, { etag: '"3"' })
+      onWrite?.(JSON.parse(init.body), url)
+      return json(200, {})
+    }
+
+    it('resolves the NAME to a numeric section_id and drops the name', async () => {
+      let sent
+      const client = clientWith(answering((body) => (sent = body)))
+      await client.writeItems({ schema: '@/course', uuid: 'e-1', ops: { kind: 'create', section: 'modules', data: {} } })
+      expect(sent.section_id).toBe(52)
+      expect('section' in sent).toBe(false)
+    })
+
+    it('reads the schema ONCE for a batch of creates, and not at all without one', async () => {
+      const paths = []
+      const client = clientWith((url, init) => {
+        paths.push(parse(url).pathname)
+        if (parse(url).pathname.includes('/models/')) return json(200, SCHEMA, { etag: '"3"' })
+        return json(200, { results: [] })
+      })
+      await client.writeItems({
+        schema: '@/course',
+        uuid: 'e-1',
+        ops: [
+          { kind: 'create', section: 'modules', data: { a: 1 } },
+          { kind: 'create', section: 'modules', data: { a: 2 } },
+        ],
+      })
+      expect(paths.filter((p) => p.includes('/models/'))).toHaveLength(1)
+
+      // ⛔ And an update pays nothing: it addresses an item, not a section.
+      await client.writeItems({ schema: '@/course', uuid: 'e-1', ops: { kind: 'update', item_id: 9, data: {} } })
+      expect(paths.filter((p) => p.includes('/models/'))).toHaveLength(1)
+    })
+
+    it('honours a numeric section_id the caller already holds — but still checks it exists', async () => {
+      let sent
+      const client = clientWith(answering((body) => (sent = body)))
+      await client.writeItems({ schema: '@/course', uuid: 'e-1', ops: { kind: 'create', section_id: 52, data: {} } })
+      expect(sent.section_id).toBe(52)
+
+      await expect(
+        client.writeItems({ schema: '@/course', uuid: 'e-1', ops: { kind: 'create', section_id: 999, data: {} } }),
+      ).rejects.toMatchObject({ kind: 'invalid', title: 'No such section' })
+    })
+
+    it('⛔ refuses a BINDER here, where the message can name the section', async () => {
+      const client = clientWith(answering())
+      await expect(
+        client.writeItems({ schema: '@/course', uuid: 'e-1', ops: { kind: 'create', section: 'shelf', data: {} } }),
+      ).rejects.toMatchObject({ kind: 'invalid', title: 'Binder section' })
+    })
+
+    it('leaves the other three ops untouched — they name an item, not a section', async () => {
+      let sent
+      const client = clientWith(answering((body) => (sent = body)))
+      await client.writeItems({ schema: '@/course', uuid: 'e-1', ops: { kind: 'move', item_id: 7, position: 'first' } })
+      expect(sent).toEqual({ kind: 'move', item_id: 7, position: 'first' })
+    })
+  })
+
   it('keeps a batch an array so it stays one transaction', async () => {
     let sent
     const client = clientWith((url, init) => {

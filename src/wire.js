@@ -361,33 +361,40 @@ export const FIELD = {
    * another. A create with no section is accepted, stored somewhere, and every
    * guarantee the author declared is quietly not in force.
    *
-   * ⛔ **DIVERGENT FROM THE BACKEND — MEASURED 2026-09-17. This value is wrong for
-   * the item route, and is left wrong on purpose until the client change lands.**
+   * ⭐ **This is the CREATE route's spelling, and only its.** The backend takes a
+   * section two different ways, one per route, and both are now honoured — the
+   * divergence recorded here on 2026-09-17 is CLOSED:
    *
-   * The backend takes a section **two different ways, on two different routes**:
+   * | route | how a section is named | constant |
+   * |---|---|---|
+   * | `POST /entities` (create with content) | a **path of NAMES** — `{ items: [{ section: 'profile', … }] }` | `section` |
+   * | `POST /entities/{uuid}/items` (everything after) | the **NUMERIC id** | `sectionId` |
    *
-   * | route | how a section is named |
-   * |---|---|
-   * | `POST /entities` (create with content) | **by NAME** — `{ items: [{ section: 'profile', … }] }` |
-   * | `POST /entities/{uuid}/items` (everything after) | **by NUMERIC `section_id`** |
+   * ⇒ `ApiClient#writeItems` resolves a name to `section_id` through
+   * `readModelSchema` before sending, so a foundation keeps naming sections and
+   * nothing downstream of the hook speaks in ids. `ApiClient#createEntity` sends the
+   * name through untouched — the create route wants it, and resolving it would put a
+   * schema fetch in front of every create for nothing.
    *
-   * We send `section: '<name>'` on the item route, where the backend wants
-   * `section_id: <number>`.
-   *
-   * ⚠️ **And the cost is larger than the field name**, because the id is needed to
+   * ⚠️ **The cost was always larger than the field name**, because the id is needed to
    * *find* an item as well as to create one. An entity read returns `items[]` with
    * `id`, `section_id` and `updated_at` — **no section name at all**. Code that
    * locates an item by name (`items.find(i => i.section === 'content')`) works only
    * against a mock that invents the name, and against the real backend returns
-   * `undefined`: the update silently never happens, or a duplicate is created.
-   *
-   * ⇒ A client needs **`GET /api/models/{scope}/{name}`** — `sections[]` with `id`,
-   * `name`, `kind`, `is_brief`, `parent_section_id` — to resolve a name, plus a
-   * path-aware resolver for nested sections. That route is **not in `ROUTES`**: it is
-   * outside the `/entities` lane this module pins, so adding it is a deliberate
-   * change, not a drive-by.
+   * `undefined`: the update silently never happens, or a duplicate is created. That is
+   * what `sectionOfItem` in `./models.js` is for, and it is the half a consumer has to
+   * adopt — this package cannot do it from here.
    */
   section: 'section',
+  /**
+   * Which section an item belongs to, **on the item route** — numeric, from the model
+   * schema. ⛔ A NAME here is refused, not resolved: resolving it server-side is
+   * precisely the fiction that let name-based code pass against our mock and fail
+   * silently against a real backend.
+   */
+  sectionId: 'section_id',
+  /** An item's own uuid on a write response. **Set on `create` only** — a read returns none. */
+  itemUuid: 'item_uuid',
   /** The precondition an op carries. */
   precondition: 'if_unmodified_since',
   /** The item's next token, on a write response. */

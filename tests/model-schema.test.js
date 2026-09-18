@@ -79,8 +79,17 @@ describe('readModelSchema', () => {
 
   it('refuses an unscoped ref before making a request', async () => {
     const { client, calls } = stack()
-    await expect(client.readModelSchema({ schema: '@/course' })).rejects.toBeInstanceOf(ApiError)
+    await expect(client.readModelSchema({ schema: 'course' })).rejects.toBeInstanceOf(ApiError)
     expect(calls).toHaveLength(0)
+  })
+
+  it('⭐ asks about the SELF-SCOPED ref, because the entity lane already does', async () => {
+    // `@/course` is what a foundation passes in development, and `?model=@/course` is
+    // already on every entity request. A model lane that refused it would leave a
+    // create op's section name with no way to become an id.
+    const { client, calls } = stack()
+    await client.readModelSchema({ schema: '@/course' })
+    expect(new URL(calls[0].url, 'http://site.test').pathname).toBe('/_uw/api/models/%40/course')
   })
 
   it('an empty body with nothing cached is an error, not an empty schema', async () => {

@@ -18,6 +18,12 @@ function withBackend(handler) {
   return client
 }
 
+/** One model schema, in the shape `GET /models/{scope}/{name}` answers. */
+const SCHEMA = {
+  model: { name: '@/attendance', version: 1 },
+  sections: [{ id: 31, name: 'checkins', kind: 'multi', is_brief: false, parent_section_id: null, fields: [] }],
+}
+
 describe('useRecords', () => {
   it('loads the list and reports matched + hasMore', async () => {
     withBackend(() => json(200, { entities: [{ uuid: 's-1' }], matched: 4 }))
@@ -179,9 +185,13 @@ describe('useEntityWriter — create needs a section', () => {
     })
   })
 
-  it('sends the section it was given', async () => {
+  it('⭐ takes the section by NAME and sends the numeric section_id the route wants', async () => {
+    // The vocabulary boundary, end to end: a component names a section, the client
+    // reads the model schema and the wire carries an id. A component that held the id
+    // would have coupled itself to one deployment's storage.
     let sent
     withBackend((url, init) => {
+      if (parse(url).pathname.includes('/models/')) return json(200, SCHEMA)
       sent = JSON.parse(init.body)
       return json(200, {})
     })
@@ -189,6 +199,34 @@ describe('useEntityWriter — create needs a section', () => {
     await act(async () => {
       await result.current.create({ session: 's-1' }, { section: 'checkins', position: 'last' })
     })
-    expect(sent).toMatchObject({ kind: 'create', section: 'checkins', position: 'last' })
+    expect(sent).toMatchObject({ kind: 'create', section_id: 31, position: 'last' })
+    // ⛔ And the NAME does not ride along. The item route does not read it, and a
+    // second spelling of the same fact on the wire is a second thing to disagree.
+    expect(sent.section).toBeUndefined()
+  })
+
+  it('names an unknown section here, rather than letting the server refuse it', async () => {
+    withBackend((url) => (parse(url).pathname.includes('/models/') ? json(200, SCHEMA) : json(200, {})))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    await act(async () => {
+      await expect(result.current.create({}, { section: 'chekcins' })).rejects.toMatchObject({
+        kind: 'invalid',
+        title: 'No such section',
+      })
+    })
+  })
+
+  it('an update needs no schema at all — it addresses an item, not a section', async () => {
+    // The common write must not pay for the resolver: only `create` names a section.
+    const paths = []
+    withBackend((url) => {
+      paths.push(parse(url).pathname)
+      return json(200, {})
+    })
+    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    await act(async () => {
+      await result.current.update(41, { session: 's-2' })
+    })
+    expect(paths.some((p) => p.includes('/models/'))).toBe(false)
   })
 })
