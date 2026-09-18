@@ -686,7 +686,45 @@ export class ApiClient {
   }
 
   /**
-   * Create an entity of a Model, optionally with its first items.
+   * Create an entity of a Model, with its first items.
+   *
+   * ```js
+   * await client.createEntity({
+   *   schema: '@/course',
+   *   items: [
+   *     { section: 'identity', data: { title: 'Open water' } },   // the brief section
+   *     { section: 'modules',  data: { title: 'Week 1' } },
+   *   ],
+   * })
+   * ```
+   *
+   * ## ⛔ There is no top-level `data`, and there never was
+   *
+   * This method used to send `{ schema, data }` as the body, and it is the most
+   * dangerous thing this package has got wrong: the create route reads `items`,
+   * `uuid` and `owner_id` and **nothing else**. `CreateBody` is a plain `Deserialize`
+   * that `#[serde(flatten)]`s `CreateInput`, and serde cannot combine
+   * `deny_unknown_fields` with `flatten` — so a top-level `data` is not *rejected*,
+   * it is **dropped**. The answer is `201`, the entity is **empty**, and nothing
+   * anywhere reports a problem. It is not a field the backend will one day support;
+   * it is a consequence of permissive deserialization.
+   *
+   * ⇒ **A `data` argument is now REFUSED, loudly, before any request.** Dropping it
+   * quietly would reproduce the exact failure — a silent one — inside the fix for it.
+   *
+   * ## Sections are named HERE, and resolved nowhere
+   *
+   * The create route takes `items[].section` as a **`/`-joined path of NAMES**
+   * (`'pages/page_sections'`), not the numeric id the item route wants. A bare name
+   * works when exactly one section in the model carries it. ⇒ No schema read: putting
+   * one in front of every create would buy nothing the route does not already do, and
+   * the ambiguity it would catch the route refuses anyway.
+   *
+   * ⚠️ **Never send `brief`.** The server derives it from the brief section's item
+   * after every write. Write the brief SECTION; read `entity.brief`.
+   *
+   * ⚠️ `parent_item_id` may not name an item created in this same call — create the
+   * parent, then add children through `writeItems`.
    *
    * ⚠️ Not idempotent, and deliberately not made so: two calls make two entities.
    * A caller that must not double-create holds the result, the way it would with
@@ -694,17 +732,44 @@ export class ApiClient {
    *
    * @param {object} args
    * @param {string} args.schema
-   * @param {object} [args.data] - the initial content, in the Model's own shape
+   * @param {Array<{section: string, data: object, parent_item_id?: string|number, uuid?: string}>} [args.items]
+   *   the entity's first items — the ONLY way to create it with content
+   * @param {string} [args.uuid] - pin the new entity's uuid
+   * @param {string} [args.ownerId] - used only when the Model is owned
    * @param {AbortSignal} [args.signal]
-   * @returns {Promise<*>}
+   * @returns {Promise<object|null>} the created entity, unwrapped
    */
-  async createEntity({ schema, data, signal } = {}) {
+  async createEntity({ schema, items, uuid, ownerId, signal, ...rest } = {}) {
     if (!schema) {
       throw new ApiError({ status: 0, title: 'No Model', detail: 'createEntity needs a schema', kind: 'invalid' })
     }
+    if ('data' in rest) {
+      throw new ApiError({
+        status: 0,
+        kind: 'invalid',
+        title: 'No Entity Data',
+        detail:
+          'there is no entity-level data: content is always items. The create route drops an unknown ' +
+          "top-level key and answers 201 with an EMPTY entity, with no error — so this is refused here " +
+          "instead. Pass items: [{ section: '<name>', data: {...} }].",
+      })
+    }
+    if (items != null && !Array.isArray(items)) {
+      throw new ApiError({
+        status: 0,
+        kind: 'invalid',
+        title: 'Bad Items',
+        detail: 'createEntity items must be an array of { section, data }',
+      })
+    }
+    const payload = {
+      ...(items?.length ? { items } : {}),
+      ...(uuid != null ? { uuid } : {}),
+      ...(ownerId != null ? { owner_id: ownerId } : {}),
+    }
     const body = await this.request('POST', ROUTES.create(), {
       query: { [PARAM.model]: schema },
-      body: data ?? {},
+      body: payload,
       signal,
     })
     // A create answers the same envelope a read does, so it is unwrapped the same

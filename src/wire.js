@@ -460,6 +460,12 @@ export const ASSUMPTIONS = [
     breaks: 'nothing, while both are read — and that is why both are. Reading only one would answer a list of empty cards with no error, since the missing shape has no field in common with the one we expected',
   },
   {
+    id: 'create-response-shape',
+    we: 'read a 201 from `POST /entities` as the same hydrated envelope a read answers, and unwrap it the same way',
+    from: 'the create route is measured for what it READS (`items`, `uuid`, `owner_id`); what it ANSWERS was never described. A create is a write followed by a read of the thing written, and `readback=true` on the item route is documented as answering the entity as it now stands — so the same envelope is the natural shape, and it is still an inference',
+    breaks: "a caller holds `undefined` for the uuid of an entity that WAS created — the write succeeded and the handle to it is lost. `normalizeEntity` takes a bare record too, so a flatter answer costs nothing; a third shape would not be read at all",
+  },
+  {
     id: 'viewer-unit-signal',
     we: "read a viewer's unit membership from `acting_unit_id` on /auth/me, surfaced as `viewer.actingUnitId`",
     from: "the field this package already normalizes; whether it is THE membership signal, or one of several, is unconfirmed",

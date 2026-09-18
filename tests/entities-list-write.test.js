@@ -243,16 +243,57 @@ describe('writeItems', () => {
 })
 
 describe('createEntity / deleteEntity', () => {
-  it('creates against the Model, with the content in the body', async () => {
+  it('creates against the Model, with the content as ITEMS named by section', async () => {
     const client = clientWith((url, init) => {
       const u = parse(url)
       expect(u.pathname).toBe('/_uw/api/entities')
       expect(u.searchParams.get('model')).toBe('@/session')
-      expect(JSON.parse(init.body)).toEqual({ identity: { title: 'Keynote' } })
-      return json(200, { uuid: 'e-9' })
+      // ⛔ Items, addressed BY NAME. This route is the one place a section is named
+      // rather than numbered, and it needs no schema read to do it.
+      expect(JSON.parse(init.body)).toEqual({ items: [{ section: 'identity', data: { title: 'Keynote' } }] })
+      return json(201, hydrated({ uuid: 'e-9' }, [{ id: 3, section_id: 1, data: { title: 'Keynote' } }]))
     })
-    expect(await client.createEntity({ schema: '@/session', data: { identity: { title: 'Keynote' } } }))
-      .toEqual({ uuid: 'e-9' })
+    const made = await client.createEntity({
+      schema: '@/session',
+      items: [{ section: 'identity', data: { title: 'Keynote' } }],
+    })
+    // A create answers the same envelope a read does, and is unwrapped the same way.
+    expect(made.uuid).toBe('e-9')
+    expect(made.items[0].data.title).toBe('Keynote')
+  })
+
+  it('⛔ REFUSES a top-level `data`, because the backend would accept it and lose it', async () => {
+    // The most dangerous shape this package ever sent. `CreateBody` flattens
+    // `CreateInput` and serde cannot combine `deny_unknown_fields` with `flatten`, so
+    // an unknown key is DROPPED: 201, an empty entity, no error anywhere. Dropping it
+    // quietly here would rebuild that silence inside the fix for it.
+    const client = clientWith(() => json(201, hydrated({ uuid: 'e-9' })))
+    await expect(client.createEntity({ schema: '@/session', data: { title: 'Keynote' } })).rejects.toMatchObject({
+      kind: 'invalid',
+      title: 'No Entity Data',
+    })
+    expect(client.fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('creates an EMPTY entity when given no items, and sends no empty `items` key', async () => {
+    let sent
+    const client = clientWith((url, init) => {
+      sent = JSON.parse(init.body)
+      return json(201, hydrated({ uuid: 'e-9' }))
+    })
+    const made = await client.createEntity({ schema: '@/session' })
+    expect(sent).toEqual({})
+    expect(made.items).toEqual([])
+  })
+
+  it('passes a pinned uuid and an owner through under the route’s own names', async () => {
+    let sent
+    const client = clientWith((url, init) => {
+      sent = JSON.parse(init.body)
+      return json(201, hydrated({ uuid: 'pinned' }))
+    })
+    await client.createEntity({ schema: '@/session', uuid: 'pinned', ownerId: 'u-4', items: [] })
+    expect(sent).toEqual({ uuid: 'pinned', owner_id: 'u-4' })
   })
 
   it('leaves the reference policy unset unless the caller chooses one', async () => {

@@ -58,15 +58,39 @@ describe('the client against the mock', () => {
     // someone calls the write anyway, which is the only version that is a permission.
     const { client } = stack()
 
+    const withName = (name) => ({ schema: '@/track', items: [{ section: 'identity', data: { name } }] })
+
     await signIn(client, 'attendee')
-    await expect(client.createEntity({ schema: '@/track', data: { name: 'Sneaky' } })).rejects.toMatchObject({
-      status: 403,
-    })
+    await expect(client.createEntity(withName('Sneaky'))).rejects.toMatchObject({ status: 403 })
 
     await client.signOut()
     await signIn(client, 'organiser')
-    const made = await client.createEntity({ schema: '@/track', data: { name: 'Side room' } })
+    const made = await client.createEntity(withName('Side room'))
     expect(made.uuid).toBeTruthy()
+    // ⭐ The content is THERE — an item in the brief section, and a server-derived
+    // `brief` built from it. The whole point of the create redesign: the old
+    // top-level `data` would have answered 201 with an empty entity.
+    expect(made.items).toHaveLength(1)
+    expect(made.brief).toEqual({ name: 'Side room' })
+  })
+
+  it('⛔ a top-level `data` is refused by the client, and IGNORED by the route', async () => {
+    // Two layers, and both matter. The client refuses it so a caller finds out; the
+    // mock reproduces the backend's silence so a caller who goes around the client —
+    // a seed, a probe — sees the same empty entity a real server would produce.
+    const { client, mock } = stack()
+    await signIn(client, 'organiser')
+    await expect(client.createEntity({ schema: '@/track', data: { name: 'Lost' } })).rejects.toMatchObject({
+      kind: 'invalid',
+    })
+
+    const raw = await client.request('POST', '/entities', {
+      query: { model: '@/track' },
+      body: { data: { name: 'Lost' } },
+    })
+    expect(raw.hydrated.entity.uuid).toBeTruthy()
+    expect(raw.hydrated.items).toEqual([])
+    expect(raw.hydrated.entity.brief).toBeNull()
   })
 
   it('round-trips a write: the ledger is seeded from the response and guards the next one', async () => {
