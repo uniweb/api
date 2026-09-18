@@ -639,6 +639,7 @@ export class MockStore {
     const expected = op[FIELD.precondition]
     if (expected != null && expected !== item.updated_at) {
       return refuse(409, 'Conflict', 'item changed since your last read — refetch and retry', {
+        [FIELD.item]: item.id,
         [FIELD.conflictToken]: item.updated_at,
       })
     }

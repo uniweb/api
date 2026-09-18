@@ -155,6 +155,36 @@ describe('the client against the mock — writing', () => {
     ).resolves.toMatchObject({ item_id: keynote.id })
   })
 
+  it('names the stale item of a batch, so the rebase lands on it — the fresh op is untouched', async () => {
+    const { client, mock } = stack()
+    await signIn(client, 'organiser')
+    const { entity } = await client.readEntity({ schema: '@/track', uuid: TRACK })
+    const [first, second] = entity.hydrated.items.filter((i) => i.data.title)
+    const tokenOfFirst = client.ledger.get(first.id)
+
+    // Someone else edits the SECOND after our read.
+    const stored = mock.store.entities.get(TRACK).items.find((i) => i.id === second.id)
+    stored.data = { ...stored.data, room: 'Hall B' }
+    stored.updated_at = mock.store.clock()
+
+    const ops = [
+      { kind: 'update', item_id: first.id, data: { ...first.data, minutes: 50 } },
+      { kind: 'update', item_id: second.id, data: { ...second.data, minutes: 40 } },
+    ]
+    const err = await client.writeItems({ schema: '@/track', uuid: TRACK, ops }).catch((e) => e)
+    expect(err).toMatchObject({ kind: 'conflict', extensions: { item_id: second.id } })
+    expect(client.ledger.get(first.id)).toBe(tokenOfFirst)
+    expect(client.ledger.get(second.id)).toBe(stored.updated_at)
+    // The whole batch rolled back, so the caller's next attempt of it lands.
+    await expect(client.writeItems({ schema: '@/track', uuid: TRACK, ops })).resolves.toMatchObject({ results: [{}, {}] })
+  })
+
+  it('reads an entity named under another Model as absent — the Model is part of the address', async () => {
+    const { client } = stack()
+    await signIn(client, 'organiser')
+    await expect(client.readEntity({ schema: '@/attendance', uuid: TRACK })).resolves.toEqual({ status: 'absent', entity: null })
+  })
+
   it('orders by position, server-side, with no number from the client', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')

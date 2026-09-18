@@ -189,7 +189,23 @@ describe('writeItems', () => {
     expect(client.ledger.get(7)).toBe('T9')
   })
 
-  it('⛔ does not rebase a batch — the stale 409 does not say which item, and a guess corrupts another', async () => {
+  it('rebases the item a batch\'s stale 409 NAMES — and only that one', async () => {
+    // A batch stops at its first stale op; the backend names that op's item.
+    const client = clientWith(() => json(409, { status: 409, title: 'Conflict', item_id: 2, current_updated_at: 'T9' }))
+    client.ledger.note(1, 'T1')
+    client.ledger.note(2, 'T2')
+    await expect(
+      client.writeItems({
+        schema: '@acme/s',
+        uuid: E1,
+        ops: [{ kind: 'update', item_id: 1, data: {} }, { kind: 'update', item_id: 2, data: {} }],
+      }),
+    ).rejects.toMatchObject({ kind: 'conflict' })
+    expect(client.ledger.get(1)).toBe('T1')
+    expect(client.ledger.get(2)).toBe('T9')
+  })
+
+  it('⛔ does not rebase a batch an older backend\'s 409 does not name — a guess corrupts another', async () => {
     const client = clientWith(() => json(409, { status: 409, title: 'Conflict', current_updated_at: 'T9' }))
     client.ledger.note(1, 'T1')
     client.ledger.note(2, 'T2')

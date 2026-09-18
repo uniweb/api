@@ -35,7 +35,7 @@
  * | `matched` was read as the total before paging | it counts the rows in THIS answer — the page when paging. A full page is the only "maybe more" |
  * | a read's items did not seed the concurrency ledger | they carry `updated_at`, the token the first write of an item is guarded by |
  * | every `409` was reported as an edit conflict | only the one carrying `current_updated_at` is; the rest are rules (insert-only, one-item section, a reference) |
- * | a `409` was rebased onto "the first op with an item id" | the stale `409` names no item — a batch cannot be rebased by guesswork |
+ * | a `409` was rebased onto "the first op with an item id" | only the item the stale `409` names (`item_id`, since 2026-09-18); an older backend names none, and a batch is then not rebased — never by guesswork |
  * | a sign-up answered with the account | it answers `202 { status: 'verification_required', email }`; the account cannot sign in until verified (`403 Email Not Verified`) |
  * | `acting_unit_id` was a membership signal | every signed-in member of a site acts in the same unit — it cannot tell an operator from a member; `roles` can |
  *
@@ -273,7 +273,11 @@ export const GUARDED_OPS = new Set([OP.update, OP.delete, OP.move])
  * known only from the op that named it.
  */
 export const FIELD = {
-  /** Names the target item on an op (an integer), and the item on a write result. */
+  /**
+   * Names the target item on an op (an integer), the item on a write result, and
+   * the stale item on a `409` — the last since 2026-09-18; an older backend's `409`
+   * carries only `conflictToken`.
+   */
   item: 'item_id',
   /** The new item's uuid, on a create's result. */
   itemUuid: 'item_uuid',
@@ -347,7 +351,10 @@ export const LIST = {
  * section by id only; the Model's definition maps ids to names.
  *
  * `absent` is one word for not-found and not-permitted, by design: both are
- * `404 { kind: 'entity' }`.
+ * `404 { kind: 'entity' }`. So is an entity of ANOTHER Model: `?model=` says what
+ * the caller takes the entity to be, and a read or a write naming the wrong one is
+ * the same `404` — since 2026-09-18; before that the backend answered, stamped with
+ * the Model named.
  */
 export const READ = {
   hydrated: 'hydrated',
@@ -385,7 +392,7 @@ export const SCHEMA = {
  *
  * | answer | means |
  * |---|---|
- * | `409 Conflict` + `current_updated_at` | the item changed since this viewer's token — the ONLY stale-token answer |
+ * | `409 Conflict` + `item_id`, `current_updated_at` | that item changed since this viewer's token — the ONLY stale-token answer. `item_id` since 2026-09-18; an older backend sends the token alone |
  * | `409 Append-Only Section` + `section` | an insert-only section: its items can be added and moved, not edited or deleted |
  * | `409 Schema Rule Violation` | a rule of the Model: a second item in a one-item section, a section of another Model, a reference that still points here |
  * | `403 Forbidden` + `op`, `target` | may read it, may not do this to it — `edit`, `delete`, `use_model` (create) |

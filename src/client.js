@@ -701,9 +701,11 @@ export class ApiClient {
    * error is thrown. Retrying automatically would succeed by overwriting a change
    * nobody looked at. ⇒ We remove the *bookkeeping* and leave the *decision*.
    *
-   * ⚠️ **The stale `409` does not say which item was stale.** For one guarded op
-   * that is the op's item; in a batch of several it is unknowable, and rebasing a
-   * guessed item would put one item's token on another — so a batch is not rebased.
+   * The stale `409` names its item (`item_id`), and that is the item rebased — in a
+   * batch, which stops at its first stale op, the one that was stale. ⚠️ **A backend
+   * from before 2026-09-18 names none.** Then a single guarded op is rebased on its
+   * own item, and a batch is not rebased at all: a guessed item would put one item's
+   * token on another.
    *
    * @param {object} args
    * @param {string} args.schema - the entity's Model
