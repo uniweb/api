@@ -447,6 +447,12 @@ export const LIST = {
  */
 export const ASSUMPTIONS = [
   {
+    id: 'list-entry-shape',
+    we: 'read a LIST entry as either the hydrated envelope or a bare entity record, whichever arrives (`./entities.js::normalizeEntity`)',
+    from: 'the list BODY is measured — `{entities, matched}` — but nobody has said what an ENTRY is. A read is enveloped; a list is a card list and `brief` is defined as what a card needs, which argues for the bare record',
+    breaks: 'nothing, while both are read — and that is why both are. Reading only one would answer a list of empty cards with no error, since the missing shape has no field in common with the one we expected',
+  },
+  {
     id: 'viewer-unit-signal',
     we: "read a viewer's unit membership from `acting_unit_id` on /auth/me, surfaced as `viewer.actingUnitId`",
     from: "the field this package already normalizes; whether it is THE membership signal, or one of several, is unconfirmed",

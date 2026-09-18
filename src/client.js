@@ -17,6 +17,7 @@ import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, MODEL_ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
 import { parseModelRef, indexSchema } from './models.js'
+import { normalizeEntity, normalizeEntities } from './entities.js'
 import { Ledger } from './ledger.js'
 
 /** The site service this package reads its base from — the only name it owns. */
@@ -506,11 +507,13 @@ export class ApiClient {
   async readEntity({ schema, uuid, via, signal } = {}) {
     if (!uuid) throw new ApiError({ status: 0, title: 'No Entity', detail: 'readEntity needs a uuid', kind: 'invalid' })
     try {
-      const entity = await this.request('GET', ROUTES.read(uuid), {
+      const body = await this.request('GET', ROUTES.read(uuid), {
         query: { [PARAM.model]: schema, [PARAM.via]: via, ...this._localeQuery() },
         signal,
       })
-      return { status: 'ready', entity }
+      // ⛔ The route answers an ENVELOPE, not an entity — `hydrated.entity` and
+      // `hydrated.items`. Unwrapped once, in `./entities.js`.
+      return { status: 'ready', entity: normalizeEntity(body) }
     } catch (err) {
       if (err instanceof ApiError && err.kind === 'absent') return { status: 'absent', entity: null }
       throw err
@@ -561,7 +564,10 @@ export class ApiClient {
     }
 
     const body = await this.request('GET', ROUTES.list(), { query, signal })
-    const records = Array.isArray(body?.[LIST.records]) ? body[LIST.records] : []
+    // Entries go through the same unwrap as a single read. Whether a list entry is
+    // itself enveloped is unconfirmed (`ASSUMPTIONS.list-entry-shape`), and the
+    // normalizer takes either — so the answer, when it comes, costs nothing.
+    const records = normalizeEntities(body?.[LIST.records])
     // `matched` absent is not zero — it is unknown, and a caller reading zero would
     // conclude "empty" from a body that just did not say. Fall back to what we hold.
     const matched = typeof body?.[LIST.matched] === 'number' ? body[LIST.matched] : records.length
@@ -646,11 +652,14 @@ export class ApiClient {
     if (!schema) {
       throw new ApiError({ status: 0, title: 'No Model', detail: 'createEntity needs a schema', kind: 'invalid' })
     }
-    return this.request('POST', ROUTES.create(), {
+    const body = await this.request('POST', ROUTES.create(), {
       query: { [PARAM.model]: schema },
       body: data ?? {},
       signal,
     })
+    // A create answers the same envelope a read does, so it is unwrapped the same
+    // way — a caller holds an entity, not a wrapper it has to know about.
+    return normalizeEntity(body)
   }
 
   /**

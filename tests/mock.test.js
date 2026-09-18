@@ -39,7 +39,9 @@ describe('the client against the mock', () => {
     await signIn(client, 'organiser')
     const { records, matched } = await client.listEntities({ schema: '@/track' })
     expect(matched).toBe(2)
-    expect(records[0].name).toBe('Main hall')
+    // ⛔ Not `records[0].name`. There is no entity-level data: the card's fields are
+    // an item in the brief section, and the server derives `brief` from it.
+    expect(records[0].brief.name).toBe('Main hall')
   })
 
   it('pages, and reports matched as the count before paging', async () => {

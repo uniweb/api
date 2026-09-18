@@ -25,7 +25,7 @@ describe('useRecords', () => {
 
     expect(result.current.status).toBe('loading')
     await waitFor(() => expect(result.current.status).toBe('ready'))
-    expect(result.current.records).toEqual([{ uuid: 's-1' }])
+    expect(result.current.records.map((r) => r.uuid)).toEqual(['s-1'])
     expect(result.current.matched).toBe(4)
     expect(result.current.hasMore).toBe(true)
   })

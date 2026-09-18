@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
 import { getClient } from '../src/client.js'
 import { ApiError } from '../src/errors.js'
-import { fetchStub, json, empty, parse, WITH_BACKEND } from './helpers.js'
+import { fetchStub, hydrated, json, empty, parse, WITH_BACKEND } from './helpers.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -25,8 +25,26 @@ describe('listEntities', () => {
       return json(200, { entities: [{ uuid: 's-1' }, { uuid: 's-2' }], matched: 7 })
     })
     const out = await client.listEntities({ schema: '@/session' })
-    expect(out.records).toEqual([{ uuid: 's-1' }, { uuid: 's-2' }])
+    expect(out.records.map((r) => r.uuid)).toEqual(['s-1', 's-2'])
     expect(out.matched).toBe(7)
+    // Every entry goes through the same unwrap a single read does, so a caller never
+    // has to know which shape it got.
+    expect(out.records[0].items).toEqual([])
+  })
+
+  it('takes an ENVELOPED list entry too — the entry shape is unconfirmed, so both are read', async () => {
+    // `ASSUMPTIONS.list-entry-shape`: `{entities, matched}` is measured, an ENTRY is
+    // not. Reading only one shape would be a guess that fails silently as an empty
+    // card; reading both costs nothing and survives either answer.
+    const client = clientWith(() =>
+      json(200, {
+        entities: [hydrated({ uuid: 's-1' }, [{ id: 3, section_id: 1, data: { title: 'A' } }])],
+        matched: 1,
+      }),
+    )
+    const out = await client.listEntities({ schema: '@/session' })
+    expect(out.records[0].uuid).toBe('s-1')
+    expect(out.records[0].items[0].data.title).toBe('A')
   })
 
   it('derives hasMore from `matched`, which counts before paging — no second request', async () => {

@@ -17,7 +17,7 @@ describe('wire — the assumptions are a reviewable set', () => {
   // names held and the section field did not — so it is recorded as a divergence on
   // `FIELD.section` instead of lingering here. A false belief parked in a list of open
   // questions is how it stays unfixed.
-  const EXPECTED = ['viewer-unit-signal', 'via-and-depth-compose']
+  const EXPECTED = ['list-entry-shape', 'viewer-unit-signal', 'via-and-depth-compose']
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)

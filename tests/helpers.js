@@ -52,3 +52,19 @@ export const WITH_BACKEND = { config: { services: { api: { endpoint: '/_uw' } } 
 export const WITHOUT_BACKEND = { config: {} }
 
 export const ME = { account: { uuid: 'u-1', username: 'ada', handle: 'ada' }, roles: ['member'], acting_unit_id: 7 }
+
+/**
+ * A read/create response in the REAL envelope — `{ model_uuid, model_name, can_edit,
+ * hydrated: { entity, items } }`.
+ *
+ * ⛔ Tests used to hand the client a flat entity, which is a shape no server answers.
+ * Building the envelope here means a suite cannot accidentally assert the old fiction
+ * back into existence.
+ */
+export const hydrated = (entity, items = [], extra = {}) => ({
+  model_uuid: 'm-uuid',
+  model_name: '@/session',
+  can_edit: true,
+  ...extra,
+  hydrated: { entity, items },
+})

@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
 import { getClient, readEntity } from '../src/client.js'
-import { fetchStub, json, parse, WITH_BACKEND } from './helpers.js'
+import { fetchStub, hydrated, json, parse, WITH_BACKEND } from './helpers.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -16,11 +16,25 @@ function clientWith(handler) {
 }
 
 describe('readEntity — one entity, by id, through a container', () => {
-  it('composes /entities/{uuid}?model=&via= and answers `ready` with the body untouched', async () => {
-    const lesson = { uuid: 'l-1', body: 'hello' }
-    const client = clientWith(() => json(200, lesson))
+  it('composes /entities/{uuid}?model=&via= and UNWRAPS the hydrated envelope', async () => {
+    // ⛔ The route answers an envelope, never an entity. This suite handed the client
+    // a flat `{ uuid, body }` for months — a shape no server produces — which is
+    // exactly why `entity.uuid` and `entity.items` came back undefined in the app.
+    const record = { uuid: 'l-1', id: 4, brief: { title: 'Buoyancy' }, disabled: false }
+    const items = [{ id: 11, section_id: 3, data: { body: 'hello' }, updated_at: 't1' }]
+    const client = clientWith(() => json(200, hydrated(record, items, { model_name: '@/lesson' })))
     const result = await client.readEntity({ schema: '@/lesson', uuid: 'l-1', via: 'c-1' })
-    expect(result).toEqual({ status: 'ready', entity: lesson })
+
+    expect(result.status).toBe('ready')
+    expect(result.entity.uuid).toBe('l-1')
+    // Items come from `hydrated.items` — the app reads them off the entity.
+    expect(result.entity.items).toEqual(items)
+    // `brief` is the server's derived card record, and it rides on the entity.
+    expect(result.entity.brief).toEqual({ title: 'Buoyancy' })
+    expect(result.entity.model).toBe('@/lesson')
+    expect(result.entity.canEdit).toBe(true)
+    // ⛔ And there is no entity-level `data` to find.
+    expect(result.entity.data).toBeUndefined()
 
     const u = parse(client.fetchFn.mock.calls[0][0])
     expect(u.pathname).toBe('/_uw/api/entities/l-1')

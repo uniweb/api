@@ -126,7 +126,9 @@ describe('useEntity', () => {
     const { result } = renderHook(() => useEntity({ schema: '@/lesson', uuid: 'l-1', via: 'c-1' }))
     expect(result.current.status).toBe('loading')
     await waitFor(() => expect(result.current.status).toBe('ready'))
-    expect(result.current.entity).toEqual(lesson)
+    // The hook hands over the UNWRAPPED entity — `hydrated.entity` + `hydrated.items`.
+    expect(result.current.entity.uuid).toBe('l-1')
+    expect(result.current.entity.items).toEqual([])
     expect(reads).toBe(1)
 
     // The session settles to a viewer: a new key, a fresh read for who is looking now.
