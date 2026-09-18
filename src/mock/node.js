@@ -39,7 +39,9 @@ async function send(response, res) {
 }
 
 /**
- * Connect-style middleware — what Vite's `configureServer` takes.
+ * Connect-style middleware — what Vite's `configureServer` takes. Mount it at the
+ * site's `api` address (`/_api`), which is the base the client composes routes
+ * onto: `/_api/auth/me`, `/_api/entities`.
  *
  * ```js
  * // vite.config.js
@@ -73,7 +75,9 @@ export function middleware(mock, { prefix = '/_api' } = {}) {
 }
 
 /**
- * A standalone server. Resolves once listening; call `close()` to stop.
+ * A standalone server. Resolves once listening; call `close()` to stop. Its routes
+ * answer at the root — a site's `api` address for it is the server's URL
+ * (`http://localhost:8787`), plus `prefix` when one is given.
  *
  * @param {{ fetch: Function }} mock
  * @param {object} [options]

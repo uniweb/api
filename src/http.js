@@ -11,7 +11,7 @@ export const UNSAFE = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 /**
  * Is the base another origin than the page's?
  *
- * A relative base (`/_uw`) is the page's own origin by definition. An absolute
+ * A relative base (`/_api`) is the page's own origin by definition. An absolute
  * one is compared against `location.origin`; where there is no location — a
  * server, a test — an absolute base is treated as cross-origin, which only
  * makes the request carry credentials it would otherwise carry anyway.
@@ -31,11 +31,16 @@ export function isCrossOrigin(base) {
 }
 
 /**
- * `${base}/api${path}?…` — the one composition this package makes.
+ * `${base}${path}?…` — the one composition this package makes.
  *
- * The base is the prefix under which the backend's own route space appears:
- * the passthrough path on the site's origin, an origin under the subdomain
- * shape, or empty on a deployment where the page's own server is the backend.
+ * The base IS the backend's API route space, and every route joins it directly:
+ * `/_api` + `/entities`. On a hosted site `/_api` is a path on the site's own
+ * origin that reaches the backend's `/api/…`; wherever the page reaches a backend
+ * directly, the base is that backend's absolute `…/api`.
+ *
+ * ⛔ **Until 0.4 this inserted `/api` after the base**, reading the base as the
+ * backend's root. On a hosted site that sent every request to `/_api/api/…`, a
+ * route that does not exist — measured, and the reason this comment is here.
  * `null` and `undefined` query values are omitted.
  *
  * @param {string} base
@@ -52,7 +57,7 @@ export function composeUrl(base, path, query) {
     params.set(key, String(value))
   }
   const qs = params.toString()
-  return `${root}/api${p}${qs ? `?${qs}` : ''}`
+  return `${root}${p}${qs ? `?${qs}` : ''}`
 }
 
 /**

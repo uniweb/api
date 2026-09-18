@@ -1,210 +1,581 @@
-import { FIELD, OP } from '../wire.js'
-import { checkItemWrite, checkEntityDataWrite, OUTCOME, STORAGE } from './schema-shape.js'
+import { FIELD, OP, PROBLEM } from '../wire.js'
+import { checkItemWrite, OUTCOME } from './schema-shape.js'
 
 /**
- * The mock's state — accounts, one session, entities and their items.
+ * The mock's state — accounts, one session, Models with their sections, and
+ * entities whose content is items.
  *
- * ⭐ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
- * A mock's job is fidelity to what `@uniweb/api` *expects*, not to how a real store
- * is built. Reach for SQLite and the mock grows a schema, then migrations that
- * mirror someone else's, and it stops being a fixture and starts being a second
- * implementation nobody asked for — one that will drift and be believed anyway.
+ * ⭐ **It stores what the backend stores, the way the backend stores it** —
+ * measured 2026-09-18 against a real one set up as a site's `api` service:
  *
- * ⛔ **It is also not a model of `uniwebd`.** Nothing here is evidence about the
- * real backend. It answers what this client asks, in the shapes this client's own
- * tests assert, and where those shapes are guesses they are guesses here too —
- * see `../wire.js` § ASSUMPTIONS.
+ * - **An entity's content is items, each in a section of its Model.** There is no
+ *   entity-level data. A `single` section holds one item; its `brief` section's item
+ *   is the entity's `brief`, which the backend maintains — derived here on read.
+ * - **Ids are integers, entities are addressed by UUID.** A section, an item, an
+ *   entity and an account each have an integer id; an entity's path id is its UUID.
+ * - **Every signed-in account reads every entity.** On a site's `api` service
+ *   every member acts in the site's one unit, and a member of it may read what is
+ *   in it — so members read each other's entities. Writing is for the owner and
+ *   the operator.
+ * - **The operator** — the account that runs the site's service — holds
+ *   `system_admin`, creates the Models only the operator may, and may write
+ *   anything. A seeded account is the operator with `operator: true`.
  *
- * What it *does* enforce is the part a demo would otherwise fake: `creatable_by`
- * and `append_only` are checked server-side, so a foundation that hides a button
- * still cannot write. That is the difference between showing a permission model
- * and asserting one.
+ * ⛔ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
+ * A mock that grows a schema and migrations becomes a second implementation that
+ * drifts and is believed anyway.
+ *
+ * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
+ * same read), nested sections, second factors, reference fields.
  */
 
-let counter = 0
-const nextId = (prefix) => `${prefix}-${(counter += 1)}`
-const now = () => new Date().toISOString()
+/** The unit every account of a site acts in — `acting_unit_id` on `/auth/me`. */
+export const SITE_UNIT = 1
 
-/** A token that changes on every write — the shape of the value does not matter, only that it moves. */
-const stamp = () => `${Date.now().toString(36)}-${(counter += 1).toString(36)}`
+/** The gap between neighbouring items' order numbers, as the backend spaces them. */
+const GAP = 1_000_000
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const isUuid = (value) => typeof value === 'string' && UUID_RE.test(value)
+
+const newUuid = () => globalThis.crypto.randomUUID()
+
+/** A token that moves on every write — a timestamp with microseconds, as the backend writes one. */
+function makeClock() {
+  let last = 0
+  return () => {
+    const micros = Math.max(Date.now() * 1000, last + 1)
+    last = micros
+    const frac = String(micros % 1_000_000).padStart(6, '0')
+    return new Date(Math.floor(micros / 1000)).toISOString().replace(/\.\d{3}Z$/, `.${frac}Z`)
+  }
+}
+
+/** A problem answer, as `{ problem }` — the router turns it into the response. */
+export const refuse = (status, title, detail, extensions = {}) => ({
+  problem: { status, title, ...(detail ? { detail } : {}), ...extensions },
+})
+
+/** JSON with sorted keys — two values that differ only in key order are the same data. */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
+}
+
+const isMulti = (section) => section?.multiple === true || section?.kind === 'multi'
+const shortName = (model) => String(model).split('/').pop() || String(model)
 
 export class MockStore {
   /**
    * @param {object} seed
-   * @param {object[]} [seed.accounts] - `{ username, password, handle, roles?, units? }`
-   * @param {object} [seed.schemas] - `{ '@/session': { creatable_by?, append_only?, sections?, migration_debt? } }`.
-   *   `migration_debt` is a list of section names this site KNOWS diverge from the
-   *   declaration and is unwinding — tolerated and recorded, never silently passed.
-   *   Anything undeclared and NOT on that list is refused, so a typo cannot hide in it.
-   *   `sections` is the LOWERED sections map (`{ [name]: { kind, brief, fields } }`) as the
-   *   framework's own normalizer produces it — supply it and writes are shape-checked
-   *   (see `./schema-shape.js`). The mock never parses schema source itself, so there is
-   *   no second copy of the authoring format here to drift from the real one.
-   * @param {object[]} [seed.entities] - `{ uuid?, model, data?, items? }`
+   * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, operator? }`.
+   *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
+   *   also marks the operator.)
+   * @param {object} [seed.schemas] - `{ '@scope/name': { creatable_by?, sections?, append_only?, migration_debt? } }`.
+   *   `sections` is the LOWERED sections map (`{ [name]: { kind | multiple, brief, append_only, fields } }`)
+   *   as the framework's normalizer produces it; with it, writes are shape-checked
+   *   (`./schema-shape.js`). Without it the sections are inferred: a one-item brief
+   *   section named for the Model, and a many-item section for every section name the
+   *   seed's items and `append_only` use.
+   * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, items?: [{ section, data, parent? }] }`.
+   *   `uuid` must be a UUID. (`data`, the older spelling, becomes the brief section's item.)
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
    */
   constructor(seed = {}, { signedInAs = null } = {}) {
-    this.accounts = (seed.accounts || []).map((a) => ({
-      uuid: a.uuid || nextId('acct'),
-      username: a.username,
-      password: a.password,
-      handle: a.handle || a.username,
-      roles: a.roles || ['member'],
-      units: a.units || [],
-      ...a,
-    }))
-    // What the mock knows about a Model: the two permission rules it must ENFORCE,
-    // and — when the seed supplies `sections` — the field shapes to check writes
-    // against. Everything else about a schema is the site's business.
+    this.clock = makeClock()
+    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0 }
+    this.accounts = []
+    for (const a of seed.accounts || []) this.addAccount(a, { verified: true })
+
     this.schemas = seed.schemas || {}
+    this.models = new Map()
+    const itemSections = new Map()
+    for (const e of seed.entities || []) {
+      const names = itemSections.get(e.model) ?? new Set()
+      for (const item of e.items || []) if (item?.section) names.add(item.section)
+      itemSections.set(e.model, names)
+    }
+    for (const name of new Set([...Object.keys(this.schemas), ...itemSections.keys()])) {
+      this.defineModel(name, this.schemas[name], itemSections.get(name))
+    }
+
     /**
-     * Shape findings the mock saw but did not refuse.
-     *
-     * ⛔ Every entry here is a write under `STORAGE.UNRESOLVED` — the open storage
-     * question in `./schema-shape.js`, not a lenient policy. Read it to see exactly
-     * which writes are riding on an unanswered question; `mock.diagnostics` exposes it.
+     * Shape findings the mock saw but did not refuse — writes into a section the
+     * seed lists as `migration_debt`. Empty is the good state.
      */
     this.diagnostics = []
+    /** Mail the backend would send: `{ to, subject, token, verify? }`, newest last. */
+    this.outbox = []
+    this.pending = { verify: new Map(), reset: new Map() }
     this.entities = new Map()
     for (const e of seed.entities || []) this.seedEntity(e)
+
     /** The one session. A mock serves one developer, so one is the honest number. */
     this.session = null
-    this.resets = new Map()
 
-    // ⭐ `signedInAs` — start already signed in, for a demo whose whole point is the
-    // signed-in view. Without it a visitor must type credentials before seeing
-    // anything, which for a lived-in demo is the experience itself.
-    //
-    // ⛔ THROWS on an unknown username rather than leaving the session null. A typo
-    // here produces "why am I not logged in?" — a question with no visible cause, in
-    // the one place where the answer is a string three lines away. The mock is
-    // development-only, so failing at construction costs nothing and a silent
-    // anonymous session costs an afternoon.
+    // ⛔ THROWS on an unknown username rather than leaving the session null: a typo
+    // here produces "why am I not logged in?", with the answer three lines away.
     if (signedInAs) {
       const account = this.accounts.find((a) => a.username === signedInAs)
       if (!account) {
         const known = this.accounts.map((a) => a.username).join(', ') || '(none)'
-        throw new Error(
-          `[uniweb/api mock] signedInAs: '${signedInAs}' is not a seeded account. Seeded: ${known}`
-        )
+        throw new Error(`[uniweb/api mock] signedInAs: '${signedInAs}' is not a seeded account. Seeded: ${known}`)
       }
-      this.session = { account, at: now() }
+      this.session = { account }
     }
   }
 
-  seedEntity({ uuid, model, data = {}, items = [], owner = null }) {
-    const id = uuid || nextId('ent')
-    this.entities.set(id, {
-      uuid: id,
-      model,
-      owner,
-      data,
-      updated_at: now(),
-      items: items.map((item) => this.makeItem(item)),
-    })
-    return this.entities.get(id)
-  }
+  // ── Accounts ────────────────────────────────────────────────────────────────
 
-  makeItem({ section = 'items', data = {}, parent = null, id } = {}) {
-    return {
-      [FIELD.item]: id || nextId('item'),
-      section,
-      [FIELD.parent]: parent,
-      data,
-      created_at: now(),
-      [FIELD.token]: stamp(),
-    }
-  }
-
-  // ── Identity ────────────────────────────────────────────────────────────────
-
-  signIn(username, password) {
-    const account = this.accounts.find((a) => a.username === username)
-    if (!account || account.password !== password) return null
-    this.session = { account, at: now() }
-    return this.viewer()
-  }
-
-  signOut() {
-    this.session = null
-  }
-
-  register(fields) {
-    if (this.accounts.some((a) => a.username === fields.username)) return null
+  addAccount(a, { verified }) {
     const account = {
-      uuid: nextId('acct'),
-      handle: fields.handle || fields.username,
-      roles: ['member'],
-      units: [],
-      ...fields,
+      id: (this.ids.account += 1),
+      uuid: a.uuid || newUuid(),
+      username: a.username,
+      password: a.password,
+      email: a.email ?? `${a.username}@example.test`,
+      handle: a.handle ?? a.username,
+      operator: a.operator ?? (Array.isArray(a.units) && a.units.length > 0),
+      verified,
     }
     this.accounts.push(account)
     return account
-  }
-
-  /**
-   * The viewer, in the shape `/auth/me` answers.
-   *
-   * ⚠️ `acting_unit_id` is the unit signal, and it is the field the CLIENT already
-   * models (`viewer.actingUnitId`) — so a UI asks the package rather than inventing
-   * its own idea of membership. A mock that omitted it would push every consumer to
-   * invent one, which is how two apps end up disagreeing about who an organiser is.
-   */
-  viewer() {
-    if (!this.session) return null
-    const { uuid, username, handle, roles, units } = this.session.account
-    return {
-      account: { uuid, username, handle },
-      roles,
-      acting_unit_id: units?.length ? units[0] : null,
-    }
   }
 
   get account() {
     return this.session?.account ?? null
   }
 
-  // ── The rules the mock actually enforces ────────────────────────────────────
+  /** The viewer, in the shape `/auth/me` answers. */
+  viewer(account = this.account) {
+    if (!account) return null
+    return {
+      account: this.identity(account),
+      roles: account.operator ? [{ role: 'system_admin', scope_unit_id: null }] : [],
+      acting_unit_id: SITE_UNIT,
+    }
+  }
 
-  /**
-   * May the viewer create entities of this Model?
-   *
-   * ⭐ The default is OPEN — anyone with an account — and only a schema's
-   * `creatable_by` narrows it. That matches the real store, and it matters that the
-   * mock copies the DIRECTION rather than inventing a safer one: a demo whose mock
-   * denies by default would hide exactly the mistake `creatable_by` exists to
-   * prevent, and someone would ship a Model that anyone can write to having
-   * "tested" it here.
-   */
+  identity(account) {
+    return { uuid: account.uuid, username: account.username, handle: account.handle }
+  }
+
+  signIn({ username, password }) {
+    const account = this.accounts.find((a) => a.username === username)
+    if (!account || account.password !== password) return refuse(401, 'Unauthorized')
+    if (!account.verified) return refuse(403, PROBLEM.notVerified, 'verify your email address before signing in')
+    this.session = { account }
+    const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
+    return { body: { token: `mock-${account.uuid}`, expires_at: expires, account: this.identity(account) } }
+  }
+
+  signOut() {
+    this.session = null
+  }
+
+  register({ username, email, password }) {
+    if (this.accounts.some((a) => a.username === username)) {
+      return refuse(409, 'Conflict', `account username already exists: ${JSON.stringify(username)}`)
+    }
+    // A taken address answers exactly like a fresh one, so sign-up never confirms
+    // who has an account — and nothing is created.
+    if (!this.accounts.some((a) => a.email === email)) {
+      const account = this.addAccount({ username, email, password }, { verified: false })
+      const token = newUuid()
+      this.pending.verify.set(token, account)
+      this.outbox.push({ to: email, subject: 'Confirm your email address', token, verify: `/auth/verify?token=${token}` })
+    }
+    return { status: 202, body: { status: 'verification_required', email } }
+  }
+
+  verify(token) {
+    const account = this.pending.verify.get(token)
+    if (!account) return refuse(400, 'Validation', 'invalid or expired verification token')
+    this.pending.verify.delete(token)
+    account.verified = true
+    return { body: { verified: true } }
+  }
+
+  requestReset(email) {
+    const account = this.accounts.find((a) => a.email === email && a.verified)
+    if (account) {
+      const token = newUuid()
+      this.pending.reset.set(token, account)
+      this.outbox.push({ to: email, subject: 'Reset your password', token })
+    }
+    return { status: 202, body: { status: 'reset_requested' } }
+  }
+
+  confirmReset({ token, new_password: password }) {
+    const account = this.pending.reset.get(token)
+    if (!account) return refuse(400, 'Validation', 'invalid or expired reset token')
+    this.pending.reset.delete(token)
+    account.password = password
+    // A reset revokes the account's sessions.
+    if (this.session?.account === account) this.session = null
+    return { body: { reset: true } }
+  }
+
+  // ── Models ──────────────────────────────────────────────────────────────────
+
+  defineModel(name, decl = {}, itemSections = new Set()) {
+    const appendOnly = (sectionName, section) =>
+      section?.append_only === true ||
+      decl?.append_only === true ||
+      (Array.isArray(decl?.append_only) && decl.append_only.includes(sectionName))
+    const model = {
+      id: (this.ids.model += 1),
+      uuid: newUuid(),
+      name,
+      creatable_by: decl?.creatable_by || 'any_user',
+      decl: decl || {},
+      sections: [],
+    }
+    const add = (sectionName, { kind, brief = false, section = null, debt = false }) =>
+      model.sections.push({
+        id: (this.ids.section += 1),
+        name: sectionName,
+        kind,
+        is_brief: brief,
+        append_only: appendOnly(sectionName, section),
+        fields: section?.fields || null,
+        debt,
+      })
+
+    const declared = decl?.sections && typeof decl.sections === 'object' ? decl.sections : null
+    if (declared) {
+      for (const [sectionName, section] of Object.entries(declared)) {
+        add(sectionName, { kind: isMulti(section) ? 'multi' : 'single', brief: !!section?.brief, section })
+      }
+      // Sections the site KNOWS diverge from the declaration, kept writable while
+      // they are unwound — and only the ones it named.
+      for (const sectionName of decl.migration_debt || []) {
+        if (!declared[sectionName]) add(sectionName, { kind: 'multi', debt: true })
+      }
+    } else {
+      const own = shortName(name)
+      add(own, { kind: 'single', brief: true })
+      const many = new Set([...itemSections, ...(Array.isArray(decl?.append_only) ? decl.append_only : [])])
+      for (const sectionName of many) if (sectionName !== own) add(sectionName, { kind: 'multi' })
+    }
+    this.models.set(name, model)
+    return model
+  }
+
+  model(name) {
+    return this.models.get(name) ?? null
+  }
+
+  /** The Model a section id belongs to, or null. */
+  modelOfSection(sectionId) {
+    for (const model of this.models.values()) if (model.sections.some((s) => s.id === sectionId)) return model
+    return null
+  }
+
   mayCreate(model) {
     if (!this.account) return false
-    const rule = this.schemas[model]?.creatable_by || 'any_user'
-    if (rule === 'any_user') return true
-    if (rule === 'unit_members') return (this.account.units || []).length > 0
-    return false
+    return model.creatable_by === 'any_user' || this.account.operator
+  }
+
+  /** The definition is readable for the Models the viewer may create, and by the operator. */
+  maySeeSchema(model) {
+    return !!this.account && (this.account.operator || model.creatable_by === 'any_user')
+  }
+
+  /** `GET /models/@scope/name`, in the backend's shape. */
+  schemaOf(model) {
+    const field = ([key, f]) => ({
+      key,
+      required: !!f?.required,
+      multi: f?.multiple === true || f?.type === 'array',
+      type: { id: -1, name: f?.type ?? 'json', kind: f?.type ?? 'json', data: { key, kind: f?.type ?? 'json' } },
+    })
+    return {
+      model: {
+        id: model.id,
+        uuid: model.uuid,
+        name: model.name,
+        data: { label: model.decl?.label ?? shortName(model.name), grantable: true },
+        version: 1,
+        owner_id: this.operator()?.id ?? null,
+        unit_id: null,
+        owned: true,
+        owner_cardinality: 'unbounded',
+        unit_cardinality: 'unbounded',
+        role: 'content',
+      },
+      sections: model.sections.map((s) => ({
+        id: s.id,
+        model_id: model.id,
+        name: s.name,
+        kind: s.kind,
+        is_brief: s.is_brief,
+        parent_section_id: null,
+        fields: Object.entries(s.fields || {}).map(field),
+        other_data: s.append_only ? { append_only: true } : {},
+        constraints: {},
+      })),
+    }
+  }
+
+  operator() {
+    return this.accounts.find((a) => a.operator) ?? null
+  }
+
+  // ── Entities ────────────────────────────────────────────────────────────────
+
+  seedEntity({ uuid, model: modelName, owner = null, items = [], data }) {
+    if (uuid != null && !isUuid(uuid)) {
+      throw new Error(
+        `[uniweb/api mock] seed entity uuid '${uuid}' is not a UUID — the backend addresses entities by UUID, so an id like this one would be a 400 there`,
+      )
+    }
+    const model = this.model(modelName) ?? this.defineModel(modelName)
+    const who = (owner && this.accounts.find((a) => a.username === owner)) || this.operator() || this.accounts[0] || null
+    const entity = this.newEntity(model, who)
+    if (uuid) entity.uuid = uuid
+    const brief = model.sections.find((s) => s.is_brief)
+    if (data && brief && Object.keys(data).length) this.addItem(entity, brief, { data })
+    for (const item of items) {
+      const section = model.sections.find((s) => s.name === item.section)
+      if (!section) throw new Error(`[uniweb/api mock] seed: ${modelName} has no section '${item.section}'`)
+      this.addItem(entity, section, { data: item.data ?? {}, parent: item.parent ?? null })
+    }
+    this.entities.set(entity.uuid, entity)
+    return entity
+  }
+
+  newEntity(model, owner) {
+    const at = this.clock()
+    return {
+      id: (this.ids.entity += 1),
+      uuid: newUuid(),
+      model: model.name,
+      owner_id: owner?.id ?? null,
+      created_by: owner?.id ?? null,
+      created_at: at,
+      updated_at: at,
+      items: [],
+    }
+  }
+
+  addItem(entity, section, { data, parent = null, position = null }) {
+    const at = this.clock()
+    const item = {
+      id: (this.ids.item += 1),
+      uuid: newUuid(),
+      section_id: section.id,
+      parent_item_id: parent,
+      data,
+      order_number: this.orderFor(entity, section.id, parent, position, null),
+      created_at: at,
+      updated_at: at,
+    }
+    entity.items.push(item)
+    entity.updated_at = at
+    return item
+  }
+
+  /** The order number a position asks for, among an item's siblings. `null` ⇒ the item was not found. */
+  orderFor(entity, sectionId, parent, position, excludeId) {
+    const siblings = entity.items
+      .filter((i) => i.section_id === sectionId && (i.parent_item_id ?? null) === (parent ?? null) && i.id !== excludeId)
+      .sort((a, b) => a.order_number - b.order_number)
+    if (!siblings.length) return GAP
+    if (position === 'first') return siblings[0].order_number - GAP
+    if (position && typeof position === 'object' && position.after != null) {
+      const at = siblings.findIndex((i) => i.id === position.after)
+      if (at < 0) return null
+      const next = siblings[at + 1]
+      if (!next) return siblings[at].order_number + GAP
+      const mid = Math.floor((siblings[at].order_number + next.order_number) / 2)
+      if (mid > siblings[at].order_number) return mid
+      // The gap is used up: respace the level and place again.
+      siblings.forEach((s, i) => {
+        s.order_number = (i + 1) * GAP
+      })
+      return this.orderFor(entity, sectionId, parent, position, excludeId)
+    }
+    return siblings[siblings.length - 1].order_number + GAP
+  }
+
+  mayEdit(entity) {
+    const me = this.account
+    return !!me && (me.operator || entity.owner_id === me.id)
+  }
+
+  /** Which branch lets the viewer read a row, as the backend names it. */
+  via(entity) {
+    const me = this.account
+    if (me?.operator) return 'rbac'
+    return entity.owner_id === me?.id ? 'owner' : 'unit_member'
+  }
+
+  /** The entity's summary: its brief section's item, projected like any read. */
+  brief(entity, locales) {
+    const model = this.model(entity.model)
+    const section = model?.sections.find((s) => s.is_brief)
+    const item = section && entity.items.find((i) => i.section_id === section.id)
+    return item ? this.project(item.data, section, locales) : {}
   }
 
   /**
-   * Record a shape finding the mock chose not to refuse.
-   *
-   * ⛔ Called ONLY for `STORAGE.UNRESOLVED` writes. A finding here is "we could not
-   * judge this because the storage mapping is an open question", never "this was
-   * wrong but allowed" — see `./schema-shape.js` for the question and for the one
-   * table that resolves it.
+   * A localized field — declared `localized: true` — answered in the first listed
+   * locale it has, and omitted when it has none: the backend has no fallback of
+   * its own. Without a locale, the whole `{ locale: value }` map.
    */
+  project(data, section, locales) {
+    if (!locales?.length || !section?.fields || !data || typeof data !== 'object') return data
+    const out = { ...data }
+    for (const [key, field] of Object.entries(section.fields)) {
+      if (!field?.localized || !out[key] || typeof out[key] !== 'object') continue
+      const hit = locales.find((l) => out[key][l] != null)
+      if (hit) out[key] = out[key][hit]
+      else delete out[key]
+    }
+    return out
+  }
+
+  /** The entity row without its Model's identity — as it sits inside a write's answer. */
+  core(entity, locales) {
+    const model = this.model(entity.model)
+    return {
+      id: entity.id,
+      uuid: entity.uuid,
+      model_id: model.id,
+      owner_id: entity.owner_id,
+      unit_id: SITE_UNIT,
+      sort_date: null,
+      brief: this.brief(entity, locales),
+      disabled: false,
+      created_by: entity.created_by,
+      created_at: entity.created_at,
+      updated_at: entity.updated_at,
+    }
+  }
+
+  /** A list row, a create's answer: the Model's identity, then the row. */
+  row(entity, { via = false, locales } = {}) {
+    const model = this.model(entity.model)
+    return {
+      model_uuid: model.uuid,
+      model_name: model.name,
+      ...(via ? { via: this.via(entity) } : {}),
+      ...this.core(entity, locales),
+    }
+  }
+
+  /** The single-entity read. */
+  read(entity, { locales, withItems = true, canEdit = true } = {}) {
+    const model = this.model(entity.model)
+    const sectionOf = (id) => model.sections.find((s) => s.id === id)
+    const order = new Map(model.sections.map((s, i) => [s.id, i]))
+    const items = withItems
+      ? [...entity.items]
+          .sort(
+            (a, b) =>
+              (order.get(a.section_id) ?? 0) - (order.get(b.section_id) ?? 0) ||
+              a.order_number - b.order_number ||
+              a.id - b.id,
+          )
+          .map((i) => ({
+            id: i.id,
+            section_id: i.section_id,
+            parent_item_id: i.parent_item_id,
+            data: this.project(i.data, sectionOf(i.section_id), locales),
+            item_date: null,
+            order_number: i.order_number,
+            updated_at: i.updated_at,
+          }))
+      : []
+    return {
+      model_uuid: model.uuid,
+      model_name: model.name,
+      ...(canEdit ? { can_edit: this.mayEdit(entity) } : {}),
+      hydrated: { entity: this.core(entity, locales), items },
+    }
+  }
+
+  list(model, { scope, limit, offset, paginate, locales }) {
+    const me = this.account
+    const rows = [...this.entities.values()]
+      .filter((e) => e.model === model.name && (scope !== 'mine' || e.owner_id === me?.id))
+      .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : b.id - a.id))
+    const page = paginate ? rows.slice(offset, offset + limit) : rows
+    // `matched` counts the rows in THIS answer — the page, when paging.
+    return { entities: page.map((e) => this.row(e, { via: true, locales })), matched: page.length }
+  }
+
+  create(model, items) {
+    const entity = this.newEntity(model, this.account)
+    const staged = { ...entity, items: [] }
+    for (const item of items) {
+      const section = model.sections.find((s) => s.name === item.section)
+      if (!section) return refuse(404, 'Not Found', `section ${model.id}:${item.section} not found`, { kind: 'section', key: `${model.id}:${item.section}` })
+      const refusal = this.admit(staged, model, section, item.data, null)
+      if (refusal) return refusal
+      this.addItem(staged, section, { data: item.data, parent: item.parent_item_id ?? null })
+    }
+    Object.assign(entity, { items: staged.items, updated_at: staged.updated_at })
+    this.entities.set(entity.uuid, entity)
+    return { status: 201, body: this.row(entity) }
+  }
+
+  remove(entity) {
+    this.entities.delete(entity.uuid)
+  }
+
+  // ── Item writes ─────────────────────────────────────────────────────────────
+
+  /**
+   * May this data go into this section? The two refusals a create meets before it
+   * lands: a one-item section that already has its item, and content that does not
+   * fit the section's declared fields.
+   */
+  admit(entity, model, section, data, itemId) {
+    if (itemId == null && section.kind === 'single' && entity.items.some((i) => i.section_id === section.id)) {
+      return refuse(
+        409,
+        PROBLEM.schemaRule,
+        `section ${section.id} (kind=single) accepts at most one item — create it once, then update it`,
+      )
+    }
+    return this.shapeGuard(model, section, data, itemId)
+  }
+
+  /**
+   * Shape-check a write against the seed's declaration, when it gave one. A
+   * violation is the backend's `400 Validation` naming the field; a write into a
+   * section on the seed's `migration_debt` list is recorded, not refused.
+   */
+  shapeGuard(model, section, data, itemId) {
+    if (!model.decl?.sections) return null
+    const check = checkItemWrite({ decl: model.decl, section: section.name, data })
+    if (check.outcome === OUTCOME.VIOLATES) {
+      const first = check.problems[0]
+      return refuse(400, 'Validation', `item.data.${first.field}: ${first.detail}`, { field: `data.${first.field}` })
+    }
+    if (check.outcome === OUTCOME.DIAGNOSED) {
+      this.diagnose(model.name, { op: itemId == null ? 'create-item' : 'update-item', section: section.name }, check)
+    }
+    return null
+  }
+
+  /** Record a write the mock let through on the seed's say-so (`migration_debt`), deduped with a count. */
   diagnose(model, where, result) {
-    // ⭐ Deduped by (model, op, section, reason) with a count, so the list stays a
-    // MAP of what is unresolved rather than a log of every keystroke. An editor
-    // saving a lesson every few seconds would otherwise bury the distinct findings
-    // under thousands of identical rows, and the distinct set is the whole point.
     const key = `${model}|${where.op}|${where.section ?? ''}|${result.reason}`
-    // `storage` travels with the finding: migration debt and a still-open mapping
-    // read the same in a list otherwise, and they have different futures.
+    const at = new Date().toISOString()
     const seen = this.diagnostics.find((d) => d.key === key)
     if (seen) {
       seen.count += 1
-      seen.lastAt = now()
+      seen.lastAt = at
       return
     }
     this.diagnostics.push({
@@ -216,191 +587,105 @@ export class MockStore {
       problems: result.problems,
       undeclared: result.undeclared,
       count: 1,
-      firstAt: now(),
-      lastAt: now(),
+      firstAt: at,
+      lastAt: at,
     })
   }
 
-  /** Is this section insert-only? Existing items may not be edited or removed. */
-  isAppendOnly(model, section) {
-    const decl = this.schemas[model]?.append_only
-    if (decl === true) return true
-    return Array.isArray(decl) ? decl.includes(section) : false
-  }
-
-  // ── Reads ───────────────────────────────────────────────────────────────────
-
-  list({ model, limit, offset, all }) {
-    // Scoped by the session the way the real route is: what the viewer may see.
-    // A mock that returned everything would make an entitlement bug invisible.
-    const rows = [...this.entities.values()].filter(
-      (e) => e.model === model && (e.owner === null || e.owner === this.account?.uuid),
-    )
-    const matched = rows.length
-    const page = all ? rows : rows.slice(offset || 0, (offset || 0) + (limit ?? rows.length))
-    return { entities: page.map((e) => this.hydrate(e)), matched }
-  }
-
-  read(uuid) {
-    const entity = this.entities.get(uuid)
-    if (!entity) return null
-    if (entity.owner && entity.owner !== this.account?.uuid) return null
-    return this.hydrate(entity)
-  }
-
-  hydrate(entity) {
-    return {
-      uuid: entity.uuid,
-      model: entity.model,
-      ...entity.data,
-      items: entity.items.map((i) => ({ ...i })),
-    }
-  }
-
-  // ── Writes ──────────────────────────────────────────────────────────────────
-
-  create(model, data) {
-    // ⛔ Never refused. Whether this payload is the brief section's fields — and so
-    // whether it is checkable against them at all — IS the open question.
-    const check = checkEntityDataWrite({ decl: this.schemas[model], data })
-    if (check.outcome === OUTCOME.DIAGNOSED) this.diagnose(model, { op: 'create-entity' }, check)
-    const entity = this.seedEntity({ model, data, owner: this.account?.uuid ?? null })
-    return this.hydrate(entity)
-  }
-
-  remove(uuid) {
-    return this.entities.delete(uuid)
-  }
-
-  /**
-   * Shape-check an item write. Returns a refusal to hand straight back, or `null`.
-   *
-   * ⭐ **Refuses a declared section whose data does not fit, and an undeclared
-   * section that nobody owns.** It tolerates exactly two things: a `(model, section)`
-   * the site listed as `migration_debt`, and the create-time `data` payload — the
-   * one shape whose wire contract is still unsettled. See `./schema-shape.js`.
-   *
-   * The debt list is an explicit allowlist rather than a mode precisely so a typo
-   * cannot hide in it: `moduels` is a 422, `modules` is recorded and allowed.
-   */
-  shapeGuard(model, section, data, itemId) {
-    const decl = this.schemas[model]
-    if (!decl?.sections) return null
-    const check = checkItemWrite({ decl, section, data })
-
-    if (check.outcome === OUTCOME.VIOLATES) {
-      const first = check.problems[0]
-      return {
-        ok: false,
-        problem: {
-          status: 422,
-          title: 'SchemaViolation',
-          detail: `section '${section}' of ${model}: ${first.detail}`,
-          violations: check.problems,
-          ...(itemId != null ? { [FIELD.item]: itemId } : {}),
-        },
+  /** Apply one parsed op to an entity. `{ result }` or `{ problem }`. */
+  applyOp(entity, model, op) {
+    if (op.kind === OP.create) {
+      const section = model.sections.find((s) => s.id === op[FIELD.section])
+      if (!section) {
+        const other = this.modelOfSection(op[FIELD.section])
+        return other
+          ? refuse(409, PROBLEM.schemaRule, `section ${op[FIELD.section]} belongs to model ${other.id}, not the entity's model ${model.id}`)
+          : refuse(404, 'Not Found', `section ${op[FIELD.section]} not found`, { kind: 'section', key: String(op[FIELD.section]) })
       }
-    }
-    if (check.outcome === OUTCOME.DIAGNOSED) {
-      this.diagnose(model, { op: itemId == null ? 'create-item' : 'update-item', section }, check)
-    }
-    return null
-  }
-
-  /**
-   * Apply one op. Returns `{ ok, result }` or `{ ok: false, problem }` — the caller
-   * turns a problem into the response, so a batch can stop at the first one and
-   * report which op failed.
-   */
-  applyOp(entity, op) {
-    const kind = op?.kind
-    const itemId = op?.[FIELD.item]
-    const item = itemId != null ? entity.items.find((i) => String(i[FIELD.item]) === String(itemId)) : null
-
-    if (kind !== OP.create) {
-      if (!item) {
-        return { ok: false, problem: { status: 404, title: 'NotFound', kind: 'item', [FIELD.item]: itemId } }
+      const parent = op[FIELD.parent] ?? null
+      if (parent != null && !entity.items.some((i) => i.id === parent)) {
+        return refuse(409, PROBLEM.schemaRule, `parent item ${parent} is not an item of this entity`)
       }
-      // Append-only guards EDIT and DELETE. Not `move`: `created_at` is the
-      // chronology and a reader orders by it, so repositioning loses no truth.
-      if (kind !== OP.move && this.isAppendOnly(entity.model, item.section)) {
-        return {
-          ok: false,
-          problem: { status: 409, title: 'AppendOnly', detail: `items of '${item.section}' may be added but not changed`, [FIELD.item]: itemId },
-        }
+      const refusal = this.admit(entity, model, section, op.data, null)
+      if (refusal) return refusal
+      if (op.position != null && this.orderFor(entity, section.id, parent, op.position, null) == null) {
+        return refuse(404, 'Not Found', `item ${op.position.after} not found`, { kind: 'item', key: String(op.position.after) })
       }
-      const expected = op?.[FIELD.precondition]
-      if (expected != null && expected !== item[FIELD.token]) {
-        return {
-          ok: false,
-          problem: { status: 409, title: 'Conflict', [FIELD.item]: itemId, [FIELD.conflictToken]: item[FIELD.token] },
+      const made = this.addItem(entity, section, { data: op.data, parent, position: op.position })
+      return { result: { [FIELD.item]: made.id, [FIELD.itemUuid]: made.uuid, [FIELD.token]: made.updated_at } }
+    }
+
+    const item = entity.items.find((i) => i.id === op[FIELD.item])
+    if (!item) return refuse(404, 'Not Found', `item ${op[FIELD.item]} not found`, { kind: 'item', key: String(op[FIELD.item]) })
+    const expected = op[FIELD.precondition]
+    if (expected != null && expected !== item.updated_at) {
+      return refuse(409, 'Conflict', 'item changed since your last read — refetch and retry', {
+        [FIELD.conflictToken]: item.updated_at,
+      })
+    }
+    const section = model.sections.find((s) => s.id === item.section_id)
+
+    if (op.kind === OP.move) {
+      const parent = op[FIELD.parent] ?? null
+      const order = this.orderFor(entity, item.section_id, parent, op.position, item.id)
+      if (order == null) return refuse(404, 'Not Found', `item ${op.position.after} not found`, { kind: 'item', key: String(op.position.after) })
+      item.parent_item_id = parent
+      item.order_number = order
+      item.updated_at = this.clock()
+      entity.updated_at = item.updated_at
+      return { result: { [FIELD.item]: item.id, [FIELD.itemUuid]: null, [FIELD.token]: item.updated_at } }
+    }
+
+    // An insert-only section: its items can be added and moved, never edited or deleted.
+    if (section?.append_only) {
+      return refuse(409, PROBLEM.appendOnly, `section \`${section.name}\` is insert-only: existing items cannot be edited or deleted`, {
+        section: section.name,
+      })
+    }
+    if (op.kind === OP.update) {
+      const refusal = this.shapeGuard(model, section, op.data, item.id)
+      if (refusal) return refusal
+      // Whole-data replace, like the backend: round-trip what you do not edit. And
+      // like the backend, an update that changes nothing is a no-op — the token stays.
+      if (canonical(item.data) !== canonical(op.data)) {
+        item.data = op.data
+        item.updated_at = this.clock()
+        entity.updated_at = item.updated_at
+      }
+      return { result: { [FIELD.item]: item.id, [FIELD.itemUuid]: null, [FIELD.token]: item.updated_at } }
+    }
+    // delete — the item and anything nested under it.
+    const gone = new Set([item.id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const i of entity.items) {
+        if (!gone.has(i.id) && gone.has(i.parent_item_id)) {
+          gone.add(i.id)
+          grew = true
         }
       }
     }
-
-    if (kind === OP.create) {
-      // ⛔ No default. A create with no section is a client bug, and defaulting it
-      // would place the item outside the rules its author declared — silently.
-      if (!op[FIELD.section]) {
-        return { ok: false, problem: { status: 400, title: 'Validation', detail: 'create needs a section' } }
-      }
-      const refusal = this.shapeGuard(entity.model, op[FIELD.section], op.data, null)
-      if (refusal) return refusal
-      const made = this.makeItem({ section: op[FIELD.section], data: op.data, parent: op[FIELD.parent] ?? null })
-      this.place(entity, made, op.position)
-      return { ok: true, result: { [FIELD.item]: made[FIELD.item], [FIELD.token]: made[FIELD.token] } }
-    }
-    if (kind === OP.update) {
-      const refusal = this.shapeGuard(entity.model, item.section, op.data, itemId)
-      if (refusal) return refusal
-      // Whole-data replace, like the real write: round-trip what you do not edit.
-      item.data = op.data ?? {}
-      item[FIELD.token] = stamp()
-      return { ok: true, result: { [FIELD.item]: item[FIELD.item], [FIELD.token]: item[FIELD.token] } }
-    }
-    if (kind === OP.delete) {
-      entity.items = entity.items.filter((i) => i !== item)
-      // A null token is how a delete reports itself, so a ledger forgets the item.
-      return { ok: true, result: { [FIELD.item]: item[FIELD.item], [FIELD.token]: null } }
-    }
-    if (kind === OP.move) {
-      entity.items = entity.items.filter((i) => i !== item)
-      this.place(entity, item, op.position)
-      item[FIELD.token] = stamp()
-      return { ok: true, result: { [FIELD.item]: item[FIELD.item], [FIELD.token]: item[FIELD.token] } }
-    }
-    return { ok: false, problem: { status: 400, title: 'Validation', detail: `unknown op kind '${kind}'` } }
-  }
-
-  /** Ordering is the server's: `'first' | 'last' | { after }`, never a number from the client. */
-  place(entity, item, position) {
-    if (position === 'first') {
-      entity.items.unshift(item)
-      return
-    }
-    if (position && typeof position === 'object' && position.after != null) {
-      const at = entity.items.findIndex((i) => String(i[FIELD.item]) === String(position.after))
-      if (at >= 0) {
-        entity.items.splice(at + 1, 0, item)
-        return
-      }
-    }
-    entity.items.push(item)
+    entity.items = entity.items.filter((i) => !gone.has(i.id))
+    entity.updated_at = this.clock()
+    // A delete names no item — the row is gone.
+    return { result: { [FIELD.item]: null, [FIELD.itemUuid]: null, [FIELD.token]: null } }
   }
 
   /** A batch is all-or-nothing: apply to a copy, and keep it only if every op lands. */
-  applyOps(entity, ops) {
-    const snapshot = entity.items.map((i) => ({ ...i }))
+  applyOps(entity, model, ops) {
+    const working = {
+      ...entity,
+      items: entity.items.map((i) => ({ ...i, data: i.data })),
+    }
     const results = []
     for (const op of ops) {
-      const outcome = this.applyOp(entity, op)
-      if (!outcome.ok) {
-        entity.items = snapshot
-        return { ok: false, problem: outcome.problem }
-      }
+      const outcome = this.applyOp(working, model, op)
+      if (outcome.problem) return outcome
       results.push(outcome.result)
     }
-    entity.updated_at = now()
-    return { ok: true, results }
+    entity.items = working.items
+    entity.updated_at = working.updated_at
+    return { results }
   }
 }

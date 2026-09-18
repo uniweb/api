@@ -1,53 +1,42 @@
 /**
- * The concurrency ledger — the last-seen `item_updated_at` per item, and the
- * stamping of `if_unmodified_since` onto the ops that need one.
+ * The concurrency ledger — the last-seen `updated_at` per item, and the stamping
+ * of `if_unmodified_since` onto the ops that need one.
  *
  * The backend guards writes at the item grain: `update`, `delete` and `move` each
  * carry the target item's last-seen `updated_at`; `create` carries none. A
  * mismatch is a `409` whose `current_updated_at` extension names the item's
- * current token, and every write response carries `item_updated_at` — the next
- * precondition to chain forward. Three sources, one token.
+ * current token, and every write result carries `item_updated_at` — the next
+ * precondition to chain forward. **Three sources, one token: a read, a write, a
+ * conflict.**
  *
- * ⭐ `move` IS IN SCOPE, and the reasoning that briefly removed it is kept here
- * because it is the mistake this package invites. It was dropped on 2026-09-01 as
- * "an editor concern — an app's order is a property of the query, sort by a
- * field". **That is true of a MEMBER LIST and false of the apps this package
- * exists for.** An LMS instructor authors a course whose lessons are a curriculum
- * SEQUENCE: the order is authored, stored, and repositioned by hand.
+ * ⛔ **Reads are a source, and until 0.4 nothing fed them in.** A hydrated read
+ * carries each item's `updated_at`, which is exactly the token the FIRST write of
+ * that item must carry. Without it the first edit after a read went out
+ * unguarded — last-writer-wins — and silently overwrote whatever another person
+ * had saved in between, which is the one thing this ledger exists to prevent.
  *
- * ⇒ The trap is generalising from the CONSUMING surface. These apps have two, and
- * both are ours: members read and append (progress, submissions), while OPERATORS
- * author the app's own content — full CRUD over developer-defined schemas,
- * hierarchy included. [Diego, 2026-09-01.]
+ * ⚠️ **A read may not roll a token back.** A read that was sent before this client
+ * wrote an item, and answered after, carries the item's OLDER token. Taking it
+ * would make the next write fail against this client's own change. So a read is
+ * marked when it starts (`mark()`), and its tokens are taken only for items this
+ * client has not written since (`observe()`).
  *
- * ⚠️ UNVERIFIED ON OUR LANE: `move` and its server-managed `position` were read
- * off the site-editor's route, which is not ours. Whether
- * `POST /api/entities/{uuid}/items` offers `move`, and in what shape, is a
- * measurement nobody has taken. `stamp()` needs no branch either way — it guards
- * every non-`create` op — so this docstring is the only thing a finding moves.
+ * ⭐ `move` IS IN SCOPE. It was dropped on 2026-09-01 as "an editor concern — an
+ * app's order is a property of the query". **That is true of a MEMBER LIST and
+ * false of the apps this package exists for**: an instructor authors a course
+ * whose lessons are a sequence, ordered and re-ordered by hand. `move` carries a
+ * precondition like any other op on an existing item.
  *
- * That is the single most reinventable thing on the wire, so it lives here
- * once, as a pure structure with no route knowledge. The writer that composes
- * the request is the next slice; it will `stamp()` before sending, `absorb()`
- * what comes back, and `rebase()` on a conflict.
- *
- * ⛔ **Every field name here now comes from `./wire.js`, and that fixed a real
- * defect rather than tidying one.** This module read an op's target as `op.item`
- * and probed responses through a guess list, `['item', 'item_id', 'id']`. The wire
- * field is `item_id`. So a writer composing a correct op would have handed
- * `stamp()` something whose target it could not see — and `stamp()` returns an
- * unguarded op when it cannot find one, **by design, because an item it has never
- * seen is legitimately last-writer-wins.** The two behaviours are identical from
- * here and opposite in effect: one is "no token known", the other is "the
- * precondition was silently dropped from every write."
- *
- * ⇒ That is the argument for one home per name, in miniature. A guess list cannot
- * fail loudly, because guessing is what it is for.
+ * ⛔ **Every field name here comes from `./wire.js`.** This module once read an
+ * op's target as `op.item` while the wire says `item_id`, so a correct op looked
+ * target-less and went out unguarded — by design, because an item never seen is
+ * legitimately last-writer-wins. The two are identical from here and opposite in
+ * effect. One home per name is what makes that impossible.
  */
 
-import { FIELD, OP } from './wire.js'
+import { FIELD, OP, READ } from './wire.js'
 
-/** An op's or a response's item id, by the one name the wire uses. */
+/** An op's or a result's item id, by the one name the wire uses. */
 function itemIdOf(record) {
   const id = record?.[FIELD.item]
   return id == null ? null : String(id)
@@ -56,9 +45,11 @@ function itemIdOf(record) {
 export class Ledger {
   constructor() {
     this._at = new Map()
+    this._wrote = new Map()
+    this._clock = 0
   }
 
-  /** Record an item's token, from a read or a write response. */
+  /** Record an item's token — from a write, a conflict, or a caller that knows. */
   note(itemId, updatedAt) {
     if (itemId == null || updatedAt == null) return
     this._at.set(String(itemId), updatedAt)
@@ -73,12 +64,37 @@ export class Ledger {
     this._at.delete(String(itemId))
   }
 
+  /** A point in this ledger's history — take one when a read STARTS. */
+  mark() {
+    this._clock += 1
+    return this._clock
+  }
+
+  /**
+   * Take the tokens a read carried — each item's `id` and `updated_at` — except for
+   * items this client wrote after the read began.
+   *
+   * @param {object[]} [items] - a hydrated read's items
+   * @param {number} [mark] - `mark()` taken before the read was sent
+   */
+  observe(items, mark = Infinity) {
+    if (!Array.isArray(items)) return
+    for (const item of items) {
+      const id = item?.[READ.itemId]
+      const at = item?.[READ.itemToken]
+      if (id == null || at == null) continue
+      const key = String(id)
+      if ((this._wrote.get(key) ?? 0) > mark) continue
+      this._at.set(key, at)
+    }
+  }
+
   /**
    * Stamp an op with the precondition it needs. `create` is tokenless by
    * design; an op on an item this ledger has never seen goes out unguarded
    * — last-writer-wins — exactly as the wire treats an absent token.
    *
-   * @param {{ kind: string, item?: string|number }} op
+   * @param {{ kind: string, item_id?: number }} op
    * @returns {object} the op, with `if_unmodified_since` when known
    */
   stamp(op) {
@@ -90,26 +106,41 @@ export class Ledger {
   }
 
   /**
-   * Absorb a write response — one result or a batch of them — recording each
-   * item's next token, and forgetting an item whose token came back `null`,
-   * which is how a delete reports itself.
+   * Absorb a write — one result, or a batch's `results` — recording each item's
+   * next token.
    *
-   * @param {object} result
+   * ⭐ **Pass the ops, and each result is read against the op in its position.**
+   * That is the only way to know what a delete removed: its result names no item
+   * (`item_id: null` — the row is gone), so the item is the one the op named.
+   * Without the ops, a result is read on its own — a create's or an update's
+   * result names its item; a delete's cannot be placed.
+   *
+   * @param {object} result - the write's answer
+   * @param {object|object[]} [ops] - the ops that were sent, in order
    */
-  absorb(result) {
+  absorb(result, ops) {
     if (!result || typeof result !== 'object') return
-    if (Array.isArray(result.results)) {
-      for (const r of result.results) this.absorb(r)
-      return
-    }
-    const id = itemIdOf(result)
-    if (id == null || !(FIELD.token in result)) return
-    if (result[FIELD.token] === null) this.forget(id)
-    else this.note(id, result[FIELD.token])
+    const results = Array.isArray(result.results) ? result.results : [result]
+    const sent = ops == null ? [] : Array.isArray(ops) ? ops : [ops]
+    results.forEach((r, i) => {
+      const op = sent[i]
+      if (op?.kind === OP.delete) {
+        if (itemIdOf(op) != null) this.forget(itemIdOf(op))
+        return
+      }
+      const id = itemIdOf(r) ?? itemIdOf(op)
+      if (id == null || !r || !(FIELD.token in r)) return
+      if (r[FIELD.token] === null) {
+        this.forget(id)
+        return
+      }
+      this.note(id, r[FIELD.token])
+      this._wrote.set(id, this.mark())
+    })
   }
 
   /**
-   * On a `409`, take the item's current token from the error so the next
+   * On a stale `409`, take the item's current token from the error so the next
    * attempt is guarded by the truth rather than by what this ledger believed.
    *
    * @param {string|number} itemId
@@ -118,8 +149,9 @@ export class Ledger {
    */
   rebase(itemId, error) {
     const current = error?.extensions?.[FIELD.conflictToken]
-    if (current == null) return false
+    if (itemId == null || current == null) return false
     this.note(itemId, current)
+    this._wrote.set(String(itemId), this.mark())
     return true
   }
 }

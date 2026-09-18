@@ -17,13 +17,15 @@ function clientWith(content, handler) {
 }
 
 describe('request — the one composition', () => {
-  it('composes ${base}/api/<path> with the query it is given, and nothing it is not', async () => {
+  it('composes ${base}<path> — the base IS the API route space — with the query it is given, and nothing it is not', async () => {
     const client = clientWith(WITH_BACKEND, () => json(200, { ok: true }))
     await client.request('GET', '/things', { query: { model: '@/thing', skip: undefined, via: null } })
 
     const [url, init] = client.fetchFn.mock.calls[0]
     const u = parse(url)
-    expect(u.pathname).toBe('/_uw/api/things')
+    // ⛔ Not `/_api/api/things`: on a hosted site `/_api` already reaches the backend's
+    // `/api`, and the doubled path is a 404 (measured 2026-09-18).
+    expect(u.pathname).toBe('/_api/things')
     // No locale unless the caller adds one: the backend refuses a parameter a
     // route does not take (400 "Unexpected parameters: locale" on /auth/me).
     expect(u.searchParams.has('locale')).toBe(false)
@@ -48,10 +50,10 @@ describe('request — the one composition', () => {
   })
 
   it('carries credentials only when the base is another origin', async () => {
-    const client = clientWith({ config: { api: 'https://api.example.com/' } }, () => json(200, {}))
+    const client = clientWith({ config: { api: 'https://api.example.com/api/' } }, () => json(200, {}))
     await client.request('GET', '/auth/me')
     const [url, init] = client.fetchFn.mock.calls[0]
-    expect(url.startsWith('https://api.example.com/api/auth/me')).toBe(true)
+    expect(url).toBe('https://api.example.com/api/auth/me')
     expect(init.credentials).toBe('include')
   })
 

@@ -19,15 +19,26 @@ function withBackend(handler) {
 }
 
 describe('useRecords', () => {
-  it('loads the list and reports matched + hasMore', async () => {
-    withBackend(() => json(200, { entities: [{ uuid: 's-1' }], matched: 4 }))
+  it('loads the list and reports matched + hasMore — a full page may have more', async () => {
+    // `matched` counts the rows in this answer (measured); with a page of one that
+    // came back full, a next page may hold more.
+    withBackend(() => json(200, { entities: [{ uuid: 's-1', brief: { title: 'A' } }], matched: 1 }))
     const { result } = renderHook(() => useRecords({ schema: '@/session', limit: 1 }))
 
     expect(result.current.status).toBe('loading')
     await waitFor(() => expect(result.current.status).toBe('ready'))
-    expect(result.current.records).toEqual([{ uuid: 's-1' }])
-    expect(result.current.matched).toBe(4)
+    expect(result.current.records).toEqual([{ uuid: 's-1', brief: { title: 'A' } }])
+    expect(result.current.matched).toBe(1)
     expect(result.current.hasMore).toBe(true)
+  })
+
+  it('is absent, without a request, once nobody is signed in', async () => {
+    const client = withBackend(() => json(401, { status: 401, title: 'Unauthorized' }))
+    await client.ensureSession()
+    const calls = client.fetchFn.mock.calls.length
+    const { result } = renderHook(() => useRecords({ schema: '@/session' }))
+    expect(result.current.status).toBe('absent')
+    expect(client.fetchFn.mock.calls.length).toBe(calls)
   })
 
   it('⭐ says `absent` with no backend — NOT an empty ready', async () => {
@@ -99,9 +110,9 @@ describe('useEntityWriter', () => {
     })
     const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
     await act(async () => {
-      await result.current.move('i-1', { after: 'i-0' })
+      await result.current.move(1, { after: 0 })
     })
-    expect(sent).toEqual({ kind: 'move', item_id: 'i-1', position: { after: 'i-0' } })
+    expect(sent).toEqual({ kind: 'move', item_id: 1, position: { after: 0 } })
     expect('order' in sent).toBe(false)
   })
 
@@ -141,18 +152,39 @@ describe('useEntityWriter', () => {
     let calls = 0
     withBackend(() => {
       calls += 1
-      return json(409, { title: 'Conflict', item_id: 'i-1', current_updated_at: 'T9' })
+      return json(409, { status: 409, title: 'Conflict', current_updated_at: 'T9' })
     })
     const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
 
     await act(async () => {
-      await expect(result.current.update('i-1', {})).rejects.toThrow()
+      await expect(result.current.update(1, {})).rejects.toThrow()
     })
     expect(calls).toBe(1)
     expect(result.current.status).toBe('error')
     expect(result.current.conflict).toBeTruthy()
     // The next attempt is guarded by the server's token, not by what we believed.
-    expect(getClient().ledger.get('i-1')).toBe('T9')
+    expect(getClient().ledger.get(1)).toBe('T9')
+  })
+
+  it('⛔ reports a RULE as an error, not a conflict — nobody else changed anything', async () => {
+    // Measured: an insert-only section answers 409 too. Calling that a conflict
+    // tells a person to reload for a write that can never succeed.
+    withBackend(() => json(409, { status: 409, title: 'Append-Only Section', detail: 'insert-only', section: 'checkins' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    await act(async () => {
+      await expect(result.current.remove(3)).rejects.toMatchObject({ kind: 'rule' })
+    })
+    expect(result.current.status).toBe('error')
+    expect(result.current.conflict).toBeNull()
+  })
+
+  it('refuses an update without the whole data, and a move without a position', async () => {
+    withBackend(() => json(200, {}))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
+    await act(async () => {
+      await expect(result.current.update(1)).rejects.toMatchObject({ kind: 'invalid' })
+      await expect(result.current.move(1)).rejects.toMatchObject({ kind: 'invalid' })
+    })
   })
 
   it('reports not-enabled with no backend instead of throwing on render', async () => {
@@ -179,9 +211,12 @@ describe('useEntityWriter — create needs a section', () => {
     })
   })
 
-  it('sends the section it was given', async () => {
+  it('sends the section it was given — as the id the item route takes', async () => {
     let sent
     withBackend((url, init) => {
+      if (parse(url).pathname === '/_api/models/@/attendance') {
+        return json(200, { sections: [{ id: 5, name: 'attendance', parent_section_id: null }, { id: 6, name: 'checkins', parent_section_id: null }] })
+      }
       sent = JSON.parse(init.body)
       return json(200, {})
     })
@@ -189,6 +224,6 @@ describe('useEntityWriter — create needs a section', () => {
     await act(async () => {
       await result.current.create({ session: 's-1' }, { section: 'checkins', position: 'last' })
     })
-    expect(sent).toMatchObject({ kind: 'create', section: 'checkins', position: 'last' })
+    expect(sent).toEqual({ kind: 'create', section_id: 6, data: { session: 's-1' }, position: 'last' })
   })
 })

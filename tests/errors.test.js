@@ -8,7 +8,6 @@ describe('kindOf', () => {
     expect(kindOf(404)).toBe('absent')
     expect(kindOf(400)).toBe('invalid')
     expect(kindOf(422)).toBe('invalid')
-    expect(kindOf(409)).toBe('conflict')
     expect(kindOf(429)).toBe('rate-limited')
     expect(kindOf(500)).toBe('unavailable')
     expect(kindOf(503)).toBe('unavailable')
@@ -16,10 +15,22 @@ describe('kindOf', () => {
     expect(kindOf(418)).toBe('unknown')
   })
 
-  it('lets the two self-describing titles refine a 403', () => {
+  it('lets the self-describing titles refine a 403', () => {
     expect(kindOf(403, 'CSRF Header Required')).toBe('csrf')
     expect(kindOf(403, 'Step-Up Required')).toBe('step-up')
+    expect(kindOf(403, 'Email Not Verified')).toBe('unverified')
     expect(kindOf(403, 'Forbidden')).toBe('forbidden')
+  })
+
+  it('⛔ calls a 409 a conflict ONLY when it carries the item\'s current token', () => {
+    // Measured: the backend answers 409 for a stale token AND for rules of the Model —
+    // an insert-only section, a second item in a one-item section. Only the stale one
+    // carries `current_updated_at`; reporting the others as "someone else changed
+    // this" sends a person to reload for a write that can never succeed.
+    expect(kindOf(409, 'Conflict', { current_updated_at: '2026-09-18T00:00:00Z' })).toBe('conflict')
+    expect(kindOf(409, 'Append-Only Section', { section: 'checkins' })).toBe('rule')
+    expect(kindOf(409, 'Schema Rule Violation')).toBe('rule')
+    expect(kindOf(409, 'Conflict')).toBe('rule')
   })
 })
 
@@ -27,16 +38,22 @@ describe('ApiError.fromResponse', () => {
   it('reads problem-JSON: title, detail, and every other key as an extension', () => {
     const err = ApiError.fromResponse(
       { status: 409, statusText: 'Conflict' },
-      { status: 409, title: 'Stale', detail: 'item 4 moved', current_updated_at: '2026-08-29T00:00:00Z' },
+      { status: 409, title: 'Conflict', detail: 'item changed since your last read', current_updated_at: '2026-08-29T00:00:00Z' },
     )
     expect(err).toBeInstanceOf(Error)
     expect(err.name).toBe('ApiError')
     expect(err.status).toBe(409)
-    expect(err.title).toBe('Stale')
-    expect(err.detail).toBe('item 4 moved')
+    expect(err.title).toBe('Conflict')
+    expect(err.detail).toBe('item changed since your last read')
     expect(err.kind).toBe('conflict')
     expect(err.extensions).toEqual({ current_updated_at: '2026-08-29T00:00:00Z' })
-    expect(err.message).toBe('item 4 moved')
+    expect(err.message).toBe('item changed since your last read')
+  })
+
+  it('names the field of content the Model refuses', () => {
+    const err = ApiError.fromResponse({ status: 400 }, { status: 400, title: 'Validation', detail: 'item.data.minutes must be an integer', field: 'data.minutes' })
+    expect(err.kind).toBe('invalid')
+    expect(err.extensions.field).toBe('data.minutes')
   })
 
   it('carries retry_after_seconds as retryAfter', () => {
@@ -54,7 +71,7 @@ describe('ApiError.fromResponse', () => {
   })
 })
 
-describe('the two errors no response produces', () => {
+describe('the errors no response produces', () => {
   it('network — the request did not complete', () => {
     const cause = new TypeError('fetch failed')
     const err = ApiError.network(cause)
@@ -65,5 +82,9 @@ describe('the two errors no response produces', () => {
 
   it('disabled — the site declares no backend', () => {
     expect(ApiError.disabled().kind).toBe('disabled')
+  })
+
+  it('invalid — a call refused before it was sent', () => {
+    expect(ApiError.invalid('No Section', 'create needs a section')).toMatchObject({ kind: 'invalid', status: 0, title: 'No Section' })
   })
 })

@@ -3,46 +3,63 @@
  * template uses and a seed nobody edits should still show something.
  *
  * ⭐ **A seed is the mock's whole data model**, and it is a plain object on purpose:
- * a developer edits it in one file, diffs it, and commits it. That is the property
- * a database would take away.
+ * a developer edits it in one file, diffs it, and commits it.
  *
- * ⚠️ `schemas` here lists only what the mock ENFORCES — who may create, and which
- * sections are insert-only. It is not a data-schema and cannot validate content;
- * the real schema lives in the foundation, where the site build reads it.
+ * - **`accounts`** — `operator: true` marks the account that runs the site's
+ *   service. Everyone else is a member. Seeded accounts are verified.
+ * - **`schemas`** — per Model: `creatable_by` (`any_user`, the default, or
+ *   `unit_members` — the operator only) and `sections`, the Model's sections as
+ *   the framework lowers them. With `sections`, writes are shape-checked.
+ * - **`entities`** — `uuid` must be a UUID, as it is on the wire; content is items,
+ *   each naming its section. The entity's `brief` is derived from its brief
+ *   section's item, as the backend derives it.
  */
 export const DEFAULT_SEED = {
   accounts: [
-    // The organiser belongs to a unit, so `creatable_by: unit_members` lets them
-    // author the programme.
-    { username: 'organiser', password: 'organiser', handle: 'organiser', units: ['conf'], roles: ['member'] },
-    // The attendee belongs to none — the same rule refuses them, server-side, and
-    // that refusal is the demo.
-    { username: 'attendee', password: 'attendee', handle: 'attendee', units: [], roles: ['member'] },
+    // The organiser runs the site, so the rule on `@/track` lets them author the programme.
+    { username: 'organiser', password: 'organiser', operator: true },
+    // The attendee is a member — the same rule refuses them, server-side, and that
+    // refusal is the demo. They may record attending, which anyone may.
+    { username: 'attendee', password: 'attendee' },
   ],
   schemas: {
-    '@/track': { creatable_by: 'unit_members' },
-    '@/session': { creatable_by: 'unit_members' },
+    '@/track': {
+      creatable_by: 'unit_members',
+      sections: {
+        track: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
+        sessions: {
+          kind: 'multi',
+          fields: { title: { type: 'string', required: true }, room: { type: 'string' }, minutes: { type: 'int' } },
+        },
+      },
+    },
     // Check-ins are insert-only: an attendee may record attending, and nobody —
     // including them — may edit or remove it afterwards.
-    '@/attendance': { creatable_by: 'any_user', append_only: ['checkins'] },
+    '@/attendance': {
+      creatable_by: 'any_user',
+      sections: {
+        attendance: { kind: 'single', brief: true, fields: { who: { type: 'string' } } },
+        checkins: { kind: 'multi', append_only: true, fields: { session: { type: 'string' }, at: { type: 'string' } } },
+      },
+    },
   },
   entities: [
     {
-      uuid: 'track-main',
+      uuid: '01926d5e-0000-7000-8000-00000000a001',
       model: '@/track',
-      data: { name: 'Main hall' },
       items: [
-        { id: 'sess-1', section: 'sessions', data: { title: 'Opening keynote', room: 'Hall A', minutes: 45 } },
-        { id: 'sess-2', section: 'sessions', data: { title: 'Designing for the edge', room: 'Hall A', minutes: 30 } },
-        { id: 'sess-3', section: 'sessions', data: { title: 'Closing panel', room: 'Hall A', minutes: 60 } },
+        { section: 'track', data: { name: 'Main hall' } },
+        { section: 'sessions', data: { title: 'Opening keynote', room: 'Hall A', minutes: 45 } },
+        { section: 'sessions', data: { title: 'Designing for the edge', room: 'Hall A', minutes: 30 } },
+        { section: 'sessions', data: { title: 'Closing panel', room: 'Hall A', minutes: 60 } },
       ],
     },
     {
-      uuid: 'track-workshops',
+      uuid: '01926d5e-0000-7000-8000-00000000a002',
       model: '@/track',
-      data: { name: 'Workshops' },
       items: [
-        { id: 'sess-4', section: 'sessions', data: { title: 'Hands-on: foundations', room: 'Room 2', minutes: 90 } },
+        { section: 'track', data: { name: 'Workshops' } },
+        { section: 'sessions', data: { title: 'Hands-on: foundations', room: 'Room 2', minutes: 90 } },
       ],
     },
   ],

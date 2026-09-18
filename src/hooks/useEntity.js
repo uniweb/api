@@ -15,10 +15,14 @@ const DISABLED = Object.freeze({ status: 'absent', entity: null, error: null })
  * if (status === 'absent') return <EnrolWall />   // not found OR not permitted — one word, by design
  * ```
  *
+ * The entity is the backend's answer: `entity.hydrated.items` is its content —
+ * `{ id, section_id, data, … }` each — `entity.hydrated.entity.brief` its summary,
+ * and `entity.can_edit` whether this viewer may write to it.
+ *
  * Cached in the site's data store under a key scoped to the viewer, so a
  * sign-in or sign-out changes the key and the record is read again for who
- * is now looking. On a site with no backend the answer is `absent`: there is
- * nothing to read.
+ * is now looking. On a site with no backend, or with nobody signed in, the
+ * answer is `absent`: there is nothing this viewer can read.
  *
  * @param {{ schema: string, uuid: string, via?: string } | null} ref - pass null to skip
  * @returns {{ status: string, entity: object|null, error: Error|null, refresh: Function }}
@@ -29,13 +33,14 @@ export function useEntity(ref) {
   const store = website?.dataStore ?? null
 
   // Re-key on a viewer change: the session is part of the key.
-  useSyncExternalStore(
+  const session = useSyncExternalStore(
     client ? client.subscribe : noSubscribe,
     client ? () => client.session : noSnapshot,
     client ? () => client.session : noSnapshot,
   )
 
-  const active = !!(client && client.enabled && store && ref && ref.uuid)
+  // Signed out, the backend reads nothing to this viewer (`401`) — absent, unasked.
+  const active = !!(client && client.enabled && store && ref && ref.uuid && session?.status !== 'anonymous')
   const key = active
     ? client.cacheKey({ endpoint: `/entities/${ref.uuid}`, schema: ref.schema, via: ref.via })
     : null

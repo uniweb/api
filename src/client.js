@@ -15,7 +15,7 @@ import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
-import { AUTH, ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
+import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP } from './wire.js'
 import { Ledger } from './ledger.js'
 
 /** The site service this package reads its base from — the only name it owns. */
@@ -109,6 +109,10 @@ export class ApiClient {
     this._challenge = null
     this._keys = new Map()
     this._inflight = new Map()
+    // A Model's sections by name, per Model — what an item create needs to say
+    // which section it writes into. Readability depends on the viewer, so it is
+    // dropped with the viewer's other entries.
+    this._schemas = new Map()
     // One ledger per client, which is one per page — the right grain, since it is
     // keyed by item and an item is the same item whoever is looking at it.
     this.ledger = new Ledger()
@@ -187,7 +191,7 @@ export class ApiClient {
    * cache entries leave memory and the session turns anonymous.
    *
    * @param {string} method
-   * @param {string} path - the route under `/api`
+   * @param {string} path - the route, relative to the base (`/entities`)
    * @param {object} [options]
    * @param {object} [options.query]
    * @param {*} [options.body]
@@ -234,10 +238,23 @@ export class ApiClient {
     throw error
   }
 
+  /**
+   * The locale preference list for a read of localized values: the active locale,
+   * then the site's default.
+   *
+   * ⛔ **The backend applies the list in order and has no fallback of its own** — a
+   * localized field with no value in any listed locale is omitted from the answer
+   * (measured 2026-09-18: `locale=de` drops an English-only field, `locale=de,en`
+   * returns it in English). Sending the active locale alone therefore hid every
+   * field not yet translated from a visitor in another language; the site's default
+   * is the same fallback its own static content uses.
+   */
   _localeQuery() {
     const website = this.website
-    const locale = website?.getActiveLocale?.() ?? website?.activeLocale ?? null
-    return locale ? { locale } : null
+    const active = website?.getActiveLocale?.() ?? website?.activeLocale ?? null
+    const fallback = website?.getDefaultLocale?.() ?? website?.defaultLocale ?? null
+    const locales = [active, fallback].filter((l, i, all) => l && all.indexOf(l) === i)
+    return locales.length ? { [PARAM.locale]: locales.join(',') } : null
   }
 
   // ── The session ───────────────────────────────────────────────────────────
@@ -304,17 +321,18 @@ export class ApiClient {
 
   /**
    * Sign in. The credentials object is handed to the backend as the request
-   * body, unchanged — this package does not decide its field names.
+   * body, unchanged: `{ username, password }` (`AUTH_BODY` in `./wire.js`).
    *
    * @param {object} credentials
    * @returns {Promise<{ ok: boolean, viewer?: object|null, challenge?: { kind: 'totp' } }>}
    *   `ok: false` with a `challenge` when a second factor is required — finish
-   *   with `completeChallenge(code)`. A refused credential throws (`kind: 'auth'`).
+   *   with `completeChallenge(code)`. A refused credential throws (`kind: 'auth'`);
+   *   the right password for an address not yet verified throws `kind: 'unverified'`.
    */
   async signIn(credentials) {
     const body = await this.request('POST', AUTH.login, { body: credentials, onUnauthorized: 'ignore' })
-    if (body?.status === 'totp_required') {
-      this._challenge = body.challenge_token ?? null
+    if (body?.status === TOTP.status) {
+      this._challenge = body[TOTP.token] ?? null
       return { ok: false, challenge: { kind: 'totp' } }
     }
     this._challenge = null
@@ -333,7 +351,7 @@ export class ApiClient {
       throw new ApiError({ status: 0, title: 'No Challenge', detail: 'no sign-in challenge is pending', kind: 'invalid' })
     }
     await this.request('POST', AUTH.challenge, {
-      body: { challenge_token: this._challenge, code },
+      body: { [TOTP.token]: this._challenge, [TOTP.code]: code },
       onUnauthorized: 'ignore',
     })
     this._challenge = null
@@ -345,26 +363,43 @@ export class ApiClient {
    * Sign out. The session turns anonymous locally whatever the backend
    * answers — the viewer asked to leave — and the viewer's entries leave the
    * cache.
+   *
+   * A `401` is not an error here: it is the backend saying there was no session
+   * to end — a cookie that expired while the page stayed open — which is exactly
+   * the state being asked for. Anything else still throws, because then a live
+   * session may be left behind on the server.
    */
   async signOut() {
     try {
       await this.request('POST', AUTH.logout, { onUnauthorized: 'ignore' })
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 401)) throw err
     } finally {
       this._sessionLost()
     }
   }
 
-  /** Sign up. `202` semantics: the account is inert until verified. */
+  /**
+   * Sign up — `{ username, email, password }`, passed through unchanged.
+   *
+   * Answers `202 { status: 'verification_required', email }`, and the SAME answer
+   * when the address is already taken, so it never confirms who has an account.
+   * The account cannot sign in until the address is verified from the email the
+   * backend sends. A taken username is refused (`409`).
+   */
   signUp(fields) {
     return this.request('POST', AUTH.register, { body: fields, onUnauthorized: 'ignore' })
   }
 
-  /** Ask for a password reset. The backend answers `202` whether or not the account exists. */
+  /** Ask for a password reset — `{ email }`. `202` whether or not the address is known. */
   requestPasswordReset(fields) {
     return this.request('POST', AUTH.resetRequest, { body: fields, onUnauthorized: 'ignore' })
   }
 
-  /** Confirm a password reset with the token the viewer received. */
+  /**
+   * Confirm a password reset — `{ token, new_password, code? }`, with the token
+   * the viewer received and `code` when a second factor is enrolled.
+   */
   confirmPasswordReset(fields) {
     return this.request('POST', AUTH.resetConfirm, { body: fields, onUnauthorized: 'ignore' })
   }
@@ -422,6 +457,7 @@ export class ApiClient {
       this._inflight.delete(key)
     }
     this._keys.clear()
+    this._schemas.clear()
   }
 
   /**
@@ -487,24 +523,36 @@ export class ApiClient {
    * Read one entity by id — through a container the viewer holds an
    * entitlement on, when `via` names one.
    *
+   * The entity comes back as the backend answers it:
+   * `{ model_uuid, model_name, can_edit, hydrated: { entity, items } }` — the
+   * content is `hydrated.items`, each `{ id, section_id, data, updated_at, … }`,
+   * and `hydrated.entity.brief` is its summary. `can_edit` is the write gate's
+   * own answer for this viewer.
+   *
+   * ⭐ **The read seeds the concurrency ledger** with each item's `updated_at`, so
+   * the first edit of an item is guarded by the version the viewer was shown.
+   *
    * `absent` is one word for not-found-and-not-permitted, by the backend's
    * design; a component renders its enrol or paywall on it and never says
    * "deleted". Any other refusal throws.
    *
    * @param {object} args
-   * @param {string} args.schema - the entity's Model, e.g. `@/lesson`
+   * @param {string} args.schema - the entity's Model, e.g. `@acme/lesson` — required; the backend reads by Model
    * @param {string} args.uuid
    * @param {string} [args.via] - the granting container's uuid
    * @param {AbortSignal} [args.signal]
    * @returns {Promise<{ status: 'ready'|'absent', entity: object|null }>}
    */
   async readEntity({ schema, uuid, via, signal } = {}) {
-    if (!uuid) throw new ApiError({ status: 0, title: 'No Entity', detail: 'readEntity needs a uuid', kind: 'invalid' })
+    if (!uuid) throw ApiError.invalid('No Entity', 'readEntity needs a uuid')
+    if (!schema) throw ApiError.invalid('No Model', 'readEntity needs a schema — the backend reads an entity by its Model')
+    const mark = this.ledger.mark()
     try {
       const entity = await this.request('GET', ROUTES.read(uuid), {
         query: { [PARAM.model]: schema, [PARAM.via]: via, ...this._localeQuery() },
         signal,
       })
+      this.ledger.observe(entity?.[READ.hydrated]?.[READ.items], mark)
       return { status: 'ready', entity }
     } catch (err) {
       if (err instanceof ApiError && err.kind === 'absent') return { status: 'absent', entity: null }
@@ -513,95 +561,166 @@ export class ApiClient {
   }
 
   /**
-   * List the entities of a Model the viewer may see.
+   * List the entities of a Model the viewer may read.
    *
-   * ⭐ **Scoped by the session, not by a filter this package adds.** The answer is
-   * what the viewer may see — an anonymous caller gets what is public, and that is
-   * the gate working rather than an empty result to explain away. ⚠️ A lapsed
-   * session is a `401` and not an empty list (backend, 2026-08-29): treating
-   * `records: []` as "perhaps you are signed out" would re-implement a bug they
-   * already fixed, and tell someone their content was gone when it was not.
+   * ⭐ **Scoped by the session, not by a filter this package adds.** Signed out,
+   * there is nothing to list — the backend answers `401`, and a lapsed session is
+   * a `401` too, never an empty list (so `records: []` means empty).
    *
-   * ## Paging is absorbed as far as it can honestly be
+   * ⚠️ **`scope` decides whose.** The default, `accessible`, is everything the
+   * viewer may read — on a site's `api` service that is every member's entities
+   * of the Model, not only the viewer's. `mine` is only what the viewer owns.
    *
-   * `matched` is the count *before* paging, so `hasMore` is derivable without a
-   * second request. `all: true` asks the server for its own all-mode rather than
-   * looping pages from here — a loop this package ran would be slower, racier, and
-   * a reimplementation of something the route already does.
+   * ## Paging, as far as it can honestly be absorbed
    *
-   * ⛔ **No cursor, and no auto-following.** A caller that wants every page of a
-   * large Model says `all: true` and gets one request; a caller that wants pages
-   * gets pages. Inventing a third thing in between would hide which one is
-   * happening, and the cost of "it fetched everything" should be visible in the
-   * call.
+   * A row is the entity's summary: `{ uuid, brief, owner_id, via, … }` — no items.
+   * ⛔ **`matched` counts the rows in THIS answer** — the page, when paging — and
+   * the backend offers no total while paging. So `hasMore` is the one honest
+   * signal: the page came back full, and a next page may hold more. `all: true`
+   * asks the backend for the whole slice in one request; then `matched` is the
+   * total and `hasMore` is false.
    *
    * @param {object} args
-   * @param {string} args.schema - the Model, e.g. `@/session`
-   * @param {string} [args.scope] - the visibility scope the route accepts
-   * @param {number} [args.limit]
+   * @param {string} args.schema - the Model, e.g. `@acme/session`
+   * @param {'accessible'|'mine'|'all'} [args.scope] - default `accessible`
+   * @param {number} [args.limit] - the page size; default 50, at most 1000
    * @param {number} [args.offset]
    * @param {boolean} [args.all] - one request for the whole slice; ignores limit/offset
    * @param {AbortSignal} [args.signal]
    * @returns {Promise<{ records: object[], matched: number, hasMore: boolean }>}
    */
   async listEntities({ schema, scope, limit, offset, all = false, signal } = {}) {
-    if (!schema) {
-      throw new ApiError({ status: 0, title: 'No Model', detail: 'listEntities needs a schema', kind: 'invalid' })
-    }
+    if (!schema) throw ApiError.invalid('No Model', 'listEntities needs a schema')
     const query = { [PARAM.model]: schema, [PARAM.scope]: scope, ...this._localeQuery() }
+    let pageSize = null
     if (all) query[PARAM.paginate] = false
     else {
-      if (limit != null) query[PARAM.limit] = limit
+      pageSize = limit ?? PAGE.size
+      query[PARAM.limit] = pageSize
       if (offset != null) query[PARAM.offset] = offset
     }
 
     const body = await this.request('GET', ROUTES.list(), { query, signal })
     const records = Array.isArray(body?.[LIST.records]) ? body[LIST.records] : []
-    // `matched` absent is not zero — it is unknown, and a caller reading zero would
-    // conclude "empty" from a body that just did not say. Fall back to what we hold.
     const matched = typeof body?.[LIST.matched] === 'number' ? body[LIST.matched] : records.length
-    const seen = (offset || 0) + records.length
-    return { records, matched, hasMore: !all && seen < matched }
+    return { records, matched, hasMore: pageSize != null && pageSize > 0 && records.length >= pageSize }
+  }
+
+  /**
+   * A Model's sections — `{ id, name, parent }` each — read from its definition
+   * once per viewer and kept.
+   *
+   * @param {string} schema
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<Array<{ id: number, name: string, parent: number|null }>>}
+   */
+  sections(schema, signal) {
+    if (!schema) return Promise.reject(ApiError.invalid('No Model', 'sections needs a schema'))
+    const held = this._schemas.get(schema)
+    if (held) return held
+    const pending = this.request('GET', ROUTES.schema(schema), { signal }).then((body) =>
+      (Array.isArray(body?.[SCHEMA.sections]) ? body[SCHEMA.sections] : []).map((s) => ({
+        id: s[SCHEMA.id],
+        name: s[SCHEMA.name],
+        parent: s[SCHEMA.parent] ?? null,
+      })),
+    )
+    this._schemas.set(schema, pending)
+    // A failure is not kept: the next write asks again.
+    pending.catch(() => {
+      if (this._schemas.get(schema) === pending) this._schemas.delete(schema)
+    })
+    return pending
+  }
+
+  /**
+   * The numeric id of a section, by name — or by `parent/child` path for a nested
+   * one — which is how the item route names a section.
+   *
+   * ⭐ **This is why a caller never meets a section id.** Creating an entity takes
+   * section names; the item route after it takes ids, and ids differ from one
+   * backend to the next. So a name is resolved here, from the Model's definition.
+   *
+   * ⚠️ The definition is readable for the Models the viewer may create, and by the
+   * site's operator. Anywhere else this cannot resolve a name, and says so — pass
+   * the section's numeric id instead (an item's `section_id` on a read).
+   *
+   * @param {string} schema
+   * @param {string|number} section - a name, a `parent/child` path, or an id
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<number>}
+   */
+  async sectionId(schema, section, signal) {
+    if (typeof section === 'number') return section
+    let sections
+    try {
+      sections = await this.sections(schema, signal)
+    } catch (err) {
+      if (err instanceof ApiError && err.kind === 'absent') {
+        throw ApiError.invalid(
+          'Unknown Section',
+          `section '${section}' of ${schema} cannot be resolved: this viewer cannot read the Model's definition — pass the section's numeric id`,
+        )
+      }
+      throw err
+    }
+    const path = String(section).split('/').filter(Boolean)
+    let candidates = sections.filter((s) => s.name === path[0] && (path.length === 1 || s.parent == null))
+    for (const name of path.slice(1)) {
+      const parents = new Set(candidates.map((s) => s.id))
+      candidates = sections.filter((s) => s.name === name && parents.has(s.parent))
+    }
+    if (candidates.length === 1) return candidates[0].id
+    throw ApiError.invalid(
+      'Unknown Section',
+      candidates.length
+        ? `section '${section}' of ${schema} is ambiguous — name it by its path, parent/child`
+        : `${schema} has no section '${section}'`,
+    )
+  }
+
+  /** An op, with a section NAME on a create resolved to the id the item route takes. */
+  async _resolveOp(schema, op, signal) {
+    if (op?.kind !== OP.create || op[FIELD.section] != null || op[CREATE.sectionName] == null) return op
+    const { [CREATE.sectionName]: section, ...rest } = op
+    return { ...rest, [FIELD.section]: await this.sectionId(schema, section, signal) }
   }
 
   /**
    * Write items of one entity — create, update, delete, move — as ONE transaction.
    *
-   * The ops go out stamped with each item's last-seen token and the response is
-   * absorbed, so a caller never handles a precondition itself. That is the single
-   * most reinventable thing on this wire, and the reason it is absorbed rather
-   * than documented.
+   * The ops go out stamped with each item's last-seen token and the answer is
+   * absorbed, so a caller never handles a precondition itself. A create may name
+   * its section (`section: 'sessions'`); it is resolved to the id the route takes.
    *
    * ## ⛔ A conflict is REBASED, never retried
    *
-   * A `409` means someone else changed the item since this viewer last read it.
-   * The ledger takes the current token off the error, so the caller's *next*
+   * A stale `409` means someone else changed the item since this viewer last saw
+   * it. The ledger takes the current token off the error, so the caller's *next*
    * attempt is guarded by the truth rather than by what we believed — and then the
-   * error is thrown.
+   * error is thrown. Retrying automatically would succeed by overwriting a change
+   * nobody looked at. ⇒ We remove the *bookkeeping* and leave the *decision*.
    *
-   * ⚖️ **Retrying automatically would be the wrong kind of helpful.** The write
-   * would then succeed, and it would succeed by overwriting a change nobody looked
-   * at. Concurrency is the one place where finishing the job for the caller
-   * destroys the thing the guard exists to protect. ⇒ We remove the *bookkeeping*
-   * and leave the *decision*.
+   * ⚠️ **The stale `409` does not say which item was stale.** For one guarded op
+   * that is the op's item; in a batch of several it is unknowable, and rebasing a
+   * guessed item would put one item's token on another — so a batch is not rebased.
    *
    * @param {object} args
    * @param {string} args.schema - the entity's Model
    * @param {string} args.uuid - the entity whose items these are
    * @param {object|object[]} args.ops - one op, or a batch run all-or-nothing
-   * @param {boolean} [args.readback] - ask for the written items back
+   * @param {boolean} [args.readback] - answer with the entity as it is after the write
    * @param {AbortSignal} [args.signal]
-   * @returns {Promise<*>} the write response, already absorbed
+   * @returns {Promise<*>} the write's answer, already absorbed
    */
   async writeItems({ schema, uuid, ops, readback = false, signal } = {}) {
-    if (!uuid) {
-      throw new ApiError({ status: 0, title: 'No Entity', detail: 'writeItems needs a uuid', kind: 'invalid' })
-    }
+    if (!uuid) throw ApiError.invalid('No Entity', 'writeItems needs a uuid')
+    if (!schema) throw ApiError.invalid('No Model', 'writeItems needs a schema')
     const list = Array.isArray(ops) ? ops : [ops]
-    if (list.length === 0) {
-      throw new ApiError({ status: 0, title: 'No Ops', detail: 'writeItems needs at least one op', kind: 'invalid' })
-    }
-    const stamped = list.map((op) => this.ledger.stamp(op))
+    if (list.length === 0) throw ApiError.invalid('No Ops', 'writeItems needs at least one op')
+
+    const resolved = await Promise.all(list.map((op) => this._resolveOp(schema, op, signal)))
+    const stamped = resolved.map((op) => this.ledger.stamp(op))
     const query = { [PARAM.model]: schema }
     if (readback) query[PARAM.readback] = true
 
@@ -611,13 +730,13 @@ export class ApiClient {
         body: Array.isArray(ops) ? stamped : stamped[0],
         signal,
       })
-      this.ledger.absorb(result)
+      this.ledger.absorb(result, stamped)
       return result
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409) {
-        // Rebase whichever item the server named. A batch reports one conflict at a
-        // time — the transaction stopped there — so one id is the whole answer.
-        const id = err.extensions?.[FIELD.item] ?? stamped.find((op) => op?.[FIELD.item] != null)?.[FIELD.item]
+      if (err instanceof ApiError && err.kind === 'conflict') {
+        const guarded = stamped.filter((op) => GUARDED_OPS.has(op?.kind) && op?.[FIELD.item] != null)
+        const named = err.extensions?.[FIELD.item]
+        const id = named ?? (guarded.length === 1 ? guarded[0][FIELD.item] : null)
         if (id != null) this.ledger.rebase(id, err)
       }
       throw err
@@ -625,27 +744,59 @@ export class ApiClient {
   }
 
   /**
-   * Create an entity of a Model, optionally with its first items.
+   * Create an entity of a Model, with its first items.
+   *
+   * ```js
+   * await createEntity({
+   *   schema: '@acme/course',
+   *   items: [{ section: 'course', data: { title: 'Intro' } }],
+   * })
+   * ```
+   *
+   * ⛔ **An entity has no content of its own — its content is items, each in a
+   * section.** Name each item's section; the entity and its items commit together,
+   * or neither does. The backend maintains the entity's `brief` from its brief
+   * section's item. `data` at the top level is refused here, because the backend
+   * would ignore it — an empty entity and no error.
    *
    * ⚠️ Not idempotent, and deliberately not made so: two calls make two entities.
-   * A caller that must not double-create holds the result, the way it would with
-   * any other create.
+   * A successful create drops this Model's cached reads, so a list on the page
+   * shows it.
    *
    * @param {object} args
    * @param {string} args.schema
-   * @param {object} [args.data] - the initial content, in the Model's own shape
+   * @param {Array<{ section: string, data?: object, parent?: number }>} [args.items]
    * @param {AbortSignal} [args.signal]
-   * @returns {Promise<*>}
+   * @returns {Promise<object>} the new entity's row — `{ uuid, brief, … }`
    */
-  async createEntity({ schema, data, signal } = {}) {
-    if (!schema) {
-      throw new ApiError({ status: 0, title: 'No Model', detail: 'createEntity needs a schema', kind: 'invalid' })
+  async createEntity({ schema, items, data, signal } = {}) {
+    if (!schema) throw ApiError.invalid('No Model', 'createEntity needs a schema')
+    if (data !== undefined) {
+      throw ApiError.invalid(
+        'No Entity Data',
+        "an entity's content is items in its sections — pass items: [{ section, data }]",
+      )
     }
-    return this.request('POST', ROUTES.create(), {
+    const list = items ?? []
+    if (!Array.isArray(list) || list.some((item) => !item || !item[CREATE.sectionName])) {
+      throw ApiError.invalid('No Section', 'every item of createEntity needs a section')
+    }
+    const body = list.length
+      ? {
+          [CREATE.items]: list.map((item) => ({
+            [CREATE.sectionName]: item[CREATE.sectionName],
+            data: item.data ?? {},
+            ...(item.parent != null ? { [FIELD.parent]: item.parent } : {}),
+          })),
+        }
+      : undefined
+    const created = await this.request('POST', ROUTES.create(), {
       query: { [PARAM.model]: schema },
-      body: data ?? {},
+      body,
       signal,
     })
+    this.invalidate((spec) => spec?.schema === schema)
+    return created
   }
 
   /**
@@ -653,21 +804,23 @@ export class ApiClient {
    *
    * ⚠️ `revRefPolicy` decides what happens when another entity references this
    * one. The route's own default refuses — which is the safe direction, and the
-   * one this package keeps by not choosing for the caller.
+   * one this package keeps by not choosing for the caller. Cached reads of the
+   * entity are dropped, and those of its Model when `schema` is given.
    *
    * @param {object} args
    * @param {string} args.uuid
+   * @param {string} [args.schema] - its Model, so this Model's lists re-read
    * @param {'abort'|'orphan_refs'} [args.revRefPolicy]
    * @param {AbortSignal} [args.signal]
    */
-  async deleteEntity({ uuid, revRefPolicy, signal } = {}) {
-    if (!uuid) {
-      throw new ApiError({ status: 0, title: 'No Entity', detail: 'deleteEntity needs a uuid', kind: 'invalid' })
-    }
-    return this.request('DELETE', ROUTES.remove(uuid), {
+  async deleteEntity({ uuid, schema, revRefPolicy, signal } = {}) {
+    if (!uuid) throw ApiError.invalid('No Entity', 'deleteEntity needs a uuid')
+    const answer = await this.request('DELETE', ROUTES.remove(uuid), {
       query: { [PARAM.revRefPolicy]: revRefPolicy },
       signal,
     })
+    this.invalidate((spec) => spec?.uuid === uuid || (schema != null && spec?.schema === schema))
+    return answer
   }
 }
 

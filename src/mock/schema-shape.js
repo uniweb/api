@@ -1,6 +1,14 @@
 /**
  * Field-shape checking for writes, and an HONEST NAME for what we cannot check yet.
  *
+ * ✅ **ANSWERED 2026-09-18 — the open question below.** There is no entity-level
+ * data: an entity's content is always items in its sections, a `single` (brief)
+ * section's item included, and creating an entity names each item's section. So
+ * every write the mock sees is an item write into a declared section, checked by
+ * `checkItemWrite`. `checkEntityDataWrite` and the `UNRESOLVED` classification
+ * remain for code that imported them; the mock no longer calls them. What follows
+ * is kept as the record of how the question stood.
+ *
  * ⭐ **Why this exists.** Until now the mock enforced exactly two things —
  * `creatable_by` and `append_only` — and performed no field-shape validation at
  * all. A demo could therefore write `{ minutes: "twelve" }` into a field the

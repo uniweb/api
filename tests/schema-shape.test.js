@@ -14,12 +14,10 @@ import { FIELD, OP } from '../src/wire.js'
 /**
  * The evidence boundary is the subject of this suite.
  *
- * A `many:` section is MEASURED to be stored as items, so its shapes are enforced.
- * Everything else — a single/brief section, an undeclared section, the create-time
- * `data` payload — waits on an unanswered storage question, so it is DIAGNOSED and
- * allowed. The tests that matter most here are the ones pinning that a write under
- * the unresolved branch is NOT refused: that is the property a later answer will
- * deliberately change, and it should fail loudly when it does.
+ * Every section a Model declares holds items, and a write into one is checked
+ * against its fields — refused as the backend refuses it, `400 Validation` naming
+ * the field. The one tolerated exception is a section the site lists as
+ * `migration_debt`: written, and recorded on `diagnostics`.
  */
 
 // A model with one brief section and one multi section, in the framework's lowered form.
@@ -44,12 +42,20 @@ const COURSE = {
 
 const storeWith = (schemas, entities = []) => {
   const store = new MockStore({
-    accounts: [{ username: 'a', password: 'a', units: ['u'] }],
+    accounts: [{ username: 'a', password: 'a', operator: true }],
     schemas,
     entities,
   })
-  store.signIn('a', 'a')
+  store.signIn({ username: 'a', password: 'a' })
   return store
+}
+
+/** The entity, its Model, and a way to name a section by the id the item route takes. */
+const entityOf = (store, model, items = []) => {
+  const entity = store.seedEntity({ model, items })
+  const m = store.model(model)
+  const id = (name) => m.sections.find((s) => s.name === name).id
+  return { entity, model: m, id }
 }
 
 describe('classifySection', () => {
@@ -103,123 +109,106 @@ describe('checkFields', () => {
   })
 })
 
-describe('enforcement — the measured half', () => {
-  it('REFUSES an item write that violates a multi section', () => {
+describe('enforcement — declared sections', () => {
+  it('REFUSES an item write that violates a multi section — as the backend does, 400 naming the field', () => {
     const store = storeWith({ '@/course': COURSE })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, {
-      kind: OP.create,
-      [FIELD.section]: 'modules',
-      data: { summary: 'no title' },
-    })
-    expect(res.ok).toBe(false)
-    expect(res.problem).toMatchObject({ status: 422, title: 'SchemaViolation' })
-    expect(res.problem.violations[0]).toMatchObject({ field: 'title', rule: 'required' })
+    const { entity, model, id } = entityOf(store, '@/course')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('modules'), data: { summary: 'no title' } })
+    expect(res.problem).toMatchObject({ status: 400, title: 'Validation', field: 'data.title' })
   })
 
   it('accepts a conforming multi-section write, and records no diagnostic', () => {
     const store = storeWith({ '@/course': COURSE })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, {
+    const { entity, model, id } = entityOf(store, '@/course')
+    const res = store.applyOp(entity, model, {
       kind: OP.create,
-      [FIELD.section]: 'modules',
+      [FIELD.section]: id('modules'),
       data: { title: 'Module 1', lessons: ['a'], level: 'Beginner' },
     })
-    expect(res.ok).toBe(true)
+    expect(res.result[FIELD.item]).toBeTruthy()
     expect(store.diagnostics).toHaveLength(0)
   })
 
   it('enforces on update as well as create', () => {
     const store = storeWith({ '@/course': COURSE })
-    const entity = store.seedEntity({
-      model: '@/course',
-      data: {},
-      items: [{ id: 'm1', section: 'modules', data: { title: 'ok' } }],
-    })
-    const res = store.applyOp(entity, { kind: OP.update, [FIELD.item]: 'm1', data: { title: 42 } })
-    expect(res.ok).toBe(false)
-    expect(res.problem.violations[0]).toMatchObject({ field: 'title', rule: 'type' })
+    const { entity, model } = entityOf(store, '@/course', [{ section: 'modules', data: { title: 'ok' } }])
+    const res = store.applyOp(entity, model, { kind: OP.update, [FIELD.item]: entity.items[0].id, data: { title: 42 } })
+    expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
   })
 })
 
-describe('an undeclared section is REFUSED unless it is owned as debt', () => {
-  it('⭐ a typo section is a 422 — it must not hide in the debt bucket', () => {
+describe('a section outside the declaration', () => {
+  it('⭐ a typo section cannot be written at all — the Model has no such section', () => {
     const store = storeWith({ '@/course': COURSE })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, {
-      kind: OP.create,
-      [FIELD.section]: 'moduels',
-      data: { title: 'typo' },
-    })
-    expect(res.ok).toBe(false)
-    expect(res.problem).toMatchObject({ status: 422, title: 'SchemaViolation' })
-    expect(res.problem.violations[0].rule).toBe('undeclared-section')
+    const res = store.create(store.model('@/course'), [{ section: 'moduels', data: { title: 'typo' } }])
+    expect(res.problem).toMatchObject({ status: 404, kind: 'section' })
   })
 
-  it('the SAME section passes once the site owns it as debt', () => {
+  it('a section the site owns as debt is writable, and recorded', () => {
     const store = storeWith({ '@/course': { ...COURSE, migration_debt: ['meta'] } })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'meta', data: { a: 1 } })
-    expect(res.ok).toBe(true)
-    expect(store.diagnostics[0]).toMatchObject({
-      section: 'meta',
-      reason: UNRESOLVED_REASON.UNDECLARED_SECTION,
-    })
+    const { entity, model, id } = entityOf(store, '@/course')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('meta'), data: { a: 1 } })
+    expect(res.result).toBeTruthy()
+    expect(store.diagnostics[0]).toMatchObject({ section: 'meta', reason: UNRESOLVED_REASON.UNDECLARED_SECTION })
   })
 
   it('a DECLARED section whose records diverge is tolerated only via the debt list', () => {
-    // @/quiz-key's real case: one record carrying a map, where the schema declares many.
     const KEY = {
       sections: { answers: { multiple: true, fields: { question: { type: 'int', required: true } } } },
     }
     const strict = storeWith({ '@/quiz-key': KEY })
-    const e1 = strict.seedEntity({ model: '@/quiz-key', data: {} })
-    expect(strict.applyOp(e1, { kind: OP.create, [FIELD.section]: 'answers', data: { answers: {} } }).ok).toBe(false)
+    const a = entityOf(strict, '@/quiz-key')
+    expect(strict.applyOp(a.entity, a.model, { kind: OP.create, [FIELD.section]: a.id('answers'), data: { answers: {} } }).problem).toBeTruthy()
 
     const owned = storeWith({ '@/quiz-key': { ...KEY, migration_debt: ['answers'] } })
-    const e2 = owned.seedEntity({ model: '@/quiz-key', data: {} })
-    const res = owned.applyOp(e2, { kind: OP.create, [FIELD.section]: 'answers', data: { answers: {} } })
-    expect(res.ok).toBe(true)
+    const b = entityOf(owned, '@/quiz-key')
+    const res = owned.applyOp(b.entity, b.model, { kind: OP.create, [FIELD.section]: b.id('answers'), data: { answers: {} } })
+    expect(res.result).toBeTruthy()
     expect(owned.diagnostics[0]).toMatchObject({ reason: UNRESOLVED_REASON.DIVERGENT_SECTION })
   })
 })
 
-describe('a declared SINGLE section is now ENFORCED', () => {
+describe('a declared SINGLE section', () => {
   it('refuses a violating write to a single/brief section', () => {
     const store = storeWith({ '@/course': COURSE })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'course', data: {} })
-    expect(res.ok).toBe(false)
-    expect(res.problem.violations[0]).toMatchObject({ field: 'title', rule: 'required' })
+    const { entity, model, id } = entityOf(store, '@/course')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('course'), data: {} })
+    expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
+  })
+
+  it('holds ONE item: a second create is the backend\'s 409 Schema Rule Violation', () => {
+    const store = storeWith({ '@/course': COURSE })
+    const { entity, model, id } = entityOf(store, '@/course', [{ section: 'course', data: { title: 'A' } }])
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('course'), data: { title: 'B' } })
+    expect(res.problem).toMatchObject({ status: 409, title: 'Schema Rule Violation' })
   })
 })
 
-describe('the create-time data payload — still open', () => {
-  it('does NOT refuse the create-time entity data payload, whatever its shape', () => {
+describe('creating an entity — content is items, by section', () => {
+  it('✅ checks each item of the create against its section (the question that stood open here is answered)', () => {
     const store = storeWith({ '@/course': COURSE })
-    const created = store.create('@/course', { title: 99 })
-    expect(created.uuid).toBeTruthy()
-    expect(store.diagnostics[0]).toMatchObject({
-      reason: UNRESOLVED_REASON.ENTITY_DATA_PAYLOAD,
-      op: 'create-entity',
-    })
+    const res = store.create(store.model('@/course'), [{ section: 'course', data: { title: 99 } }])
+    expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
+    expect(store.diagnostics).toHaveLength(0)
   })
 
   it('dedupes by (model, op, section, reason) and counts, so the list stays a map', () => {
     const store = storeWith({ '@/course': { ...COURSE, migration_debt: ['content'] } })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
+    const { entity, model, id } = entityOf(store, '@/course')
     for (let i = 0; i < 5; i += 1) {
-      store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'content', data: { n: i } })
+      store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('content'), data: { n: i } })
     }
     expect(store.diagnostics).toHaveLength(1)
     expect(store.diagnostics[0].count).toBe(5)
   })
 
   it('a model with no declared sections is unchecked, not diagnosed', () => {
-    const store = storeWith({ '@/course': { creatable_by: 'unit_members' } })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, { kind: OP.create, [FIELD.section]: 'anything', data: { a: 1 } })
-    expect(res.ok).toBe(true)
+    const store = storeWith({ '@/course': { creatable_by: 'unit_members' } }, [
+      { model: '@/course', items: [{ section: 'anything', data: {} }] },
+    ])
+    const { entity, model, id } = entityOf(store, '@/course')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('anything'), data: { a: 1 } })
+    expect(res.result).toBeTruthy()
     expect(store.diagnostics).toHaveLength(0)
   })
 })
@@ -250,14 +239,10 @@ describe('the registry lowering spelling (multiple: true)', () => {
 
   it('still ENFORCES against a registry-form declaration', () => {
     const store = storeWith({ '@/course': COURSE_REGISTRY_FORM })
-    const entity = store.seedEntity({ model: '@/course', data: {} })
-    const res = store.applyOp(entity, {
-      kind: OP.create,
-      [FIELD.section]: 'modules',
-      data: { level: 'Expert' },
-    })
-    expect(res.ok).toBe(false)
-    expect(res.problem.violations.map((v) => v.rule).sort()).toEqual(['enum', 'required'])
+    const { entity, model, id } = entityOf(store, '@/course')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('modules'), data: { level: 'Expert' } })
+    // The first violation, named as the backend names it.
+    expect(res.problem).toMatchObject({ status: 400, title: 'Validation', field: 'data.title' })
   })
 
   it('reads `multiple: true` on a FIELD as a list, in the registry form', () => {

@@ -43,22 +43,38 @@ function Account() {
       </SignedIn>
       <SignedOut>
         <button onClick={() => signIn({ username, password })}>Sign in</button>
-        {error && <span>{error.detail}</span>}
+        {error?.kind === 'unverified' && <span>Check your email to confirm your address.</span>}
+        {error?.kind === 'auth' && <span>Wrong username or password.</span>}
       </SignedOut>
     </>
   )
 }
 ```
 
-`viewer` is flat — `viewer.handle`, `viewer.uuid`, `viewer.roles`. Also
-`useSignUp`, `usePasswordReset`, and `completeChallenge` for two-factor sign-in.
+`viewer` is flat — `viewer.uuid`, `viewer.username`, `viewer.handle`, and `viewer.roles`,
+a list of `{ role, scope_unit_id }`. A member holds no roles (`[]`); the site's operator
+holds `system_admin`. ⚠️ `viewer.actingUnitId` is the same for every member of a site, so
+it cannot tell an operator from a member. To decide whether to show an edit control for
+a particular record, read that record: `entity.can_edit` is the backend's own answer.
+
+**Signing up** — `useSignUp().signUp({ username, email, password })` answers
+`{ status: 'verification_required', email }`, the same answer for an address already in
+use. The account cannot sign in until the address is confirmed from the email the
+backend sends; until then `signIn` fails with `error.kind === 'unverified'`. A username
+already taken fails with status `409`.
+
+**Password reset** — `usePasswordReset()`: `request({ email })`, then
+`confirm({ token, new_password })` with the token the viewer was sent (and `code` when a
+second factor is enrolled). **Second factor** — when `signIn` answers
+`{ ok: false, challenge: { kind: 'totp' } }`, finish with `completeChallenge(code)`.
 
 ## Reading
 
 ```jsx
 import { useRecords, useEntity } from '@uniweb/api'
 
-const { status, records, matched, hasMore } = useRecords({ schema: '@/session' })
+const { status, records, hasMore } = useRecords({ schema: '@acme/session', scope: 'mine' })
+// records[i].brief — the entity's summary; records[i].uuid — its id
 ```
 
 ⭐ **`absent` and an empty `ready` are different answers.** `absent` means there is no
@@ -67,28 +83,49 @@ live source — no `api` service, or nobody signed in — so render your site's 
 Showing "nothing yet" for the first case tells a visitor their content is missing
 when it is simply not being asked for.
 
-`useEntity({ schema, uuid, via })` reads one record. Its `absent` covers both
-not-found and not-permitted, on purpose: render your paywall or sign-in prompt on it
-and never say "deleted".
+⚠️ **Whose records.** The default `scope` is everything the viewer may read, and on a
+site's `api` service **members can read each other's entities**. For "my submissions",
+"my progress", pass `scope: 'mine'`.
+
+A record is a summary: `record.brief` holds the fields of the Model's brief section. It
+carries no items — read the entity for those. `hasMore` is true when a page came back
+full (`limit`, default 50); `matched` counts the records in this answer, not a total.
+`all: true` reads the whole list in one request.
+
+```jsx
+const { status, entity } = useEntity({ schema: '@acme/lesson', uuid, via: course.uuid })
+// entity.hydrated.items — the content: { id, section_id, data, … } each
+// entity.hydrated.entity.brief — the summary
+// entity.can_edit — whether this viewer may write to it
+```
+
+Its `absent` covers both not-found and not-permitted, on purpose: render your paywall
+or sign-in prompt on it and never say "deleted".
 
 ## Writing
+
+An entity's content is **items, each in a section** of its Model. A section that holds
+one item (the brief) takes one `create` and is `update`d after that; a many-item section
+takes as many as you add.
 
 ```jsx
 import { useEntityWriter } from '@uniweb/api'
 
-const programme = useEntityWriter({ schema: '@/track', uuid: track.uuid })
+const programme = useEntityWriter({ schema: '@acme/track', uuid: track.uuid })
 
 await programme.create({ title: 'Keynote' }, { section: 'sessions', position: 'last' })
-await programme.update(itemId, { ...item.data, room: 'Hall A' })
-await programme.move(itemId, { after: otherItemId })
-await programme.remove(itemId)
+await programme.update(item.id, { ...item.data, room: 'Hall A' })
+await programme.move(item.id, { after: other.id })
+await programme.remove(item.id)
 await programme.batch([...])          // one transaction: all of them, or none
 ```
 
-Three things it does for you, and one it deliberately does not:
+`item.id` is the `id` of an item on a read. Name a section as the Model does — the
+package resolves it to what the backend's item route takes.
 
-- **Concurrency is handled.** Every write carries the item's last-seen version and the
-  response updates it. You never touch a token.
+- **Concurrency is handled.** Every write carries the version of the item the viewer
+  last saw — from a read or from the previous write — and the response updates it. You
+  never touch a token.
 - **`section` is required on `create`.** An entity has several, and a rule declared on
   one — insert-only, say — does not reach an item that landed in another.
 - **A successful write refreshes what it changed**, so a list you are showing reflects
@@ -97,8 +134,26 @@ Three things it does for you, and one it deliberately does not:
   else changed the item first. A retry would *succeed*, by overwriting a change nobody
   looked at — so what happens next is your application's decision, and usually it is
   to tell the person.
+- A write the Model's rules refuse — an insert-only section, a second item in a one-item
+  section — is an error of `kind: 'rule'`, not a conflict: nobody else is involved, and
+  the same write fails the same way again.
 
 ⚠️ `update` replaces the item's data whole. Spread what you are not editing.
+
+To create an entity, name each item's section:
+
+```js
+import { createEntity } from '@uniweb/api/client'
+
+await createEntity({ schema: '@acme/course', items: [{ section: 'course', data: { title: 'Intro' } }] })
+```
+
+### Errors
+
+Every failure is an `ApiError` with a `kind`: `auth` (sign in), `unverified`, `absent`,
+`forbidden` (`error.extensions.op` names what was refused), `invalid`
+(`error.extensions.field` names a field the Model refused), `conflict`, `rule`,
+`rate-limited`, `unavailable`, `disabled`. Branch on `kind`; `detail` is prose.
 
 ## The service on your machine
 
@@ -116,9 +171,26 @@ import { createMockBackend } from '@uniweb/api/mock'
 
 export default createMockBackend({
   seed: {
-    accounts: [{ username: 'me', password: 'me', units: ['staff'] }],
-    schemas: { '@/session': { creatable_by: 'unit_members' } },
-    entities: [{ uuid: 't-1', model: '@/track', data: { name: 'Main hall' }, items: [] }],
+    accounts: [
+      { username: 'me', password: 'me', operator: true },   // the site's operator
+      { username: 'member', password: 'member' },
+    ],
+    schemas: {
+      '@acme/track': {
+        creatable_by: 'unit_members',                    // the operator only; 'any_user' is the default
+        sections: {
+          track: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
+          sessions: { kind: 'multi', fields: { title: { type: 'string', required: true } } },
+        },
+      },
+    },
+    entities: [
+      {
+        uuid: '01926d5e-0000-7000-8000-000000000001',    // a UUID, as on the wire
+        model: '@acme/track',
+        items: [{ section: 'track', data: { name: 'Main hall' } }],
+      },
+    ],
   },
 }).fetch
 ```
@@ -126,18 +198,19 @@ export default createMockBackend({
 `uniweb dev` mounts it at your `api:` address — same origin, so cookies behave as they
 will in production, and your site's configuration is identical either way.
 
-It **enforces** what your schemas declare — who may create entries, and which sections
-are insert-only — so a permission you are relying on fails here rather than in front
-of a user. State is in memory: restart to reset.
+⭐ **The mock answers what the backend answers** — the same statuses, bodies and
+refusals, for every route this package uses. It enforces what your schemas declare —
+who may create entries, which sections are insert-only, the fields a section takes —
+and it is as strict as the backend about requests, so a mistake fails here rather
+than in front of a user. Members read each other's entities and write their own; the
+operator writes everything. A new sign-up must be verified: the link is in
+`mock.outbox` (the standalone server prints it). State is in memory: restart to reset.
 
 There is also a standalone server, for a frontend that is not a Uniweb site:
 
 ```bash
 npx uniweb-api-mock --port 8787
 ```
-
-⛔ **The mock is a fixture of what this package expects, not a model of any real
-server.** Behaviour it happens to have is evidence about the mock and nothing else.
 
 ## Outside React
 

@@ -32,7 +32,7 @@ describe('useSession', () => {
   })
 
   it('signs out through the hook', async () => {
-    siteWith(WITH_BACKEND, (url, init) => (route(url, init) === 'POST /_uw/api/auth/logout' ? empty() : json(200, ME)))
+    siteWith(WITH_BACKEND, (url, init) => (route(url, init) === 'POST /_api/auth/logout' ? empty() : json(200, ME)))
     const { result } = renderHook(() => useSession())
     await waitFor(() => expect(result.current.status).toBe('authenticated'))
     await act(() => result.current.signOut())
@@ -47,9 +47,9 @@ describe('useSignIn', () => {
     let signedIn = false
     siteWith(WITH_BACKEND, (url, init) => {
       switch (route(url, init)) {
-        case 'POST /_uw/api/auth/login':
+        case 'POST /_api/auth/login':
           return json(200, { status: 'totp_required', challenge_token: 'ch' })
-        case 'POST /_uw/api/auth/login/challenge':
+        case 'POST /_api/auth/login/challenge':
           signedIn = true
           return json(200, { token: 't', account: ME.account })
         default:
@@ -116,11 +116,11 @@ describe('useEntity', () => {
     let reads = 0
     const client = siteWith(WITH_BACKEND, (url, init) => {
       const r = route(url, init)
-      if (r === 'GET /_uw/api/entities/l-1') {
+      if (r === 'GET /_api/entities/l-1') {
         reads += 1
         return json(200, lesson)
       }
-      if (r === 'POST /_uw/api/auth/logout') return empty()
+      if (r === 'POST /_api/auth/logout') return empty()
       return json(200, ME)
     })
     const { result } = renderHook(() => useEntity({ schema: '@/lesson', uuid: 'l-1', via: 'c-1' }))
@@ -137,7 +137,7 @@ describe('useEntity', () => {
 
   it('answers `absent` on a 404 and `error` on anything else', async () => {
     let status = 404
-    siteWith(WITH_BACKEND, (url, init) => (route(url, init).startsWith('GET /_uw/api/entities/') ? json(status, { title: 'x' }) : json(200, ME)))
+    siteWith(WITH_BACKEND, (url, init) => (route(url, init).startsWith('GET /_api/entities/') ? json(status, { title: 'x' }) : json(200, ME)))
     const { result, rerender } = renderHook(({ uuid }) => useEntity({ schema: '@/lesson', uuid }), { initialProps: { uuid: 'l-1' } })
     await waitFor(() => expect(result.current.status).toBe('absent'))
 
@@ -151,5 +151,24 @@ describe('useEntity', () => {
     createUniweb(WITHOUT_BACKEND)
     const { result } = renderHook(() => useEntity({ schema: '@/lesson', uuid: 'l-1' }))
     expect(result.current).toMatchObject({ status: 'absent', entity: null })
+  })
+
+  it('is absent, without a request, once nobody is signed in — the backend reads nothing to them', async () => {
+    const client = siteWith(WITH_BACKEND, () => json(401, { status: 401, title: 'Unauthorized' }))
+    await client.ensureSession()
+    expect(client.session.status).toBe('anonymous')
+    const calls = client.fetchFn.mock.calls.length
+
+    const { result } = renderHook(() => useEntity({ schema: '@/lesson', uuid: 'l-1' }))
+    expect(result.current).toMatchObject({ status: 'absent', entity: null })
+    expect(client.fetchFn.mock.calls.length).toBe(calls)
+  })
+
+  it('turns absent, not error, when a read finds nobody signed in', async () => {
+    // Fired while the session was still settling: the 401 settles it as anonymous,
+    // and a signed-out viewer has nothing to read — `absent`, as the README says.
+    siteWith(WITH_BACKEND, () => json(401, { status: 401, title: 'Unauthorized' }))
+    const { result } = renderHook(() => useEntity({ schema: '@/lesson', uuid: 'l-1' }))
+    await waitFor(() => expect(result.current.status).toBe('absent'))
   })
 })

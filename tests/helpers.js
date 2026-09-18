@@ -47,8 +47,26 @@ export function fetchStub(handler) {
 /** Parse a request URL the client composed, absolute or relative. */
 export const parse = (url) => new URL(url, 'http://site.test')
 
-/** Site content for `createUniweb`: a backend at `/_uw`, or none. */
-export const WITH_BACKEND = { config: { services: { api: { endpoint: '/_uw' } } } }
+/** `METHOD /path` of a request, for routing a stub. */
+export const route = (url, init) => `${init?.method ?? 'GET'} ${parse(url).pathname}`
+
+/** Site content for `createUniweb`: the site's `api` service at `/_api`, as a hosted site has it — or none. */
+export const WITH_BACKEND = { config: { services: { api: { endpoint: '/_api' } } } }
 export const WITHOUT_BACKEND = { config: {} }
 
-export const ME = { account: { uuid: 'u-1', username: 'ada', handle: 'ada' }, roles: ['member'], acting_unit_id: 7 }
+/** `/auth/me` for a member, as the backend answers it. */
+export const ME = { account: { uuid: 'u-1', username: 'ada', handle: 'ada' }, roles: [], acting_unit_id: 1 }
+
+/** Entity ids are UUIDs on the wire. */
+export const E1 = '01926d5e-0000-7000-8000-00000000e001'
+export const E2 = '01926d5e-0000-7000-8000-00000000e002'
+
+/** A Model's definition, as `GET /models/@scope/name` answers it (trimmed to what the client reads). */
+export const SCHEMA_TRACK = {
+  model: { id: 1, name: '@acme/track' },
+  sections: [
+    { id: 11, name: 'track', kind: 'single', is_brief: true, parent_section_id: null },
+    { id: 12, name: 'sessions', kind: 'multi', is_brief: false, parent_section_id: null },
+    { id: 13, name: 'notes', kind: 'multi', is_brief: false, parent_section_id: null, other_data: { append_only: true } },
+  ],
+}

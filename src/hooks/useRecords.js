@@ -17,9 +17,11 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  *
  * ## ⭐ `absent` and an empty `ready` are DIFFERENT, and conflating them is the bug
  *
- * `absent` means **there is no live source** — a site with no service-provider
- * backend, which is the ordinary standalone case and not a failure. `ready` with
- * `records: []` means **the source answered, and there is nothing there.**
+ * `absent` means **there is no live source for this viewer** — a site with no
+ * `api` service, which is the ordinary standalone case, or nobody signed in, since
+ * the backend lists nothing to an anonymous caller (it answers `401`, so no request
+ * is sent once the session is known to be anonymous). `ready` with `records: []`
+ * means **the source answered, and there is nothing there.**
  *
  * A component renders its own static content for the first and an empty state for
  * the second, and they are not interchangeable: telling a visitor "no sessions yet"
@@ -27,10 +29,18 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * that once answered a lapsed session with an empty list — it reports absence of
  * *access* as absence of *content*.
  *
+ * A record is the entity's summary — `record.brief` holds the brief section's
+ * fields, beside `uuid`, `owner_id` and `via` — and carries no items; read one
+ * entity for those. ⚠️ `matched` counts the records in this answer, not a total:
+ * `hasMore` is true when the page came back full.
+ *
+ * ⚠️ The default scope is everything the viewer may read, which on a site's `api`
+ * service includes other members' entities. `scope: 'mine'` is only the viewer's.
+ *
  * Cached under a key scoped to the viewer, so a sign-in re-reads the list for who
  * is now looking, and a write through `useEntityWriter` drops it.
  *
- * @param {{ schema: string, scope?: string, limit?: number, offset?: number, all?: boolean } | null} query
+ * @param {{ schema: string, scope?: 'accessible'|'mine'|'all', limit?: number, offset?: number, all?: boolean } | null} query
  *   pass null to skip
  * @returns {{ status: string, records: object[], matched: number, hasMore: boolean, error: Error|null, refresh: Function }}
  */
@@ -40,13 +50,15 @@ export function useRecords(query) {
   const store = website?.dataStore ?? null
 
   // Re-key on a viewer change: what the viewer may see is part of the answer.
-  useSyncExternalStore(
+  const session = useSyncExternalStore(
     client ? client.subscribe : noSubscribe,
     client ? () => client.session : noSnapshot,
     client ? () => client.session : noSnapshot,
   )
 
-  const active = !!(client && client.enabled && store && query && query.schema)
+  // Signed out, there is no live source: the backend lists nothing to an anonymous
+  // caller, so asking would only buy a `401`.
+  const active = !!(client && client.enabled && store && query && query.schema && session?.status !== 'anonymous')
   const spec = active
     ? {
         endpoint: '/entities',

@@ -3,108 +3,85 @@
  *
  * ## Why this module exists
  *
- * Framework is building this client **ahead of backend's per-operation spec**, on
- * purpose: a client that has actually been built finds things a spec review does
- * not, and backend asked for exactly this — *"whatever the package asserts about
- * our responses becomes a consumer we must not break silently. Tell us what you
- * pin, and we will treat it as a contract."*
- *
- * ⛔ **The risk in building ahead is not guessing a shape — that is cheap to fix.
- * It is guessing a shape, spreading it across a dozen files, and writing it into a
- * doc as fact.** A wrong assumption that lives in one module is a one-file diff. The
- * same assumption inlined into six hooks is an archaeology exercise, and by then
- * something will be citing it as though it were measured.
- *
- * ⇒ **So every route, parameter name and response field this package depends on is
- * declared here, with where it came from.** Three provenances, and the difference
- * between them is the whole point:
+ * A wrong assumption that lives in one module is a one-file diff. The same
+ * assumption inlined into six hooks is an archaeology exercise, and by then
+ * something will be citing it as though it were measured. ⇒ **Every route,
+ * parameter, body key and response field this package depends on is declared
+ * here, with where it came from.** Three provenances, and the difference between
+ * them is the whole point:
  *
  * | | means |
  * |---|---|
  * | **RULED** | a person with the authority decided it. Not a measurement — a decision |
- * | **MEASURED** | observed in a working client of THIS route, or in backend's own source |
+ * | **MEASURED** | observed in a real backend's responses, or read in its source |
  * | **ASSUMED** | ⛔ **we are building ahead. Nobody has confirmed this.** |
  *
- * ⚠️ **`MEASURED` is not `MEASURED HERE`.** A shape read off a *different route* of
- * the same daemon is `ASSUMED` for ours, however identical it looks — the site
- * lane and the entity lane are two routes in one binary and may answer
- * differently. That distinction is the one this file exists to keep, because it is
- * exactly the one that erodes.
+ * ⚠️ **`MEASURED` is not `MEASURED HERE`.** A shape read off a *different route*
+ * of the same backend is `ASSUMED` for ours, however identical it looks.
  *
- * ## What to do with it
+ * ## ⭐ MEASURED 2026-09-18 — every shape below, in literal responses
  *
- * `ASSUMPTIONS` below is the list to hand backend. When one is confirmed, move its
- * note to MEASURED and delete its entry — the test on that array makes the change
- * deliberate and visible rather than a quiet edit.
+ * The whole surface this package touches was exercised against a real backend set
+ * up the way a site's `api` service is: one operator account, members who sign up
+ * themselves, and the site's own Models. Where this module quotes a shape it was
+ * copied from a response, not described. That pass corrected the package in these
+ * places, each now fixed and pinned by a test:
  *
- * ## ⭐ THE ENTITY CONTENT MODEL — **MEASURED 2026-09-17**, and it corrects this package
- *
- * Backend read its own source and answered three questions we put to it. The answer
- * to the third replaced a premise this package was built on, so it is recorded here
- * first, before any route or field:
- *
- * ⛔ **THERE IS NO ENTITY-LEVEL DATA. Entity content is ALWAYS items.**
- *
- * An entity stores identity, ownership, flags, timestamps, and a `brief` /
- * `sort_date` **the server maintains itself**. There is no separate data record, and
- * therefore no route that updates one. Everything an author writes is an item in a
- * section.
- *
- *   - **A `single` section — `brief: true` included — holds an ORDINARY ITEM**, with
- *     its own `item_id`, updated through the same item route as any other. It takes
- *     exactly ONE item: a second `create` into it is refused, so the shape is
- *     create-once-then-update.
- *   - **Never send `brief`.** The server rebuilds `brief` and `sort_date` after a
- *     write to the brief section. It is output, not input.
- *   - ⚠️ **Two spellings for one flag:** `brief: true` is how a model *file* is
- *     written; a schema *read* returns **`is_brief`**.
- *   - **Creating with content puts items under `items`, addressed BY NAME:**
- *     `POST /entities?model=…` · `{ items: [ { section: 'profile', data: {…} } ] }`.
- *     Entity and items commit in one transaction. A nested section uses a
- *     parent/child path.
- *   - **After creation, item ops address a section by NUMERIC `section_id`** — not by
- *     name (see `FIELD.section`).
- *   - Site content, folder and deployment entities answer **409** on the item route;
- *     they are written through `/api/sites/…` and `/api/folders/…`. That is the same
- *     boundary the RULED lane below draws, enforced from the other side.
- *   - A batch runs in one transaction, but **an op may not reference an item created
- *     earlier in the same batch.**
- *
- * ⛔ **WHAT THIS PACKAGE GETS WRONG TODAY — do not read the code as the contract.**
- * `createEntity({ schema, data })` sends content as a **top-level `data` key**, which
- * the create route does not accept. The create body **does not reject unknown keys**,
- * so that payload is *silently dropped*: **201, and an empty entity, with no error.**
- * Our own mock accepts the same shape, so the fiction is symmetrical and nothing in
- * this repo currently fails because of it. Correcting the client is a separate change
- * (it touches behaviour); this module's job is to make sure the contract is written
- * down before that happens.
- *
- * ⚠️ **Provenance of the above: MEASURED BY BACKEND, reading backend's own source —
- * not observed on the wire by us, and the ignored-`data` behaviour was explicitly
- * described as read-not-tested.** That is stronger than anything else we have on this
- * lane and weaker than a response we have held in our hands. It earns MEASURED under
- * the table above ("or in backend's own source"); the untested corner is flagged
- * where it matters rather than promoted.
+ * | was | is |
+ * |---|---|
+ * | requests went to `${base}/api/<route>` | the base IS the API route space: `${base}/<route>` — on a hosted site `/_api/entities` reaches the backend's `/api/entities`, and `/_api/api/…` is a 404 |
+ * | `createEntity` sent its content as the body | content is items, by section: `{ items: [{ section, data }] }`. Unknown top-level keys are ignored — silently, `201` and an empty entity |
+ * | an item create sent `section: '<name>'` | the item route takes the numeric `section_id` (a `400` otherwise); names are resolved from the Model's definition |
+ * | `matched` was read as the total before paging | it counts the rows in THIS answer — the page when paging. A full page is the only "maybe more" |
+ * | a read's items did not seed the concurrency ledger | they carry `updated_at`, the token the first write of an item is guarded by |
+ * | every `409` was reported as an edit conflict | only the one carrying `current_updated_at` is; the rest are rules (insert-only, one-item section, a reference) |
+ * | a `409` was rebased onto "the first op with an item id" | the stale `409` names no item — a batch cannot be rebased by guesswork |
+ * | a sign-up answered with the account | it answers `202 { status: 'verification_required', email }`; the account cannot sign in until verified (`403 Email Not Verified`) |
+ * | `acting_unit_id` was a membership signal | every signed-in member of a site acts in the same unit — it cannot tell an operator from a member; `roles` can |
  *
  * @module @uniweb/api/wire
  */
 
 /**
- * The lane. ⭐ **RULED** *(Diego, 2026-09-01)*: this package reads and writes
- * **entities**, and touches nothing under `/api/sites/*`.
+ * The lane. ⭐ **RULED** *(2026-09-01)*: this package reads and writes
+ * **entities**, reads the definitions of their Models, and touches nothing under
+ * `/sites/*`. Those routes create sites, which is the app's job, not a
+ * foundation's, and a site's own `api` service has no site to address.
  *
- * Those routes are not merely unnecessary — they **create sites**, which is the
- * app's job, not a foundation's, and on a site's own service-provider backend they
- * have nothing to address anyway: no site of that id lives in that database. *"Our
- * recursion ends there, right before creating sites."*
- *
- * ⛔ Do not add a route here that does not begin `/entities`, or an auth route.
+ * ⛔ Do not add a route that is not under `/entities`, `/models` or `/auth`.
  */
 export const ENTITIES = '/entities'
 
+/** The Models lane — read-only, one route: a Model's definition. MEASURED. */
+export const MODELS = '/models'
+
 /**
- * Auth. **MEASURED** — shipped in `@uniweb/api@0.1.0` and exercised by the live
- * suite (`tests/live/`) against a real `uniwebd`.
+ * The base, and how a route joins it. **MEASURED.**
+ *
+ * The base the site is handed for its `api` service is the address of the
+ * backend's API route space, and every route here is relative to it:
+ * `${base}/auth/me`, `${base}/entities`. On a hosted site that is `/_api` on the
+ * site's own origin, which reaches the backend's `/api/…`; wherever a page reaches
+ * a backend directly it is that backend's absolute `…/api`.
+ *
+ * ⛔ **The backend does not percent-decode path segments.** `/models/%40scope/name`
+ * is a `404` where `/models/@scope/name` answers — so `@` goes out raw.
+ */
+function segment(value) {
+  return encodeURIComponent(String(value)).replace(/%40/g, '@')
+}
+
+/** `@scope/name` → `@scope/name`, each half a raw path segment. */
+function modelPath(model) {
+  const [scope, ...rest] = String(model).split('/')
+  return rest.length ? `${segment(scope)}/${segment(rest.join('/'))}` : segment(scope)
+}
+
+/**
+ * Auth routes. **MEASURED.**
+ *
+ * `/auth/me` is strict about its parameters: `?locale=` on it is a
+ * `400 "Unexpected parameters: locale"`. Every route here is.
  */
 export const AUTH = {
   me: '/auth/me',
@@ -112,42 +89,112 @@ export const AUTH = {
   challenge: '/auth/login/challenge',
   logout: '/auth/logout',
   register: '/auth/register',
+  /**
+   * `GET /auth/verify?token=` → `{ verified: true }`; a bad token is `400 Validation`.
+   * ⚠️ This package does not call it: the link in the verification email is the
+   * backend's own, not a page of the site. The mock serves it so a sign-up can be
+   * finished locally.
+   */
+  verify: '/auth/verify',
   resetRequest: '/auth/reset/request',
   resetConfirm: '/auth/reset/confirm',
 }
 
 /**
- * Entity routes. **MEASURED** — every one of these is called by a working client
- * of this exact lane, which verified them against the daemon's own controller.
+ * The bodies of the auth routes. **MEASURED.** This package hands a caller's
+ * fields to the backend unchanged, so these are the names a caller must use — a
+ * missing one is a `400` naming it (`missing field \`email\``). `?` marks optional.
  *
- * ⚠️ Measured means *the route exists and answers*. It does **not** mean this
- * package has confirmed the response bodies — see `ASSUMPTIONS`.
+ * | route | body | answer |
+ * |---|---|---|
+ * | login | `{ username, password }` | `200 { token, expires_at, account }` + the session cookie · `200 { status: 'totp_required', challenge_token }` · `401` wrong credential · `403 Email Not Verified` |
+ * | challenge | `{ challenge_token, code }` | as login's `200`; a bad token or code is `401` |
+ * | register | `{ username, email, password }` | `202 { status: 'verification_required', email }` — the same answer for an address already taken; a taken **username** is `409` |
+ * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
+ * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`; a bad token is `400 Validation`; `code` is required when a second factor is enrolled |
+ * | logout | none | `204`; with no session to end, `401` |
+ * | me | none | `200 { account: { uuid, username, handle }, roles, acting_unit_id }` · `401` |
  */
-export const ROUTES = {
-  /** `GET /entities?model=…` — the door. RULED: this one, not the site door. */
-  list: () => ENTITIES,
-  /** `GET /entities/{uuid}?model=…` — one hydrated entity. */
-  read: (uuid) => `${ENTITIES}/${encodeURIComponent(uuid)}`,
-  /** `POST /entities/batch` — many hydrated entities in one call. */
-  readBatch: () => `${ENTITIES}/batch`,
-  /** `POST /entities?model=…` — create an entity, optionally with its items. */
-  create: () => ENTITIES,
-  /** `POST /entities/{uuid}/items` — the item op. An array body is one transaction. */
-  items: (uuid) => `${ENTITIES}/${encodeURIComponent(uuid)}/items`,
-  /** `DELETE /entities/{uuid}` — hard-delete; items cascade. */
-  remove: (uuid) => `${ENTITIES}/${encodeURIComponent(uuid)}`,
-  /** `POST /entities/delete` — bulk hard-delete, all-or-nothing on the pin guard. */
-  removeBatch: () => `${ENTITIES}/delete`,
+export const AUTH_BODY = {
+  login: ['username', 'password'],
+  challenge: ['challenge_token', 'code'],
+  register: ['username', 'email', 'password'],
+  resetRequest: ['email'],
+  resetConfirm: ['token', 'new_password', 'code?'],
+}
+
+/** A sign-in that needs a second factor. MEASURED. */
+export const TOTP = {
+  status: 'totp_required',
+  token: 'challenge_token',
+  code: 'code',
 }
 
 /**
- * Query parameter names. **MEASURED**, with one open question.
+ * The viewer, as `/auth/me` answers. **MEASURED.**
  *
- * ⚠️ `via` vs `depth`: this package sends `via` on a single-entity read — reading
- * an entity *through* a container the viewer holds an entitlement on. The working
- * client of this route sends `depth` / `max_depth` instead and no `via` at all.
- * Both are presumably valid on the same route, answering different questions, but
- * **nobody has confirmed they compose** — see `ASSUMPTIONS`.
+ * `roles` is a list of `{ role, scope_unit_id }` — `role` one of `system_admin`,
+ * `unit_admin`, `content_editor`, `user`. An ordinary member holds none: `[]`.
+ *
+ * ⛔ **`acting_unit_id` is NOT a membership or operator signal.** Every signed-in
+ * member of a site acts in the same unit, so it reads the same for the operator
+ * and for someone who signed up a minute ago. The operator of a site's `api`
+ * service holds `system_admin`. Better than either: ask about the thing — a
+ * single-entity read carries `can_edit`, the write gate's own answer.
+ */
+export const VIEWER = {
+  account: 'account',
+  roles: 'roles',
+  actingUnit: 'acting_unit_id',
+}
+
+/**
+ * Entity and Model routes. **MEASURED.**
+ *
+ * Entity ids in a path are UUIDs — anything else is `400 "invalid uuid: …"`.
+ */
+export const ROUTES = {
+  /** `GET /entities?model=…` — the list. RULED: this one, not a site's. */
+  list: () => ENTITIES,
+  /** `GET /entities/{uuid}?model=…` — one hydrated entity. */
+  read: (uuid) => `${ENTITIES}/${segment(uuid)}`,
+  /** `POST /entities/batch` `{ uuids, depth?, max_depth? }` → `{ entities: [...] }`, unreadable ones dropped. */
+  readBatch: () => `${ENTITIES}/batch`,
+  /** `POST /entities?model=…` — create an entity, optionally with its items. `201`. */
+  create: () => ENTITIES,
+  /** `POST /entities/{uuid}/items?model=…` — the item op. An array body is one transaction. */
+  items: (uuid) => `${ENTITIES}/${segment(uuid)}/items`,
+  /** `DELETE /entities/{uuid}` — hard-delete; items cascade. `204`. */
+  remove: (uuid) => `${ENTITIES}/${segment(uuid)}`,
+  /** `POST /entities/delete` `{ uuids, rev_ref_policy? }` → `{ deleted }`, all-or-nothing on a refusal. */
+  removeBatch: () => `${ENTITIES}/delete`,
+  /** `GET /models/@scope/name` — the Model's definition, its sections among it. */
+  schema: (model) => `${MODELS}/${modelPath(model)}`,
+}
+
+/**
+ * Query parameter names. **MEASURED.**
+ *
+ * ⛔ **Every route refuses a parameter it does not take**, with
+ * `400 "Unexpected parameters: …"` — so a parameter goes only where it is declared:
+ *
+ * | route | takes |
+ * |---|---|
+ * | list | `model` (required) · `scope` · `limit` · `offset` · `paginate` · `locale` · `include_disabled` |
+ * | read | `model` (required) · `via` · `depth` · `max_depth` · `locale` |
+ * | items | `model` (required) · `readback` |
+ * | create | `model` (required) |
+ * | remove | `rev_ref_policy` |
+ *
+ * ✅ **`via` and `depth` compose** (an assumption retired 2026-09-18): both are
+ * parameters of the same read and answer different questions — `via` *who may
+ * read* (through a container the viewer is entitled to), `depth` *how much is
+ * resolved*. An unentitled `via` is a `404`, never a `403`; a malformed one a `400`.
+ *
+ * `locale` is an ordered preference list, comma-separated. ⚠️ **The backend has no
+ * fallback of its own**: a localized field with no value in any listed locale is
+ * omitted, so a list that names only the visitor's language drops every field not
+ * yet translated. This package sends the active locale, then the site's default.
  */
 export const PARAM = {
   model: 'model',
@@ -156,6 +203,7 @@ export const PARAM = {
   offset: 'offset',
   locale: 'locale',
   paginate: 'paginate',
+  includeDisabled: 'include_disabled',
   via: 'via',
   depth: 'depth',
   maxDepth: 'max_depth',
@@ -164,23 +212,42 @@ export const PARAM = {
 }
 
 /**
- * Item ops. The kinds, and which of them carry a precondition.
+ * The list's `scope`. **MEASURED.** Default `accessible` — everything the viewer
+ * may read. ⚠️ On a site's `api` service that is **every member's** entities of
+ * the Model, not only the viewer's own: members of a site read each other's
+ * content. `mine` is only what the viewer owns.
+ */
+export const SCOPE = {
+  mine: 'mine',
+  accessible: 'accessible',
+  all: 'all',
+}
+
+/**
+ * Paging. **MEASURED.** A list with no `limit` answers 50 rows; a `limit` is
+ * clamped to `[0, 1000]`; `paginate=false` returns the whole slice and ignores
+ * both. This package sends its page size explicitly, so it knows what a full
+ * page looks like.
+ */
+export const PAGE = {
+  size: 50,
+  max: 1000,
+}
+
+/**
+ * Item ops — the kinds, and which of them carry a precondition. **MEASURED.**
  *
- * **MEASURED** for the semantics: `update` and `delete` carry the target item's
- * last-seen `updated_at` as `if_unmodified_since`; `create` is tokenless; a
- * mismatch is `409` with `current_updated_at`; a gone item is `404`; an absent
- * token is last-writer-wins, guarded same-transaction.
+ * | op | body | notes |
+ * |---|---|---|
+ * | `create` | `{ kind, section_id, data, parent_item_id?, position? }` | tokenless; `position` `'first'` · `'last'` · `{ after: <item_id> }`, default last. A second item in a one-item section is `409 Schema Rule Violation` |
+ * | `update` | `{ kind, item_id, data, if_unmodified_since? }` | replaces the item's data WHOLE |
+ * | `delete` | `{ kind, item_id, if_unmodified_since? }` | |
+ * | `move` | `{ kind, item_id, position, parent_item_id?, if_unmodified_since? }` | `position` required. Allowed on an insert-only section |
  *
- * ✅ **`move` is MEASURED (2026-09-17).** It exists on this lane, carries a
- * precondition, and takes `{ item_id, parent_item_id, position, if_unmodified_since }`.
- * **Position is decided server-side** — `"first"`, `"last"` or `{ after: <item_id> }` —
- * and the client never computes an order number. Both assumptions that stood here are
- * retired. *(It had been read off the site lane, whose documentation names only
- * `update` and `delete` as token-carrying; the doubt was reasonable and wrong.)*
- *
- * ⚠️ **Batch caveat, MEASURED:** an array of ops runs in ONE transaction — all commit
- * or none — but **an op may not reference an item created earlier in the same batch.**
- * A create-then-position sequence is therefore two round trips, not one batch.
+ * Ids are integers — `"3"` is a `400 … expected i64`. An array of ops is ONE
+ * transaction, and **an op may not reference an item created earlier in the same
+ * batch**. An absent token is last-writer-wins. ⚠️ An update that writes the data
+ * the item already holds is a no-op: the item's token does not move.
  */
 export const OP = {
   create: 'create',
@@ -193,136 +260,157 @@ export const OP = {
 export const GUARDED_OPS = new Set([OP.update, OP.delete, OP.move])
 
 /**
- * Field names on an op and on a write response.
+ * Field names on an op and on a write response. **MEASURED.**
  *
- * ✅ **MEASURED 2026-09-17** — backend confirmed these against its own source, and the
- * four assumptions that stood here are retired (see `ASSUMPTIONS`). Three of the four
- * names held exactly: `item_id`, `parent_item_id`, `if_unmodified_since`.
- *
- * ⛔ **The fourth did not.** `section` is wrong for the item route — see `section`
- * below, where the divergence is documented in full. It is left wrong deliberately:
- * correcting it changes behaviour, which is a separate change.
- *
- * A write answers `{ entity, item_id, item_uuid, item_updated_at }`, and
- * **`item_uuid` is set on `create` only** — a field this module does not yet name.
- * `item_updated_at` is the token to send back as `if_unmodified_since` on the next
- * write to that item; omitting it is last-writer-wins, and the check is per item, so
- * two people editing different sections do not collide.
- *
- * *(Historical: these were originally read off `POST /api/sites/{id}/content/items` —
- * a different route of the same binary — because the working client of our route
- * returns responses unnormalized and reveals no names. The guess was right on three
- * of four, which is roughly the hit rate this file exists to make visible.)*
+ * A single-op write answers `{ entity, item_id, item_uuid, item_updated_at }`; a
+ * batch `{ entity, results: [{ item_id, item_uuid, item_updated_at }, …] }`, one
+ * result per op, in order. `item_uuid` is set on a create only. ⚠️ **A delete
+ * answers `item_id: null`** — the row is gone — so the item a delete removed is
+ * known only from the op that named it.
  */
 export const FIELD = {
-  /** Names the target item on an op, and the affected item on a response. */
+  /** Names the target item on an op (an integer), and the item on a write result. */
   item: 'item_id',
-  /** Placement on a `create`. */
+  /** The new item's uuid, on a create's result. */
+  itemUuid: 'item_uuid',
+  /** Placement under another item, for nested content. */
   parent: 'parent_item_id',
   /**
-   * Which section of the entity an item belongs to.
+   * The section an item-create op writes into — the numeric id. **MEASURED.**
    *
-   * ⛔ REQUIRED on a create, and its absence is silent. An entity has several
-   * sections and they are not interchangeable: a rule declared on one — an
-   * `append_only`, a field set — simply does not apply to an item that landed in
-   * another. A create with no section is accepted, stored somewhere, and every
-   * guarantee the author declared is quietly not in force.
-   *
-   * ⛔ **DIVERGENT FROM THE BACKEND — MEASURED 2026-09-17. This value is wrong for
-   * the item route, and is left wrong on purpose until the client change lands.**
-   *
-   * The backend takes a section **two different ways, on two different routes**:
-   *
-   * | route | how a section is named |
-   * |---|---|
-   * | `POST /entities` (create with content) | **by NAME** — `{ items: [{ section: 'profile', … }] }` |
-   * | `POST /entities/{uuid}/items` (everything after) | **by NUMERIC `section_id`** |
-   *
-   * We send `section: '<name>'` on the item route, where the backend wants
-   * `section_id: <number>`.
-   *
-   * ⚠️ **And the cost is larger than the field name**, because the id is needed to
-   * *find* an item as well as to create one. An entity read returns `items[]` with
-   * `id`, `section_id` and `updated_at` — **no section name at all**. Code that
-   * locates an item by name (`items.find(i => i.section === 'content')`) works only
-   * against a mock that invents the name, and against the real backend returns
-   * `undefined`: the update silently never happens, or a duplicate is created.
-   *
-   * ⇒ A client needs **`GET /api/models/{scope}/{name}`** — `sections[]` with `id`,
-   * `name`, `kind`, `is_brief`, `parent_section_id` — to resolve a name, plus a
-   * path-aware resolver for nested sections. That route is **not in `ROUTES`**: it is
-   * outside the `/entities` lane this module pins, so adding it is a deliberate
-   * change, not a drive-by.
+   * ⭐ **Two routes, two spellings, both MEASURED:** creating an entity names a
+   * section by NAME (`SECTION_NAME`), a `parent/child` path for a nested one; the
+   * item route after it takes this numeric id. This package resolves a name to its
+   * id from the Model's definition (`ROUTES.schema`), so a caller only ever says a
+   * name.
    */
-  section: 'section',
+  section: 'section_id',
   /** The precondition an op carries. */
   precondition: 'if_unmodified_since',
-  /** The item's next token, on a write response. */
+  /** The item's next token, on a write result. */
   token: 'item_updated_at',
-  /** The item's current token, on a `409`. */
+  /** The item's current token, on a stale `409`. */
   conflictToken: 'current_updated_at',
 }
 
 /**
- * The list response. **MEASURED on this exact route** — a working client of
- * `GET /api/entities?model=…` documents the body as `{"entities":[],"matched":0}`
- * and destructures it that way.
+ * The create body — `POST /entities?model=…`. **MEASURED.**
  *
- * ⭐ `matched` is the count BEFORE paging, which is what makes it worth carrying:
- * it is the only thing that can answer "is there more" without a second request.
+ * `{ items: [{ section, data, parent_item_id? }] }`, each `section` a NAME (or a
+ * `parent/child` path). The entity and its items commit together, and the answer
+ * is `201` with the entity's row (the list's row shape, below). An unknown section
+ * name is `404 { kind: 'section' }`; an empty body makes an empty entity.
  *
- * ⚠️ **An empty list means empty, and has since 2026-08-29.** Before that a lapsed
- * session was answered anonymously on content routes — a `200` with an empty list,
- * byte-identical to a genuinely empty result — so a signed-out viewer was told
- * their content was gone. Every route now answers `401` instead. This package's
- * default `onUnauthorized: 'session-lost'` is the correct reading of that, and
- * anything here that treats an empty list as "maybe you are logged out" would be
- * re-implementing a bug the backend already fixed.
+ * ⛔ **There is no entity-level data.** An entity's content is always items in its
+ * sections; its `brief` is maintained by the backend from the brief section's
+ * item. ⛔ And the body's other keys are the backend's own — `uuid`, `owner_id` —
+ * so content spread at the top level is at best ignored and at worst read as one
+ * of them (`{ uuid: 't-1' }` is a `400`).
+ */
+export const CREATE = {
+  items: 'items',
+  sectionName: 'section',
+}
+
+/**
+ * The list response — `{ entities: [row, …], matched }`. **MEASURED.**
+ *
+ * A row: `{ model_uuid, model_name, via, id, uuid, model_id, owner_id, unit_id,
+ * sort_date, brief, disabled, created_by, created_at, updated_at }`. A list is
+ * brief-only — `brief` is the entity's summary, and there are no items on a row.
+ *
+ * ⛔ **`matched` counts the rows in THIS answer** — the page, when paging (a
+ * `limit=1` over two entities answers `matched: 1`). It is the total only for
+ * `paginate=false`, where the answer is the whole slice. There is no total when
+ * paging; a page that came back full is the only sign there may be more.
+ *
+ * `via` names why the viewer can read the row — `owner`, `grant`, `rbac`,
+ * `unit_member`, `entitlement`; treat an unknown value as "no opinion". ⚠️ An
+ * empty list means empty: a lapsed session is a `401`, never `200 []`.
  */
 export const LIST = {
   records: 'entities',
-  /** The count before `limit`/`offset` — the total, not the page. */
   matched: 'matched',
+}
+
+/**
+ * The single-entity read. **MEASURED.**
+ *
+ * `{ model_uuid, model_name, can_edit, hydrated: { entity, items } }` — `entity`
+ * is the row without `model_*`, and each item is
+ * `{ id, section_id, parent_item_id, data, item_date, order_number, updated_at }`.
+ * `can_edit` is the write gate's own answer for this viewer. Items name their
+ * section by id only; the Model's definition maps ids to names.
+ *
+ * `absent` is one word for not-found and not-permitted, by design: both are
+ * `404 { kind: 'entity' }`.
+ */
+export const READ = {
+  hydrated: 'hydrated',
+  entity: 'entity',
+  items: 'items',
+  itemId: 'id',
+  itemSection: 'section_id',
+  itemParent: 'parent_item_id',
+  itemToken: 'updated_at',
+  canEdit: 'can_edit',
+}
+
+/**
+ * A Model's definition — `GET /models/@scope/name`. **MEASURED.**
+ *
+ * `{ model: {…}, sections: [{ id, name, kind, is_brief, parent_section_id,
+ * fields, other_data, constraints }] }` — `kind` is `single` or `multi`;
+ * `other_data.append_only` marks an insert-only section.
+ *
+ * ⚠️ **Readable by the Models the viewer may create, and by the operator.** A
+ * member reading entities of a Model only the operator creates gets `404` here —
+ * so a member can read those items but cannot learn their section names.
+ */
+export const SCHEMA = {
+  sections: 'sections',
+  id: 'id',
+  name: 'name',
+  kind: 'kind',
+  parent: 'parent_section_id',
+}
+
+/**
+ * Refusals this package branches on. **MEASURED.** Problem-JSON:
+ * `{ status, title, detail?, …extensions }` — `title` is the stable discriminator.
+ *
+ * | answer | means |
+ * |---|---|
+ * | `409 Conflict` + `current_updated_at` | the item changed since this viewer's token — the ONLY stale-token answer |
+ * | `409 Append-Only Section` + `section` | an insert-only section: its items can be added and moved, not edited or deleted |
+ * | `409 Schema Rule Violation` | a rule of the Model: a second item in a one-item section, a section of another Model, a reference that still points here |
+ * | `403 Forbidden` + `op`, `target` | may read it, may not do this to it — `edit`, `delete`, `use_model` (create) |
+ * | `403 Email Not Verified` | right password, unverified address |
+ * | `403 CSRF Header Required` | a cookie-authenticated mutation without `X-Uniweb-Csrf` |
+ * | `400 Validation` + `field` | content that does not fit the Model (`field: 'data.minutes'`) |
+ * | `404 Not Found` + `kind`, `key` | nothing here for you — not found or not permitted |
+ */
+export const PROBLEM = {
+  csrf: 'CSRF Header Required',
+  stepUp: 'Step-Up Required',
+  notVerified: 'Email Not Verified',
+  appendOnly: 'Append-Only Section',
+  schemaRule: 'Schema Rule Violation',
 }
 
 /**
  * ⛔ THE LIST TO HAND BACKEND — everything this package asserts that nobody has
  * confirmed. Each entry says what we do, and what breaks if we are wrong.
  *
- * ⭐ This is not documentation of the backend. It is a **statement of what we
- * pinned**, which is the artifact backend asked for. Confirming one is a deliberate
- * edit here plus a moved comment above; `tests/wire.test.js` pins the set so the
- * change cannot be quiet.
- */
-/**
- * ⭐ **Four entries were RETIRED on 2026-09-17** — backend confirmed them against its
- * own source, and the rule above is to move the note to MEASURED and delete the entry:
+ * ⭐ **Empty since 2026-09-18.** The last two were answered by measurement:
  *
- * | retired | confirmed as |
+ * | retired | answered as |
  * |---|---|
- * | `write-response-fields` | a write answers `{ entity, item_id, item_uuid, item_updated_at }`; `item_uuid` is set on **create only** |
- * | `move-exists` | `move` is an op here and carries a precondition |
- * | `move-position` | positioned server-side — `"first"` \| `"last"` \| `{ after }`; the client never computes an order |
- * | `op-field-names` | `item_id`, `parent_item_id`, `if_unmodified_since` all confirmed — **but the section field is NOT**, and that is now a recorded DIVERGENCE on `FIELD.section`, not an open question |
+ * | `viewer-unit-signal` | ⛔ false — every member of a site acts in the same unit; see `VIEWER` |
+ * | `via-and-depth-compose` | ✅ true — see `PARAM` |
  *
- * ⛔ `op-field-names` left this list by being **answered, not by being right**. Three
- * of its four names held; the fourth is wrong and is documented where the wrong value
- * lives. An assumption that turns out false is not an assumption any more — it is a
- * defect, and hiding it in a list of open questions is how it stays unfixed.
- *
- * What remains below is genuinely unconfirmed.
+ * *(Retired 2026-09-17: `write-response-fields`, `move-exists`, `move-position`,
+ * `op-field-names` — see `FIELD` and `OP`.)* A new entry needs `we`, `from` and
+ * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
-export const ASSUMPTIONS = [
-  {
-    id: 'viewer-unit-signal',
-    we: "read a viewer's unit membership from `acting_unit_id` on /auth/me, surfaced as `viewer.actingUnitId`",
-    from: "the field this package already normalizes; whether it is THE membership signal, or one of several, is unconfirmed",
-    breaks: 'an app cannot tell an operator from a member, so it either shows authoring controls to everyone or to nobody — and the refusal only arrives at the write',
-  },
-  {
-    id: 'via-and-depth-compose',
-    we: `'${PARAM.via}' and '${PARAM.depth}' are both valid on a single-entity read, answering different questions`,
-    from: 'via is this package’s own; depth is what the working client of this route sends. Neither has been seen beside the other',
-    breaks: 'an entitled read returns the wrong shape, or one parameter silently wins',
-  },
-]
+export const ASSUMPTIONS = []
