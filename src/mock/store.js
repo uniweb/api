@@ -27,6 +27,15 @@ let counter = 0
 let entityCounter = 0
 let itemCounter = 0
 const nextId = (prefix) => `${prefix}-${(counter += 1)}`
+/**
+ * An item's own uuid, minted on CREATE only.
+ *
+ * ⚠️ The real backend's asymmetry, reproduced rather than tidied: `create` accepts a
+ * per-item `uuid` and a write response returns `item_uuid`, but an entity READ gives
+ * items back with no uuid at all. A mock that returned one everywhere would let a
+ * caller build on a field that is not there when it matters.
+ */
+const nextItemUuid = () => `item-${(counter += 1)}-${Math.random().toString(36).slice(2, 8)}`
 const now = () => new Date().toISOString()
 
 /** A token that changes on every write — the shape of the value does not matter, only that it moves. */
@@ -516,7 +525,7 @@ export class MockStore {
       if (refusal) return refusal
       const made = this.makeItem({ sectionId: section.id, data: op.data, parent: op[FIELD.parent] ?? null })
       this.place(entity, made, op.position)
-      return { ok: true, result: { [FIELD.item]: made.id, item_uuid: null, [FIELD.token]: made.updated_at } }
+      return { ok: true, result: { [FIELD.item]: made.id, [FIELD.itemUuid]: nextItemUuid(), [FIELD.token]: made.updated_at } }
     }
     if (kind === OP.update) {
       const refusal = this.shapeGuard(entity.model, this.sectionNameOf(entity.model, item.section_id), op.data, itemId)
@@ -524,18 +533,18 @@ export class MockStore {
       // Whole-data replace, like the real write: round-trip what you do not edit.
       item.data = op.data ?? {}
       item.updated_at = stamp()
-      return { ok: true, result: { [FIELD.item]: item.id, item_uuid: null, [FIELD.token]: item.updated_at } }
+      return { ok: true, result: { [FIELD.item]: item.id, [FIELD.itemUuid]: null, [FIELD.token]: item.updated_at } }
     }
     if (kind === OP.delete) {
       entity.items = entity.items.filter((i) => i !== item)
       // A null token is how a delete reports itself, so a ledger forgets the item.
-      return { ok: true, result: { [FIELD.item]: item.id, item_uuid: null, [FIELD.token]: null } }
+      return { ok: true, result: { [FIELD.item]: item.id, [FIELD.itemUuid]: null, [FIELD.token]: null } }
     }
     if (kind === OP.move) {
       entity.items = entity.items.filter((i) => i !== item)
       this.place(entity, item, op.position)
       item.updated_at = stamp()
-      return { ok: true, result: { [FIELD.item]: item.id, item_uuid: null, [FIELD.token]: item.updated_at } }
+      return { ok: true, result: { [FIELD.item]: item.id, [FIELD.itemUuid]: null, [FIELD.token]: item.updated_at } }
     }
     return { ok: false, problem: { status: 400, title: 'Validation', detail: `unknown op kind '${kind}'` } }
   }
@@ -564,8 +573,10 @@ export class MockStore {
    * real backend cannot, because the id does not exist until the transaction lands.
    * Allowing it here would let a client build a create-then-position batch that works
    * in development and fails in production.
+   *
+   * `readback` attaches the entity as it stands after the transaction — see below.
    */
-  applyOps(entity, ops) {
+  applyOps(entity, ops, { readback = false } = {}) {
     const snapshot = entity.items.map((i) => ({ ...i }))
     // ⛔ Only ids MINTED IN THIS BATCH are refused. An id that simply does not exist is
     // a 404 like any other — conflating the two would turn every typo into a confusing
@@ -596,6 +607,14 @@ export class MockStore {
       results.push(outcome.result)
     }
     entity.updated_at = now()
+    // ⭐ `readback=true` answers the entity AS IT STANDS AFTER the write — the rebuilt
+    // `brief` above all, which is the only way a caller can see the server's own
+    // derivation without a second request. Attached per result, the way the measured
+    // write response carries `entity` beside `item_id`.
+    if (readback) {
+      const seen = this.hydrate(entity)
+      for (const result of results) result.entity = seen
+    }
     return { ok: true, results }
   }
 }

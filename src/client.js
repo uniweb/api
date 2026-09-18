@@ -17,7 +17,7 @@ import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, MODEL_ROUTES, PARAM, FIELD, LIST, OP } from './wire.js'
 import { parseModelRef, indexSchema, sectionIdFor } from './models.js'
-import { normalizeEntity, normalizeEntities } from './entities.js'
+import { normalizeEntity, normalizeEntities, normalizeWriteResult } from './entities.js'
 import { Ledger } from './ledger.js'
 
 /** The site service this package reads its base from — the only name it owns. */
@@ -626,7 +626,10 @@ export class ApiClient {
         signal,
       })
       this.ledger.absorb(result)
-      return result
+      // A write can carry the entity as it stands afterwards (`readback=true`), and
+      // that is the same envelope a read answers — unwrapped here so no caller meets
+      // a second shape of the same thing. `item_uuid` rides through untouched.
+      return normalizeWriteResult(result)
     } catch (err) {
       if (err instanceof ApiError && err.status === 409) {
         // Rebase whichever item the server named. A batch reports one conflict at a

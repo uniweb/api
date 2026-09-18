@@ -189,6 +189,49 @@ describe('the client against the mock', () => {
     }
   })
 
+  it('mints an item_uuid on CREATE and none on the other three', async () => {
+    // The real backend's asymmetry, reproduced rather than tidied: a create response
+    // carries one, an update does not, and a READ never gives one back at all.
+    const { client, mock } = stack()
+    await signIn(client, 'organiser')
+    const made = await client.writeItems({
+      schema: '@/track',
+      uuid: 'track-main',
+      ops: { kind: 'create', section: 'sessions', data: { title: 'Lightning talks' } },
+    })
+    expect(made.item_uuid).toBeTruthy()
+
+    const edited = await client.writeItems({
+      schema: '@/track',
+      uuid: 'track-main',
+      ops: { kind: 'update', item_id: made.item_id, data: { title: 'Lightning talks (5m)' } },
+    })
+    expect(edited.item_uuid).toBeNull()
+
+    const { entity } = await client.readEntity({ schema: '@/track', uuid: 'track-main' })
+    expect(entity.items.every((i) => !('uuid' in i) && !('item_uuid' in i))).toBe(true)
+  })
+
+  it('⭐ readback answers the entity after the write, with the brief the SERVER rebuilt', async () => {
+    // The only way to see the server's own derivation without a second request — and
+    // the proof that `brief` is output: nothing sent it.
+    const { client } = stack()
+    await signIn(client, 'organiser')
+    const identity = (await client.readModelSchema({ schema: '@/track' })).byPath.get('identity')
+    const item = (await client.readEntity({ schema: '@/track', uuid: 'track-main' })).entity.items.find(
+      (i) => i.section_id === identity.id,
+    )
+    const out = await client.writeItems({
+      schema: '@/track',
+      uuid: 'track-main',
+      readback: true,
+      ops: { kind: 'update', item_id: item.id, data: { name: 'Main hall (renamed)' } },
+    })
+    expect(out.entity.brief).toEqual({ name: 'Main hall (renamed)' })
+    // ⛔ Nothing sent a `brief`. It is output, and this is what proves it.
+    expect(out.entity.items.find((i) => i.id === item.id).data).toEqual({ name: 'Main hall (renamed)' })
+  })
+
   it('runs a batch all-or-nothing, leaving nothing half-applied', async () => {
     const { client, mock } = stack()
     await signIn(client, 'organiser')

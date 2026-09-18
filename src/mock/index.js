@@ -179,7 +179,7 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/api', signed
         if (!entity) return problem({ status: 404, title: 'NotFound', kind: 'entity' })
         const payload = await body(request)
         const ops = Array.isArray(payload) ? payload : [payload]
-        const outcome = store.applyOps(entity, ops)
+        const outcome = store.applyOps(entity, ops, { readback: q.get(PARAM.readback) === 'true' })
         if (!outcome.ok) return problem(outcome.problem)
         // One op in, one result out; a batch reports per-op results. Matching the
         // request's shape is what lets the ledger absorb either without branching.

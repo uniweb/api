@@ -208,6 +208,46 @@ describe('writeItems', () => {
     expect(sent).toHaveLength(2)
   })
 
+  it('⭐ tolerates item_uuid — it rides through, and the ledger keys on item_id alone', async () => {
+    // `item_uuid` is set on `create` only, and a read returns none. It is a field this
+    // package neither needs nor may choke on; the token it DOES need sits beside it.
+    const client = clientWith(() => json(200, { item_id: 77, item_uuid: 'itm-abc', item_updated_at: 'T5' }))
+    const out = await client.writeItems({ schema: '@/s', uuid: 'e-1', ops: { kind: 'update', item_id: 77, data: {} } })
+    expect(out.item_uuid).toBe('itm-abc')
+    expect(client.ledger.get(77)).toBe('T5')
+  })
+
+  it('unwraps an entity carried BACK on a write, envelope and all', async () => {
+    // With `readback=true` a write answers the entity as it stands afterwards — the
+    // rebuilt `brief` above all. Same envelope as a read, so the same unwrap: a caller
+    // must never meet two shapes of one thing.
+    const client = clientWith(() =>
+      json(200, { item_id: 7, item_updated_at: 'T1', entity: hydrated({ uuid: 'e-1', brief: { title: 'New' } }) }),
+    )
+    const out = await client.writeItems({
+      schema: '@/s',
+      uuid: 'e-1',
+      readback: true,
+      ops: { kind: 'update', item_id: 7, data: {} },
+    })
+    expect(out.entity.uuid).toBe('e-1')
+    expect(out.entity.brief).toEqual({ title: 'New' })
+    expect(out.item_id).toBe(7)
+  })
+
+  it('unwraps the entity on every result of a BATCH', async () => {
+    const client = clientWith(() =>
+      json(200, { results: [{ item_id: 1, entity: hydrated({ uuid: 'e-1' }) }, { item_id: 2 }] }),
+    )
+    const out = await client.writeItems({
+      schema: '@/s',
+      uuid: 'e-1',
+      ops: [{ kind: 'update', item_id: 1 }, { kind: 'delete', item_id: 2 }],
+    })
+    expect(out.results[0].entity.uuid).toBe('e-1')
+    expect(out.results[1]).toEqual({ item_id: 2 })
+  })
+
   it('REBASES on a 409 and rethrows — it does not retry', async () => {
     // ⛔ Retrying would succeed by overwriting a change nobody looked at. Concurrency
     // is the one place where finishing the job for the caller destroys the thing the

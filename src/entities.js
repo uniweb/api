@@ -81,3 +81,27 @@ export function normalizeEntities(records) {
   if (!Array.isArray(records)) return []
   return records.map(normalizeEntity).filter(Boolean)
 }
+
+/**
+ * A write response, with any entity it carries unwrapped the same way a read's is.
+ *
+ * A write answers `{ entity, item_id, item_uuid, item_updated_at }`, and with
+ * `readback=true` that `entity` is the entity **as it stands after the write** — new
+ * `brief` included, since the server rebuilds it. A batch answers `{ results: [ … ] }`
+ * of the same.
+ *
+ * ⚠️ `item_uuid` is set on `create` only; it rides through untouched. The ledger keys
+ * on `item_id` and never reads it — a write response carrying one must disturb
+ * nothing, which is the whole of what "tolerate" means here.
+ *
+ * ⛔ Everything else is passed through verbatim. This is not a place to reshape a
+ * write response — only to stop the envelope leaking out of one.
+ */
+export function normalizeWriteResult(result) {
+  if (!result || typeof result !== 'object') return result
+  if (Array.isArray(result.results)) {
+    return { ...result, results: result.results.map(normalizeWriteResult) }
+  }
+  if (!('entity' in result)) return result
+  return { ...result, entity: normalizeEntity(result.entity) }
+}
