@@ -206,7 +206,9 @@ who may create entries, which sections are insert-only, the fields a section tak
 and it is as strict as the backend about requests, so a mistake fails here rather
 than in front of a user. Members read and write their own entities and nothing of each
 other's; the operator reads and writes everything (`memberFloor: 'read'` in the seed
-models a service set up to let members read each other's). A new sign-up must be
+models a service set up to let members read each other's — or per Model,
+`memberFloor: { '@acme/course': 'read' }`, so the operator's content is shared while
+each member's own records stay private). A new sign-up must be
 verified: the link is in `mock.outbox` (the standalone server prints it). State is in
 memory: restart to reset.
 

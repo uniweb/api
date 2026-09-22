@@ -315,6 +315,40 @@ describe('the client against the mock — writing', () => {
     expect(client.ledger.get(panel.id)).toBeNull()
   })
 
+  it('⭐ opens a floor PER MODEL — the operator\'s content shared, the members\' own records still theirs', async () => {
+    // A site's api service lets members read the operator's courses while each
+    // member's progress stays private. A global floor cannot say that: it opened
+    // every Model, so every learner read every learner's records (measured
+    // 2026-09-22 — a learner listing `@/enrollment` got the whole roster).
+    const seed = {
+      memberFloor: { '@/course': 'read' },
+      accounts: [
+        { username: 'organiser', password: 'organiser', operator: true },
+        { username: 'ada', password: 'ada' },
+        { username: 'bo', password: 'bo' },
+      ],
+      schemas: {
+        '@/course': { sections: { course: { kind: 'single', brief: true, fields: { title: { type: 'string' } } } } },
+        '@/progress': { sections: { progress: { kind: 'single', brief: true, fields: { done: { type: 'int' } } } } },
+      },
+    }
+    const { client } = stack({ seed })
+    await signIn(client, 'organiser')
+    const course = await client.createEntity({ schema: '@/course', items: [{ section: 'course', data: { title: 'Open Water' } }] })
+    await client.signOut()
+    await signIn(client, 'ada')
+    const adas = await client.createEntity({ schema: '@/progress', items: [{ section: 'progress', data: { done: 3 } }] })
+    await client.signOut()
+    await signIn(client, 'bo')
+    // The floored Model: bo reads the operator's course.
+    await expect(client.readEntity({ schema: '@/course', uuid: course.uuid })).resolves.toMatchObject({ status: 'ready' })
+    // The unfloored one: ada's progress is not bo's to see, in a read or a list.
+    await expect(client.readEntity({ schema: '@/progress', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    expect((await client.listEntities({ schema: '@/progress' })).records).toEqual([])
+    // And a floor value that is not read/edit is refused, per Model too.
+    expect(() => createMockBackend({ seed: { ...seed, memberFloor: { '@/course': 'all' } } })).toThrow(/memberFloor/)
+  })
+
   it('keeps members\' entities private to them by default — and a service that chose a floor shares them', async () => {
     // Measured on a site's api service: a member reads and writes their own entities and
     // nothing of another's; the operator reads and writes all. A service can be set up

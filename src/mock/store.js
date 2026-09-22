@@ -102,8 +102,11 @@ export class MockStore {
    *   seed's items and `append_only` use.
    * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, items?: [{ section, data, parent? }] }`.
    *   `uuid` must be a UUID. (`data`, the older spelling, becomes the brief section's item.)
-   * @param {'read'|'edit'} [seed.memberFloor] - what membership lets one member do to
-   *   ANOTHER member's entities. Absent — the default — nothing: each member's are private.
+   * @param {'read'|'edit'|Object<string,'read'|'edit'>} [seed.memberFloor] - what membership
+   *   lets one member do to ANOTHER member's entities. Absent — the default — nothing: each
+   *   member's are private. A string applies to every Model; a map `{ '@scope/name': 'read' }`
+   *   applies per Model, so a service can open the operator's content (courses, lessons) to
+   *   its members while their own records (progress, submissions) stay theirs alone.
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
    */
@@ -114,10 +117,16 @@ export class MockStore {
     for (const a of seed.accounts || []) this.addAccount(a, { verified: true })
 
     this.schemas = seed.schemas || {}
-    if (seed.memberFloor != null && !['read', 'edit'].includes(seed.memberFloor)) {
-      throw new Error(`[uniweb/api mock] memberFloor is 'read' or 'edit', or absent — got ${JSON.stringify(seed.memberFloor)}`)
+    const floors = seed.memberFloor != null && typeof seed.memberFloor === 'object' ? Object.values(seed.memberFloor) : [seed.memberFloor]
+    for (const floor of floors) {
+      if (floor != null && !['read', 'edit'].includes(floor)) {
+        throw new Error(`[uniweb/api mock] memberFloor is 'read' or 'edit', or absent — per Model or for all — got ${JSON.stringify(seed.memberFloor)}`)
+      }
     }
-    /** What membership lets one member do to another's entities: `null` (nothing), `read` or `edit`. */
+    /**
+     * What membership lets one member do to another's entities: `null` (nothing), `read`
+     * or `edit` — for every Model, or a map of it per Model.
+     */
     this.memberFloor = seed.memberFloor ?? null
     this.models = new Map()
     const itemSections = new Map()
@@ -432,15 +441,22 @@ export class MockStore {
     return siblings[siblings.length - 1].order_number + GAP
   }
 
+  /** The floor that applies to this entity's Model: `null`, `'read'` or `'edit'`. */
+  floorFor(entity) {
+    const floor = this.memberFloor
+    if (floor == null || typeof floor === 'string') return floor
+    return floor[entity.model] ?? null
+  }
+
   /** The operator, the owner — or any member, when the service lets members read each other's. */
   mayRead(entity) {
     const me = this.account
-    return !!me && (me.operator || entity.owner_id === me.id || this.memberFloor != null)
+    return !!me && (me.operator || entity.owner_id === me.id || this.floorFor(entity) != null)
   }
 
   mayEdit(entity) {
     const me = this.account
-    return !!me && (me.operator || entity.owner_id === me.id || this.memberFloor === 'edit')
+    return !!me && (me.operator || entity.owner_id === me.id || this.floorFor(entity) === 'edit')
   }
 
   /**
