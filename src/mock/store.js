@@ -85,6 +85,9 @@ function canonical(value) {
 const isMulti = (section) => section?.multiple === true || section?.kind === 'multi'
 const shortName = (model) => String(model).split('/').pop() || String(model)
 
+/** A `{ locale: value }` map — a plain object, never an array (a localized list's value). */
+const isLocaleMap = (value) => value != null && typeof value === 'object' && !Array.isArray(value)
+
 export class MockStore {
   /**
    * @param {object} seed
@@ -466,12 +469,18 @@ export class MockStore {
    * A localized field — declared `localized: true` — answered in the first listed
    * locale it has, and omitted when it has none: the backend has no fallback of
    * its own. Without a locale, the whole `{ locale: value }` map.
+   *
+   * ⛔ Only a plain object is a locale map. A localized LIST (`multiple: true`) holds
+   * an array, and an array is a value, not a map of them: read as a map it has no
+   * `en`, and the field was DELETED from every read that carried `?locale=` — which
+   * the client sends on every browser read. Measured 2026-09-22 on a course brief
+   * whose `outcomes` vanished, and on quiz questions whose `options` did.
    */
   project(data, section, locales) {
     if (!locales?.length || !section?.fields || !data || typeof data !== 'object') return data
     const out = { ...data }
     for (const [key, field] of Object.entries(section.fields)) {
-      if (!field?.localized || !out[key] || typeof out[key] !== 'object') continue
+      if (!field?.localized || !isLocaleMap(out[key])) continue
       const hit = locales.find((l) => out[key][l] != null)
       if (hit) out[key] = out[key][hit]
       else delete out[key]

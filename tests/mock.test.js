@@ -98,6 +98,49 @@ describe('the client against the mock — reading', () => {
     }
   })
 
+  it('projects a localized field to the locale asked for — and hands a localized LIST back whole', async () => {
+    // A translatable list lowers to `{ multiple: true, localized: true }` and its value
+    // is an array. Read as a `{ locale: value }` map it has no `en`, so 0.4.1 DELETED it
+    // from every read that carried `?locale=` — the client sends one on every browser
+    // read. Measured on a course brief that lost its `outcomes` and quiz questions
+    // that lost their `options`, while a node `fetch` with no locale returned them.
+    // Seeded, not created: the mock's write checker reads a localized string field as
+    // a plain string, so a `{ locale: value }` map cannot be WRITTEN through it — the
+    // projection is the only place the map shape is known. (Left as found.)
+    const COURSE = '01926d5e-0000-7000-8000-00000000c001'
+    const seed = {
+      accounts: [{ username: 'organiser', password: 'organiser', operator: true }],
+      schemas: {
+        '@/course': {
+          sections: {
+            course: {
+              kind: 'single',
+              brief: true,
+              fields: {
+                title: { type: 'string', localized: true },
+                outcomes: { type: 'string', multiple: true, localized: true },
+                level: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      entities: [
+        {
+          uuid: COURSE,
+          model: '@/course',
+          items: [{ section: 'course', data: { title: { en: 'Open Water', fr: 'Eau libre' }, outcomes: ['Plan a dive', 'Clear a mask'], level: 'Beginner' } }],
+        },
+      ],
+    }
+    const { client } = stack({ seed })
+    await signIn(client, 'organiser')
+    const { entity } = await client.readEntity({ schema: '@/course', uuid: COURSE })
+    // The client asked for `en`: the map is projected, the list and the plain string are values.
+    expect(entity.hydrated.entity.brief).toEqual({ title: 'Open Water', outcomes: ['Plan a dive', 'Clear a mask'], level: 'Beginner' })
+    expect(entity.hydrated.items[0].data.outcomes).toEqual(['Plan a dive', 'Clear a mask'])
+  })
+
   it('answers not-found as `absent`, and a path id that is not a UUID as the backend does — 400', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
