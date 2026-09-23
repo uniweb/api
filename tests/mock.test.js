@@ -334,7 +334,7 @@ describe('the client against the mock — accounts', () => {
 
     const result = await client.signIn({ username: 'newbie', password: 'pw' })
     expect(result.ok).toBe(true)
-    expect(client.session.viewer).toMatchObject({ username: 'newbie', roles: [], actingUnitId: 1 })
+    expect(client.session.viewer).toMatchObject({ username: 'newbie', roles: [], workspace: null })
   })
 
   it('answers a taken address exactly like a fresh one, and a taken username with 409', async () => {
@@ -350,10 +350,10 @@ describe('the client against the mock — accounts', () => {
   it('names the operator by role — every member acts in the same unit', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], actingUnitId: 1 })
+    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], workspace: null })
     await client.signOut()
     await signIn(client, 'attendee')
-    expect(client.session.viewer).toMatchObject({ roles: [], actingUnitId: 1 })
+    expect(client.session.viewer).toMatchObject({ roles: [], workspace: null })
   })
 
   it('resets a password with the mailed token', async () => {

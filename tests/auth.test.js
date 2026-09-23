@@ -27,10 +27,25 @@ describe('the probe — GET /auth/me', () => {
       username: 'ada',
       handle: 'ada',
       roles: [{ role: 'system_admin', scope_unit_id: null }],
-      actingUnitId: 1,
+      workspace: null,
     })
     expect(Object.isFrozen(session.viewer)).toBe(true)
     expect(route(...client.fetchFn.mock.calls[0])).toBe('GET /_api/auth/me')
+  })
+
+  it('carries the workspace the request named — `null` for none, never a half-empty object', async () => {
+    const named = clientWith(WITH_BACKEND, () =>
+      json(200, { ...ME, workspace: { unit_uuid: 'unit-9', handle: 'acme' } })
+    )
+    const { viewer } = await named.ensureSession()
+    expect(viewer.workspace).toEqual({ unitUuid: 'unit-9', handle: 'acme' })
+    expect(Object.isFrozen(viewer.workspace)).toBe(true)
+    expect('actingUnitId' in viewer).toBe(false)
+    // Both null (none named) and an answer without the field read the same: none.
+    for (const me of [ME, { account: ME.account, roles: [] }]) {
+      const client = clientWith(WITH_BACKEND, () => json(200, me))
+      expect((await client.ensureSession()).viewer.workspace).toBe(null)
+    }
   })
 
   it('turns a 401 into anonymous — nobody is signed in', async () => {

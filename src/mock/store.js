@@ -32,7 +32,7 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  * same read), nested sections, second factors, reference fields.
  */
 
-/** The unit every account of a site acts in — `acting_unit_id` on `/auth/me`. */
+/** The unit every account of a site acts in — an entity's `unit_id`. */
 export const SITE_UNIT = 1
 
 /** The gap between neighbouring items' order numbers, as the backend spaces them. */
@@ -169,7 +169,8 @@ export class MockStore {
     return {
       account: this.identity(account),
       roles: account.operator ? [{ role: 'system_admin', scope_unit_id: null }] : [],
-      acting_unit_id: SITE_UNIT,
+      // The workspace the REQUEST named — and this package's requests name none.
+      workspace: { unit_uuid: null, handle: null },
     }
   }
 

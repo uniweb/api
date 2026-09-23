@@ -38,6 +38,7 @@
  * | a `409` was rebased onto "the first op with an item id" | only the item the stale `409` names (`item_id`, since 2026-09-18); an older backend names none, and a batch is then not rebased — never by guesswork |
  * | a sign-up answered with the account | it answers `202 { status: 'verification_required', email }`; the account cannot sign in until verified (`403 Email Not Verified`) |
  * | `acting_unit_id` was a membership signal | every signed-in member of a site acts in the same unit — it cannot tell an operator from a member; `roles` can |
+ * | the viewer carried `actingUnitId` | it carries `workspace` — the workspace the request named, `null` for none (2026-09-23; `acting_unit_id` leaves the wire) |
  *
  * @module @uniweb/api/wire
  */
@@ -113,7 +114,7 @@ export const AUTH = {
  * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
  * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`; a bad token is `400 Validation`; `code` is required when a second factor is enrolled |
  * | logout | none | `204`; with no session to end, `401` |
- * | me | none | `200 { account: { uuid, username, handle }, roles, acting_unit_id }` · `401` |
+ * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle } }` · `401` |
  */
 export const AUTH_BODY = {
   login: ['username', 'password'],
@@ -136,16 +137,20 @@ export const TOTP = {
  * `roles` is a list of `{ role, scope_unit_id }` — `role` one of `system_admin`,
  * `unit_admin`, `content_editor`, `user`. An ordinary member holds none: `[]`.
  *
- * ⛔ **`acting_unit_id` is NOT a membership or operator signal.** Every signed-in
- * member of a site acts in the same unit, so it reads the same for the operator
- * and for someone who signed up a minute ago. The operator of a site's `api`
- * service holds `system_admin`. Better than either: ask about the thing — a
- * single-entity read carries `can_edit`, the write gate's own answer.
+ * `workspace` is `{ unit_uuid, handle }` — **the workspace the request named**, both
+ * `null` when it named none, as this package's requests do. The viewer carries it as
+ * `{ unitUuid, handle }`, or `null`. *(It replaced `acting_unit_id` on 2026-09-23.)*
+ *
+ * ⛔ **Neither is a membership or operator signal.** Every signed-in member of a site
+ * works in the same place, so it reads the same for the operator and for someone who
+ * signed up a minute ago. The operator of a site's `api` service holds
+ * `system_admin`. Better than either: ask about the thing — a single-entity read
+ * carries `can_edit`, the write gate's own answer.
  */
 export const VIEWER = {
   account: 'account',
   roles: 'roles',
-  actingUnit: 'acting_unit_id',
+  workspace: 'workspace',
 }
 
 /**

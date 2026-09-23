@@ -93,6 +93,16 @@ const LOADING = Object.freeze({ status: 'loading', viewer: null, error: null })
  * from `website.config` on each call, so the editor's `Website.rebuild()`
  * needs no hook here.
  */
+
+/**
+ * `/auth/me`'s `workspace` — `{ unit_uuid, handle }`, both null when none — as the
+ * viewer carries it: `{ unitUuid, handle }`, or `null` for none (`VIEWER`).
+ */
+function viewerWorkspace(ws) {
+  if (!ws || typeof ws !== 'object' || (ws.unit_uuid == null && ws.handle == null)) return null
+  return Object.freeze({ unitUuid: ws.unit_uuid ?? null, handle: ws.handle ?? null })
+}
+
 export class ApiClient {
   /**
    * @param {object} uniweb - the page's `Uniweb` singleton
@@ -307,7 +317,7 @@ export class ApiClient {
     const viewer = Object.freeze({
       ...account,
       roles: Array.isArray(me?.roles) ? me.roles : [],
-      actingUnitId: me?.acting_unit_id ?? null,
+      workspace: viewerWorkspace(me?.workspace),
     })
     if (this._session.viewer && this._session.viewer.uuid !== viewer.uuid) this.forgetViewer()
     return this.setSession({ status: 'authenticated', viewer, error: null })

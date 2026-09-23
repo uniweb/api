@@ -53,7 +53,7 @@ function Account() {
 
 `viewer` is flat — `viewer.uuid`, `viewer.username`, `viewer.handle`, and `viewer.roles`,
 a list of `{ role, scope_unit_id }`. A member holds no roles (`[]`); the site's operator
-holds `system_admin`. ⚠️ `viewer.actingUnitId` is the same for every member of a site, so
+holds `system_admin`. ⚠️ `viewer.workspace` is the same for every member of a site, so
 it cannot tell an operator from a member. To decide whether to show an edit control for
 a particular record, read that record: `entity.can_edit` is the backend's own answer.
 

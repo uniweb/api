@@ -55,7 +55,11 @@ export const WITH_BACKEND = { config: { services: { api: { endpoint: '/_api' } }
 export const WITHOUT_BACKEND = { config: {} }
 
 /** `/auth/me` for a member, as the backend answers it. */
-export const ME = { account: { uuid: 'u-1', username: 'ada', handle: 'ada' }, roles: [], acting_unit_id: 1 }
+export const ME = {
+  account: { uuid: 'u-1', username: 'ada', handle: 'ada' },
+  roles: [],
+  workspace: { unit_uuid: null, handle: null },
+}
 
 /** Entity ids are UUIDs on the wire. */
 export const E1 = '01926d5e-0000-7000-8000-00000000e001'
