@@ -203,7 +203,7 @@ describe('creating an entity — content is items, by section', () => {
   })
 
   it('a model with no declared sections is unchecked, not diagnosed', () => {
-    const store = storeWith({ '@/course': { creatable_by: 'unit_members' } }, [
+    const store = storeWith({ '@/course': {} }, [
       { model: '@/course', items: [{ section: 'anything', data: {} }] },
     ])
     const { entity, model, id } = entityOf(store, '@/course')

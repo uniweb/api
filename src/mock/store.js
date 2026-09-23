@@ -94,7 +94,8 @@ export class MockStore {
    * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, operator? }`.
    *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
    *   also marks the operator.)
-   * @param {object} [seed.schemas] - `{ '@scope/name': { creatable_by?, sections?, append_only?, migration_debt? } }`.
+   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, migration_debt? } }`.
+   *   ⛔ No `creatable_by` — retired 2026-09-23, Models are open; a seed carrying it is refused.
    *   `sections` is the LOWERED sections map (`{ [name]: { kind | multiple, brief, append_only, fields } }`)
    *   as the framework's normalizer produces it; with it, writes are shape-checked
    *   (`./schema-shape.js`). Without it the sections are inferred: a one-item brief
@@ -117,6 +118,13 @@ export class MockStore {
     for (const a of seed.accounts || []) this.addAccount(a, { verified: true })
 
     this.schemas = seed.schemas || {}
+    for (const [name, decl] of Object.entries(this.schemas)) {
+      if (decl && (decl.creatable_by !== undefined || decl.creatableBy !== undefined)) {
+        throw new Error(
+          `[uniweb/api mock] ${name}: creatable_by is retired — Models are open: anyone signed in may create entries of any Model, and who may see or edit an entry is decided by the entry. Remove it.`
+        )
+      }
+    }
     const floors = seed.memberFloor != null && typeof seed.memberFloor === 'object' ? Object.values(seed.memberFloor) : [seed.memberFloor]
     for (const floor of floors) {
       if (floor != null && !['read', 'edit'].includes(floor)) {
@@ -269,7 +277,6 @@ export class MockStore {
       id: (this.ids.model += 1),
       uuid: newUuid(),
       name,
-      creatable_by: decl?.creatable_by || 'any_user',
       decl: decl || {},
       sections: [],
     }
@@ -314,14 +321,14 @@ export class MockStore {
     return null
   }
 
-  mayCreate(model) {
-    if (!this.account) return false
-    return model.creatable_by === 'any_user' || this.account.operator
-  }
-
-  /** The definition is readable for the Models the viewer may create, and by the operator. */
-  maySeeSchema(model) {
-    return !!this.account && (this.account.operator || model.creatable_by === 'any_user')
+  /**
+   * The definition is readable by anyone signed in. ⭐ Models are open (2026-09-23):
+   * anyone signed in may create entries of any Model, and what protects content is the
+   * entry — `mayEdit`, `mayRead` — never who may create. *(Until then a Model declaring
+   * `creatable_by: unit_members` was the operator's alone, and so was its definition.)*
+   */
+  maySeeSchema() {
+    return !!this.account
   }
 
   /** `GET /models/@scope/name`, in the backend's shape. */

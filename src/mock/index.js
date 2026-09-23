@@ -39,7 +39,7 @@ import { DEFAULT_SEED } from './seed.js'
  * One operator (`operator: true` on a seeded account) and members; a member reads
  * and writes their own entities and nothing of another's (unless the seed's
  * `memberFloor` says the service lets them), the operator reads and writes all;
- * `creatable_by: 'unit_members'` Models are created by the operator only; sign-up
+ * anyone signed in may create entries of any Model (Models are open); sign-up
  * leaves an account unverified until the link in `mock.outbox` is followed. It
  * does not model entitlements behind `via`, nested sections, or second factors.
  *
@@ -286,15 +286,9 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         }
         const model = store.model(q.get(PARAM.model))
         if (!model) return notFound('model', q.get(PARAM.model))
-        if (!store.mayCreate(model)) {
-          return problem({
-            status: 403,
-            title: 'Forbidden',
-            detail: `use_model on model ${model.uuid} not permitted`,
-            op: 'use_model',
-            target: `model ${model.uuid}`,
-          })
-        }
+        // ⭐ No creation gate: Models are open (2026-09-23) — anyone signed in may create
+        // entries of any Model. Until then `creatable_by: unit_members` answered `403
+        // use_model` here for a member.
         // Any other top-level key is ignored, exactly as the backend ignores it.
         return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} }))))
       }

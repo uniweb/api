@@ -159,18 +159,31 @@ describe('the client against the mock — reading', () => {
 })
 
 describe('the client against the mock — writing', () => {
-  it('⭐ enforces creatable_by SERVER-SIDE — the operator creates, a member is refused', async () => {
+  it('⭐ Models are open — a member creates their own; the ENTRY refuses them the organiser\'s', async () => {
     const { client } = stack()
 
     await signIn(client, 'attendee')
+    const mine = await client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'My notes' } }] })
+    expect(mine).toMatchObject({ model_name: '@/track', brief: { name: 'My notes' } })
+    // What protects the programme is who may edit an entry, never who may create one.
     await expect(
-      client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'Sneaky' } }] }),
-    ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'use_model' } })
+      client.writeItems({
+        schema: '@/track',
+        uuid: '01926d5e-0000-7000-8000-00000000a001',
+        ops: { kind: 'create', section: 'sessions', data: { title: 'Sneaky' } },
+      }),
+    ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'edit' } })
 
     await client.signOut()
     await signIn(client, 'organiser')
     const made = await client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'Side room' } }] })
     expect(made).toMatchObject({ model_name: '@/track', brief: { name: 'Side room' } })
+  })
+
+  it('⛔ refuses a seed that still declares creatable_by — it is retired', () => {
+    expect(() => createMockBackend({ seed: { schemas: { '@/track': { creatable_by: 'unit_members' } } } })).toThrow(
+      /creatable_by is retired — Models are open/,
+    )
   })
 
   it('creates with items by section name, then writes an item by section name — the id is resolved', async () => {

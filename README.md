@@ -179,7 +179,6 @@ export default createMockBackend({
     ],
     schemas: {
       '@acme/track': {
-        creatable_by: 'unit_members',                    // the operator only; 'any_user' is the default
         sections: {
           track: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
           sessions: { kind: 'multi', fields: { title: { type: 'string', required: true } } },

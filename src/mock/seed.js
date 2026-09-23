@@ -7,24 +7,24 @@
  *
  * - **`accounts`** — `operator: true` marks the account that runs the site's
  *   service. Everyone else is a member. Seeded accounts are verified.
- * - **`schemas`** — per Model: `creatable_by` (`any_user`, the default, or
- *   `unit_members` — the operator only) and `sections`, the Model's sections as
- *   the framework lowers them. With `sections`, writes are shape-checked.
+ * - **`schemas`** — per Model: `sections`, the Model's sections as the framework
+ *   lowers them. With `sections`, writes are shape-checked. Models are open:
+ *   anyone signed in may create entries of any of them.
  * - **`entities`** — `uuid` must be a UUID, as it is on the wire; content is items,
  *   each naming its section. The entity's `brief` is derived from its brief
  *   section's item, as the backend derives it.
  */
 export const DEFAULT_SEED = {
   accounts: [
-    // The organiser runs the site, so the rule on `@/track` lets them author the programme.
+    // The organiser runs the site, and the programme's tracks are theirs.
     { username: 'organiser', password: 'organiser', operator: true },
-    // The attendee is a member — the same rule refuses them, server-side, and that
-    // refusal is the demo. They may record attending, which anyone may.
+    // The attendee is a member. They may make entries of their own — recording
+    // attending is the demo — and may not edit the organiser's programme: the entry
+    // decides, server-side, and that refusal is the other half of the demo.
     { username: 'attendee', password: 'attendee' },
   ],
   schemas: {
     '@/track': {
-      creatable_by: 'unit_members',
       sections: {
         track: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
         sessions: {
@@ -36,7 +36,6 @@ export const DEFAULT_SEED = {
     // Check-ins are insert-only: an attendee may record attending, and nobody —
     // including them — may edit or remove it afterwards.
     '@/attendance': {
-      creatable_by: 'any_user',
       sections: {
         attendance: { kind: 'single', brief: true, fields: { who: { type: 'string' } } },
         checkins: { kind: 'multi', append_only: true, fields: { session: { type: 'string' }, at: { type: 'string' } } },
