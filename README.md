@@ -96,10 +96,17 @@ full (`limit`, default 50); `matched` counts the records in this answer, not a t
 
 ```jsx
 const { status, entity } = useEntity({ schema: '@acme/lesson', uuid, via: course.uuid })
-// entity.hydrated.items — the content: { id, section_id, data, … } each
+// entity.hydrated.items — the content: { id, section, section_id, data, … } each
 // entity.hydrated.entity.brief — the summary
 // entity.can_edit — whether this viewer may write to it
+
+const sessions = entity.hydrated.items.filter((item) => item.section === 'sessions')
 ```
+
+`item.section` is the section's name, the word a write takes (`parent/child` for a nested
+section). The package resolves it from the Model's definition, so a component never
+handles a section id. `item.id` is what `useEntityWriter` takes to update, move or remove
+the item.
 
 Its `absent` covers both not-found and not-permitted, on purpose: render your paywall
 or sign-in prompt on it and never say "deleted".

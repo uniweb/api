@@ -16,8 +16,10 @@ const DISABLED = Object.freeze({ status: 'absent', entity: null, error: null })
  * ```
  *
  * The entity is the backend's answer: `entity.hydrated.items` is its content —
- * `{ id, section_id, data, … }` each — `entity.hydrated.entity.brief` its summary,
- * and `entity.can_edit` whether this viewer may write to it.
+ * `{ id, section, section_id, data, … }` each, `section` being the section's NAME
+ * (the word a write takes; this package's label, see `readEntity`) —
+ * `entity.hydrated.entity.brief` its summary, and `entity.can_edit` whether this
+ * viewer may write to it.
  *
  * Cached in the site's data store under a key scoped to the viewer, so a
  * sign-in or sign-out changes the key and the record is read again for who

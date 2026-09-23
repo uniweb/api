@@ -103,6 +103,32 @@ function viewerWorkspace(ws) {
   return Object.freeze({ unitUuid: ws.unit_uuid ?? null, handle: ws.handle ?? null })
 }
 
+/**
+ * Label each item with its section's NAME — `section`, the word a write takes — from
+ * a Model's sections (`ApiClient.sections`): `sessions`, or `parent/child` for a
+ * nested section. An item whose section the definition does not name stays as it is.
+ *
+ * @param {object[]|undefined} items - `hydrated.items`, labelled in place
+ * @param {Array<{ id: number, name: string, parent: number|null }>|null} sections
+ */
+function labelSections(items, sections) {
+  if (!Array.isArray(items) || !Array.isArray(sections) || !sections.length) return
+  const byId = new Map(sections.map((s) => [s.id, s]))
+  const pathOf = (section) => {
+    const names = []
+    const seen = new Set()
+    for (let at = section; at && !seen.has(at.id); at = byId.get(at.parent)) {
+      seen.add(at.id)
+      names.unshift(at.name)
+    }
+    return names.join('/')
+  }
+  for (const item of items) {
+    const section = item && byId.get(item[READ.itemSection])
+    if (section) item[CREATE.sectionName] = pathOf(section)
+  }
+}
+
 export class ApiClient {
   /**
    * @param {object} uniweb - the page's `Uniweb` singleton
@@ -539,6 +565,13 @@ export class ApiClient {
    * and `hydrated.entity.brief` is its summary. `can_edit` is the write gate's
    * own answer for this viewer.
    *
+   * ⭐ **Each item also carries `section`, its section's NAME** — `sessions`, or a
+   * `parent/child` path for a nested one — the word a write takes, so a component
+   * never meets a section id in either direction. It is this package's label, not
+   * the backend's: resolved from the Model's definition, read beside the entity
+   * (once per viewer, and kept). When the definition cannot be read, items carry
+   * no `section` and the read still succeeds.
+   *
    * ⭐ **The read seeds the concurrency ledger** with each item's `updated_at`, so
    * the first edit of an item is guarded by the version the viewer was shown.
    *
@@ -558,11 +591,18 @@ export class ApiClient {
     if (!schema) throw ApiError.invalid('No Model', 'readEntity needs a schema — the backend reads an entity by its Model')
     const mark = this.ledger.mark()
     try {
-      const entity = await this.request('GET', ROUTES.read(uuid), {
-        query: { [PARAM.model]: schema, [PARAM.via]: via, ...this._localeQuery() },
-        signal,
-      })
-      this.ledger.observe(entity?.[READ.hydrated]?.[READ.items], mark)
+      const [entity, sections] = await Promise.all([
+        this.request('GET', ROUTES.read(uuid), {
+          query: { [PARAM.model]: schema, [PARAM.via]: via, ...this._localeQuery() },
+          signal,
+        }),
+        // A label, not a condition of the read: a definition this viewer cannot read
+        // leaves the items unlabelled.
+        this.sections(schema, signal).catch(() => null),
+      ])
+      const items = entity?.[READ.hydrated]?.[READ.items]
+      this.ledger.observe(items, mark)
+      labelSections(items, sections)
       return { status: 'ready', entity }
     } catch (err) {
       if (err instanceof ApiError && err.kind === 'absent') return { status: 'absent', entity: null }
@@ -651,9 +691,11 @@ export class ApiClient {
    * section names; the item route after it takes ids, and ids differ from one
    * backend to the next. So a name is resolved here, from the Model's definition.
    *
-   * ⚠️ The definition is readable for the Models the viewer may create, and by the
-   * site's operator. Anywhere else this cannot resolve a name, and says so — pass
-   * the section's numeric id instead (an item's `section_id` on a read).
+   * ⚠️ The definition is readable by any signed-in viewer — Models are open, so every
+   * Model is one they may create (2026-09-23; until then only the Models a viewer
+   * could create, and the operator). Where it cannot be read this cannot resolve a
+   * name, and says so — pass the section's numeric id instead (an item's
+   * `section_id` on a read).
    *
    * @param {string} schema
    * @param {string|number} section - a name, a `parent/child` path, or an id
