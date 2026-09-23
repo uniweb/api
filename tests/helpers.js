@@ -55,10 +55,13 @@ export const WITH_BACKEND = { config: { services: { api: { endpoint: '/_api' } }
 export const WITHOUT_BACKEND = { config: {} }
 
 /** `/auth/me` for a member, as the backend answers it. */
+/** A site service's home org, as `/auth/me` names it — every account is enrolled in it. */
+export const HOME = { unit_uuid: '01926d5e-0000-7000-8000-0000000000a0', handle: 'home' }
+
 export const ME = {
   account: { uuid: 'u-1', username: 'ada', handle: 'ada' },
   roles: [],
-  workspace: { unit_uuid: null, handle: null },
+  workspace: HOME,
 }
 
 /** Entity ids are UUIDs on the wire. */

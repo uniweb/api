@@ -38,7 +38,7 @@
  * | a `409` was rebased onto "the first op with an item id" | only the item the stale `409` names (`item_id`, since 2026-09-18); an older backend names none, and a batch is then not rebased — never by guesswork |
  * | a sign-up answered with the account | it answers `202 { status: 'verification_required', email }`; the account cannot sign in until verified (`403 Email Not Verified`) |
  * | `acting_unit_id` was a membership signal | every signed-in member of a site acts in the same unit — it cannot tell an operator from a member; `roles` can |
- * | the viewer carried `actingUnitId` | it carries `workspace` — the workspace the request named, `null` for none (2026-09-23; `acting_unit_id` leaves the wire) |
+ * | the viewer carried `actingUnitId` | it carries `workspace` — where the request landed: on a site's service, its home org (2026-09-23; `acting_unit_id` leaves the wire) |
  *
  * @module @uniweb/api/wire
  */
@@ -137,15 +137,19 @@ export const TOTP = {
  * `roles` is a list of `{ role, scope_unit_id }` — `role` one of `system_admin`,
  * `unit_admin`, `content_editor`, `user`. An ordinary member holds none: `[]`.
  *
- * `workspace` is `{ unit_uuid, handle }` — **the workspace the request named**, both
- * `null` when it named none, as this package's requests do. The viewer carries it as
- * `{ unitUuid, handle }`, or `null`. *(It replaced `acting_unit_id` on 2026-09-23.)*
+ * `workspace` is `{ unit_uuid, handle }` — **the workspace the request works in**. This
+ * package's requests name none, and on a site's `api` service such a request lands in
+ * the service's **home org**, `handle: 'home'`, in which every account is enrolled.
+ * Both `null` there means an account that is not a member — a service account, a
+ * revoked membership. (On a backend with no home org, naming none is personal: both
+ * `null`.) The viewer carries it as `{ unitUuid, handle }`, or `null` when both are
+ * null. *(It replaced `acting_unit_id` on 2026-09-23. MEASURED by backend at the
+ * function the route serializes, 2026-09-23.)*
  *
- * ⛔ **Neither is a membership or operator signal.** Every signed-in member of a site
- * works in the same place, so it reads the same for the operator and for someone who
- * signed up a minute ago. The operator of a site's `api` service holds
- * `system_admin`. Better than either: ask about the thing — a single-entity read
- * carries `can_edit`, the write gate's own answer.
+ * ⛔ **Neither is an operator signal.** Every member of a site's service works in the
+ * same home org, so it reads the same for the operator and for someone who signed up a
+ * minute ago. The operator holds `system_admin`. Better than either: ask about the
+ * thing — a single-entity read carries `can_edit`, the write gate's own answer.
  */
 export const VIEWER = {
   account: 'account',

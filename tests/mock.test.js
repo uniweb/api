@@ -4,6 +4,7 @@ import { getClient } from '../src/client.js'
 import { ApiError } from '../src/errors.js'
 import { createMockBackend } from '../src/mock/index.js'
 import { WITH_BACKEND } from './helpers.js'
+import { HOME_ORG } from '../src/mock/store.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -334,7 +335,7 @@ describe('the client against the mock — accounts', () => {
 
     const result = await client.signIn({ username: 'newbie', password: 'pw' })
     expect(result.ok).toBe(true)
-    expect(client.session.viewer).toMatchObject({ username: 'newbie', roles: [], workspace: null })
+    expect(client.session.viewer).toMatchObject({ username: 'newbie', roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
   })
 
   it('answers a taken address exactly like a fresh one, and a taken username with 409', async () => {
@@ -347,13 +348,13 @@ describe('the client against the mock — accounts', () => {
     await expect(client.signUp({ username: 'one', email: 'other@example.test', password: 'pw' })).rejects.toMatchObject({ status: 409 })
   })
 
-  it('names the operator by role — every member acts in the same unit', async () => {
+  it('names the operator by role — every member works in the same home org', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], workspace: null })
+    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
     await client.signOut()
     await signIn(client, 'attendee')
-    expect(client.session.viewer).toMatchObject({ roles: [], workspace: null })
+    expect(client.session.viewer).toMatchObject({ roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
   })
 
   it('resets a password with the mailed token', async () => {

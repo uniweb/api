@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
 import { getClient, signIn as signInFn, probeSession } from '../src/client.js'
-import { fetchStub, json, empty, route, WITH_BACKEND, WITHOUT_BACKEND, ME } from './helpers.js'
+import { fetchStub, json, empty, route, WITH_BACKEND, WITHOUT_BACKEND, ME, HOME } from './helpers.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -27,22 +27,22 @@ describe('the probe — GET /auth/me', () => {
       username: 'ada',
       handle: 'ada',
       roles: [{ role: 'system_admin', scope_unit_id: null }],
-      workspace: null,
+      workspace: { unitUuid: HOME.unit_uuid, handle: 'home' },
     })
     expect(Object.isFrozen(session.viewer)).toBe(true)
     expect(route(...client.fetchFn.mock.calls[0])).toBe('GET /_api/auth/me')
   })
 
-  it('carries the workspace the request named — `null` for none, never a half-empty object', async () => {
-    const named = clientWith(WITH_BACKEND, () =>
-      json(200, { ...ME, workspace: { unit_uuid: 'unit-9', handle: 'acme' } })
-    )
-    const { viewer } = await named.ensureSession()
-    expect(viewer.workspace).toEqual({ unitUuid: 'unit-9', handle: 'acme' })
+  it('carries the workspace the request works in — the home org for a member; `null`, never half-empty', async () => {
+    const member = clientWith(WITH_BACKEND, () => json(200, ME))
+    const { viewer } = await member.ensureSession()
+    expect(viewer.workspace).toEqual({ unitUuid: HOME.unit_uuid, handle: 'home' })
     expect(Object.isFrozen(viewer.workspace)).toBe(true)
     expect('actingUnitId' in viewer).toBe(false)
-    // Both null (none named) and an answer without the field read the same: none.
-    for (const me of [ME, { account: ME.account, roles: [] }]) {
+    // Both null (not a member — a service account, a revoked membership) and an answer
+    // without the field read the same: none.
+    const outsider = { ...ME, workspace: { unit_uuid: null, handle: null } }
+    for (const me of [outsider, { account: ME.account, roles: [] }]) {
       const client = clientWith(WITH_BACKEND, () => json(200, me))
       expect((await client.ensureSession()).viewer.workspace).toBe(null)
     }

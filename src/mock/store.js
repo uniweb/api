@@ -35,6 +35,17 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
 /** The unit every account of a site acts in — an entity's `unit_id`. */
 export const SITE_UNIT = 1
 
+/**
+ * The service's home org — `workspace` on `/auth/me`. A site's service is founded with
+ * one, handle `home`, and enrolls every account in it, the owner included, so a request
+ * that names no workspace lands there. Its own value: it is minted in the service's
+ * database, and has nothing to do with the workspace the site was authored in.
+ */
+export const HOME_ORG = Object.freeze({
+  unit_uuid: '01926d5e-0000-7000-8000-0000000000a0',
+  handle: 'home',
+})
+
 /** The gap between neighbouring items' order numbers, as the backend spaces them. */
 const GAP = 1_000_000
 
@@ -169,8 +180,9 @@ export class MockStore {
     return {
       account: this.identity(account),
       roles: account.operator ? [{ role: 'system_admin', scope_unit_id: null }] : [],
-      // The workspace the REQUEST named — and this package's requests name none.
-      workspace: { unit_uuid: null, handle: null },
+      // A request that names no workspace — as this package's never do — lands in the
+      // home org, which every account belongs to. Both null would mean a non-member.
+      workspace: { ...HOME_ORG },
     }
   }
 
