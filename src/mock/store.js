@@ -85,8 +85,21 @@ function canonical(value) {
 const isMulti = (section) => section?.multiple === true || section?.kind === 'multi'
 const shortName = (model) => String(model).split('/').pop() || String(model)
 
-/** A `{ locale: value }` map — a plain object, never an array (a localized list's value). */
-const isLocaleMap = (value) => value != null && typeof value === 'object' && !Array.isArray(value)
+/**
+ * A `{ locale: value }` map — a plain object, never an array (a localized list's
+ * value), and never the value of a field whose OWN type is an object.
+ *
+ * ⛔ A `json` field's value is a plain object too — a richtext body is a ProseMirror
+ * document — and read as a map it has no `en`, so the body was DELETED from every
+ * read that carried `?locale=`, which the client sends on every browser read.
+ * Measured 2026-09-24 on a lesson whose `content` section became declared. The
+ * write checker (`schema-shape.js`) takes any object in such a field as THE value,
+ * so the projection reads it the same way: for these types the map shape is not
+ * knowable, and a value is a value.
+ */
+const OBJECT_TYPED = new Set(['json', 'object', 'group'])
+const isLocaleMap = (field, value) =>
+  value != null && typeof value === 'object' && !Array.isArray(value) && !OBJECT_TYPED.has(field?.type)
 
 export class MockStore {
   /**
@@ -497,13 +510,14 @@ export class MockStore {
    * an array, and an array is a value, not a map of them: read as a map it has no
    * `en`, and the field was DELETED from every read that carried `?locale=` — which
    * the client sends on every browser read. Measured 2026-09-22 on a course brief
-   * whose `outcomes` vanished, and on quiz questions whose `options` did.
+   * whose `outcomes` vanished, and on quiz questions whose `options` did. The same
+   * for a `json` field's document (`isLocaleMap`), measured 2026-09-24.
    */
   project(data, section, locales) {
     if (!locales?.length || !section?.fields || !data || typeof data !== 'object') return data
     const out = { ...data }
     for (const [key, field] of Object.entries(section.fields)) {
-      if (!field?.localized || !isLocaleMap(out[key])) continue
+      if (!field?.localized || !isLocaleMap(field, out[key])) continue
       const hit = locales.find((l) => out[key][l] != null)
       if (hit) out[key] = out[key][hit]
       else delete out[key]

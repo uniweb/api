@@ -141,6 +141,49 @@ describe('the client against the mock — reading', () => {
     expect(entity.hydrated.items[0].data.outcomes).toEqual(['Plan a dive', 'Clear a mask'])
   })
 
+  it('hands a localized JSON field back whole — a document is a value, not a `{ locale: value }` map', async () => {
+    // `richtext` lowers to `{ type: 'json', localized: true }` and its value is a
+    // ProseMirror document — a plain object. Read as a locale map it has no `en`, so
+    // the body was DELETED from every browser read (`?locale=` is on every one) while
+    // a node fetch with no locale returned it. Measured 2026-09-24 on a lesson whose
+    // `content` section became declared. The write checker takes any object in a json
+    // field as THE value, so the projection reads it the same way — through a seed
+    // AND through the write the editor makes.
+    const LESSON = '01926d5e-0000-7000-8000-00000000d001'
+    const doc = (text) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] })
+    const seed = {
+      accounts: [{ username: 'organiser', password: 'organiser', operator: true }],
+      schemas: {
+        '@/lesson': {
+          sections: {
+            lesson: { kind: 'single', brief: true, fields: { title: { type: 'string', localized: true } } },
+            content: { kind: 'single', fields: { content: { type: 'json', localized: true, format: 'prosemirror' } } },
+          },
+        },
+      },
+      entities: [
+        {
+          uuid: LESSON,
+          model: '@/lesson',
+          items: [
+            { section: 'lesson', data: { title: { en: 'Breathing', fr: 'Respirer' } } },
+            { section: 'content', data: { content: doc('Breathe slowly.') } },
+          ],
+        },
+      ],
+    }
+    const { client } = stack({ seed })
+    await signIn(client, 'organiser')
+    const first = await client.readEntity({ schema: '@/lesson', uuid: LESSON })
+    expect(first.entity.hydrated.entity.brief).toEqual({ title: 'Breathing' })
+    const body = first.entity.hydrated.items.find((i) => i.section === 'content')
+    expect(body.data.content).toEqual(doc('Breathe slowly.'))
+    // The editor's save: a bare document, as every write is.
+    await client.writeItems({ schema: '@/lesson', uuid: LESSON, ops: { kind: 'update', item_id: body.id, data: { content: doc('Exhale fully.') } } })
+    const again = await client.readEntity({ schema: '@/lesson', uuid: LESSON })
+    expect(again.entity.hydrated.items.find((i) => i.section === 'content').data.content).toEqual(doc('Exhale fully.'))
+  })
+
   it('answers not-found as `absent`, and a path id that is not a UUID as the backend does — 400', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
