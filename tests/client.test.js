@@ -3,7 +3,7 @@ import { createUniweb } from '@uniweb/core'
 import { getClient, ApiClient, CONTRACT } from '../src/client.js'
 
 // Real core, real seal: the slot is what makes one client per page possible.
-const withBackend = { config: { services: { api: { endpoint: '/_uw' } } } }
+const withBackend = { config: { services: { backend: { endpoint: '/_uw' } } } }
 const withoutBackend = { config: {} }
 
 describe('getClient', () => {

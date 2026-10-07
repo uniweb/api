@@ -1,10 +1,10 @@
 # @uniweb/api
 
-The client a foundation uses to talk to **its site's `api` service** — sign-in, the
+The client a foundation uses to talk to **its site's `backend` service** — sign-in, the
 site's members, and the content they create.
 
 You import it the way you import `@uniweb/kit`. It is bundled into your foundation,
-tree-shaken, and **inert on a site that has no `api` service**: nothing throws, no request
+tree-shaken, and **inert on a site that has no `backend` service**: nothing throws, no request
 leaves, and your components render the version of themselves that does not need one.
 
 ```bash
@@ -17,9 +17,9 @@ Ask before you draw. This is a synchronous read of the site's own configuration,
 a probe — there is nothing to await.
 
 ```jsx
-import { isApiEnabled } from '@uniweb/kit'
+import { isBackendEnabled } from '@uniweb/kit'
 
-if (!isApiEnabled()) return <StaticVersion />
+if (!isBackendEnabled()) return <StaticVersion />
 ```
 
 ⛔ **And when the answer is no, draw nothing** — not a disabled button, and not an
@@ -79,7 +79,7 @@ const { status, records, hasMore } = useRecords({ schema: '@acme/session', scope
 ```
 
 ⭐ **`absent` and an empty `ready` are different answers.** `absent` means there is no
-live source — no `api` service, or nobody signed in — so render your site's own content.
+live source — no `backend` service, or nobody signed in — so render your site's own content.
 `ready` with `records: []` means the service answered and there is nothing there.
 Showing "nothing yet" for the first case tells a visitor their content is missing
 when it is simply not being asked for.
@@ -170,8 +170,9 @@ Building against a live service is slow and puts a shared database behind your
 experiments. Name a local one in `site.yml`:
 
 ```yaml
-api: /_api                 # where the service answers — the same in production
-$devApi: ./mock/api.js     # what answers it locally; never published
+services:
+  backend: true                # ask your host for it, on a site you publish
+$devBackend: ./mock/api.js    # what answers it in `uniweb dev`; never published
 ```
 
 ```js
@@ -203,8 +204,9 @@ export default createMockBackend({
 }).fetch
 ```
 
-`uniweb dev` mounts it at your `api:` address — same origin, so cookies behave as they
-will in production, and your site's configuration is identical either way.
+`uniweb dev` mounts it at an address of its own on the dev server, and hands your site that
+address the way a host hands over its own — same origin, so cookies behave as they will in
+production, and nothing in your site's configuration changes between the two.
 
 ⭐ **The mock answers what the backend answers** — the same statuses, bodies and
 refusals, for every route this package uses. It enforces what your schemas declare —

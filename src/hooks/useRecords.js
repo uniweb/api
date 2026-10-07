@@ -18,7 +18,7 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * ## ⭐ `absent` and an empty `ready` are DIFFERENT, and conflating them is the bug
  *
  * `absent` means **there is no live source for this viewer** — a site with no
- * `api` service, which is the ordinary standalone case, or nobody signed in, since
+ * `backend` service, which is the ordinary standalone case, or nobody signed in, since
  * the backend lists nothing to an anonymous caller (it answers `401`, so no request
  * is sent once the session is known to be anonymous). `ready` with `records: []`
  * means **the source answered, and there is nothing there.**

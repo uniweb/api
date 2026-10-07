@@ -51,7 +51,7 @@ export const parse = (url) => new URL(url, 'http://site.test')
 export const route = (url, init) => `${init?.method ?? 'GET'} ${parse(url).pathname}`
 
 /** Site content for `createUniweb`: the site's `api` service at `/_api`, as a hosted site has it — or none. */
-export const WITH_BACKEND = { config: { services: { api: { endpoint: '/_api' } } } }
+export const WITH_BACKEND = { config: { services: { backend: { endpoint: '/_api' } } } }
 export const WITHOUT_BACKEND = { config: {} }
 
 /** `/auth/me` for a member, as the backend answers it. */

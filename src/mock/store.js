@@ -6,7 +6,7 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  * entities whose content is items.
  *
  * ⭐ **It stores what the backend stores, the way the backend stores it** —
- * measured 2026-09-18 against a real one set up as a site's `api` service:
+ * measured 2026-09-18 against a real one set up as a site's `backend` service:
  *
  * - **An entity's content is items, each in a section of its Model.** There is no
  *   entity-level data. A `single` section holds one item; its `brief` section's item

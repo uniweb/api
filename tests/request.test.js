@@ -50,7 +50,7 @@ describe('request — the one composition', () => {
   })
 
   it('carries credentials only when the base is another origin', async () => {
-    const client = clientWith({ config: { api: 'https://api.example.com/api/' } }, () => json(200, {}))
+    const client = clientWith({ config: { backend: 'https://api.example.com/api/' } }, () => json(200, {}))
     await client.request('GET', '/auth/me')
     const [url, init] = client.fetchFn.mock.calls[0]
     expect(url).toBe('https://api.example.com/api/auth/me')

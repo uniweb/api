@@ -3,7 +3,7 @@ import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
 
 /**
- * A mock of a site's `api` service, for local development.
+ * A mock of a site's `backend` service, for local development.
  *
  * ```js
  * import { createMockBackend } from '@uniweb/api/mock'
@@ -29,7 +29,7 @@ import { DEFAULT_SEED } from './seed.js'
  * ## Where it answers
  *
  * Its routes are the API's own — `/auth/me`, `/entities` — under whatever the
- * site's `api` address is. It accepts a request with the site's `/_api` prefix
+ * site's `backend` address is. It accepts a request with the site's `/_api` prefix
  * still on, and one with an extra `/api` after it (how clients before 0.4
  * composed URLs), so it answers the same whether or not the server mounting it
  * strips its path.

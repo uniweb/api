@@ -2,7 +2,7 @@
  * @uniweb/api — the client half. No React in this module.
  *
  * A foundation's client for the site's own backend — the one a host declares
- * as the site service `api`. Absent that declaration the site has no such
+ * as the site service `backend`. Absent that declaration the site has no such
  * backend and everything here is inert: no request leaves, and a component
  * renders for that state rather than retrying it.
  *
@@ -18,8 +18,16 @@ import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP } from './wire.js'
 import { Ledger } from './ledger.js'
 
-/** The site service this package reads its base from — the only name it owns. */
-export const SERVICE_NAME = 'api'
+/**
+ * The site service this package reads its base from — the only name it owns.
+ *
+ * ⛔ **It was `api` until 2026-10-07.** A service is named for what it gives the
+ * site — `search`, `records` — and this one is the site's own backend; `/api` is
+ * only the interface it answers on, which is what this package is named for. A
+ * foundation built before then asks for `api`, which no host offers now, and draws
+ * no sign-in until it is rebuilt.
+ */
+export const SERVICE_NAME = 'backend'
 
 /**
  * The shape of the shared instance, as a contract between copies of this
@@ -31,10 +39,10 @@ export const CONTRACT = 1
 /**
  * Where the site's backend is, if it has one.
  *
- * `resolveService` answers with the host's offer first (`config.services.api`),
- * then the site's own declaration (`api:` in `site.yml`), and `null` when neither
- * names an address. Absence is the ordinary state of a site with no backend,
- * not an error.
+ * `resolveService` answers with the host's offer first (`config.services.backend`),
+ * then the site's own address (`backend:` under `services:` in `site.yml`), and
+ * `null` when neither names one. Absence is the ordinary state of a site with no
+ * backend, not an error.
  *
  * @param {object} website - the active Website, or anything shaped `{ config, basePath }`
  * @returns {string|null} the base every request is made against, or null
@@ -44,34 +52,35 @@ export function resolveBase(website) {
 }
 
 /**
- * Does this site have an app backend — the `api` service?
+ * Does this site have an app backend — the `backend` service?
  *
  * The question to ask before drawing a sign-in affordance or any control only a
  * backend can answer. False means: draw nothing, or the static alternative the
  * site already carries.
  *
  * ⭐ **The website argument is OPTIONAL and defaults to the active one**, so this
- * is the same call as `@uniweb/kit`'s `isApiEnabled()` — one predicate per
+ * is the same call as `@uniweb/kit`'s `isBackendEnabled()` — one predicate per
  * service, no arguments, the website resolved for you. Pass one explicitly only
  * when you already hold it, or are working outside a render.
  *
  * ⛔ **THE DEFAULT IS NOT A CONVENIENCE, IT CLOSES A TRAP.** For one commit this
  * took a REQUIRED website while every doc and template showed the no-argument
- * spelling — so `import { isApiEnabled } from '@uniweb/api'` followed by
- * `isApiEnabled()` resolved `undefined`, returned `false` forever, and drew no
- * sign-in UI on a site that had a backend. Silent, and indistinguishable from a
- * site with no backend: exactly the invisible absence this predicate exists to
- * prevent. Caught in review the same day; pinned by `tests/enabled.test.js`.
+ * spelling — so the documented call resolved `undefined`, returned `false`
+ * forever, and drew no sign-in UI on a site that had a backend. Silent, and
+ * indistinguishable from a site with no backend: exactly the invisible absence
+ * this predicate exists to prevent. Caught in review the same day; pinned by
+ * `tests/enabled.test.js`.
  *
- * ⛔ **Renamed from `isEnabled` (2026-09-10).** The old name said nothing about
- * its subject and collided with three unrelated `isEnabled`s in the framework —
- * including the field `useSearch()` returns, which made `uniweb doctor` read a
- * search control as gated when it was gated on this instead.
+ * ⛔ **Renamed twice.** From `isEnabled` (2026-09-10): the old name said nothing
+ * about its subject and collided with three unrelated `isEnabled`s in the
+ * framework — including the field `useSearch()` returns, which made `uniweb
+ * doctor` read a search control as gated when it was gated on this instead. Then
+ * from `isApiEnabled` (2026-10-07), with the service it asks about (`SERVICE_NAME`).
  *
  * @param {object} [website] - defaults to the active website
  * @returns {boolean}
  */
-export function isApiEnabled(website = getUniweb()?.activeWebsite ?? null) {
+export function isBackendEnabled(website = getUniweb()?.activeWebsite ?? null) {
   return resolveBase(website) !== null
 }
 

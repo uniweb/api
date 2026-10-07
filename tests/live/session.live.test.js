@@ -44,7 +44,7 @@ function cookieJar() {
 }
 
 function client() {
-  createUniweb({ config: { api: BASE } })
+  createUniweb({ config: { backend: BASE } })
   const c = getClient()
   c.fetchFn = cookieJar()
   return c

@@ -7,7 +7,7 @@ import { createUniweb } from '@uniweb/core'
 import { useSession } from '../src/index.js'
 import { getClient } from '../src/client.js'
 
-const withBackend = { config: { services: { api: { endpoint: '/_uw' } } } }
+const withBackend = { config: { services: { backend: { endpoint: '/_uw' } } } }
 
 describe('useSession', () => {
   afterEach(() => {

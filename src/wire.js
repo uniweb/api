@@ -22,7 +22,7 @@
  * ## ⭐ MEASURED 2026-09-18 — every shape below, in literal responses
  *
  * The whole surface this package touches was exercised against a real backend set
- * up the way a site's `api` service is: one operator account, members who sign up
+ * up the way a site's `backend` service is: one operator account, members who sign up
  * themselves, and the site's own Models. Where this module quotes a shape it was
  * copied from a response, not described. That pass corrected the package in these
  * places, each now fixed and pinned by a test:
@@ -47,7 +47,7 @@
  * The lane. ⭐ **RULED** *(2026-09-01)*: this package reads and writes
  * **entities**, reads the definitions of their Models, and touches nothing under
  * `/sites/*`. Those routes create sites, which is the app's job, not a
- * foundation's, and a site's own `api` service has no site to address.
+ * foundation's, and a site's own `backend` service has no site to address.
  *
  * ⛔ Do not add a route that is not under `/entities`, `/models` or `/auth`.
  */
@@ -59,7 +59,7 @@ export const MODELS = '/models'
 /**
  * The base, and how a route joins it. **MEASURED.**
  *
- * The base the site is handed for its `api` service is the address of the
+ * The base the site is handed for its `backend` service is the address of the
  * backend's API route space, and every route here is relative to it:
  * `${base}/auth/me`, `${base}/entities`. On a hosted site that is `/_api` on the
  * site's own origin, which reaches the backend's `/api/…`; wherever a page reaches
@@ -138,7 +138,7 @@ export const TOTP = {
  * `unit_admin`, `content_editor`, `user`. An ordinary member holds none: `[]`.
  *
  * `workspace` is `{ unit_uuid, handle }` — **the workspace the request works in**. This
- * package's requests name none, and on a site's `api` service such a request lands in
+ * package's requests name none, and on a site's `backend` service such a request lands in
  * the service's **home org**, `handle: 'home'`, in which every account is enrolled.
  * Both `null` there means an account that is not a member — a service account, a
  * revoked membership. (On a backend with no home org, naming none is personal: both

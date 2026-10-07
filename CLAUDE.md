@@ -19,8 +19,9 @@ tree-shaken per import, and inert on a site that declares no backend.
   with its own copy of this package. Anything with identity or lifetime (the session, an in-flight
   table, the section ids of a Model) lives on the one shared instance reachable through
   `@uniweb/core`, never in a module variable.
-- **The base is read, never constructed.** `resolveService(website, 'api')` is the only source of the
-  backend's address, and `SERVICE_NAME` is the only name this package owns. A route literal may live
+- **The base is read, never constructed.** `resolveService(website, 'backend')` is the only source of
+  the backend's address, and `SERVICE_NAME` is the only name this package owns — the site service
+  `backend`, named for what it is; this package is named for the `/api` interface it wraps. A route literal may live
   under `src/` and nowhere a foundation can see it.
 - **The base IS the API route space.** `${base}${route}` — `src/http.js::composeUrl` is the only
   composition. On a hosted site the base is `/_api`, which reaches the backend's `/api/…`; a base
