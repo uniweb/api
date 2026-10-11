@@ -211,7 +211,9 @@ export class MockStore {
 
   /**
    * The viewer, in the shape `/auth/me` answers. `roles` are the session's, and a
-   * session on a site holds no administrator's — the operator's neither.
+   * session on a site holds no administrator's — the operator's neither. Whether the
+   * backend's administration admits the ACCOUNT is `capabilities.admin_app`: the
+   * operator's yes, a member's no.
    */
   viewer(account = this.account) {
     if (!account) return null
@@ -221,6 +223,7 @@ export class MockStore {
       // A request that names no workspace — as this package's never do — lands in the
       // home org, which every account belongs to. Both null would mean a non-member.
       workspace: { ...HOME_ORG },
+      capabilities: { admin_app: account.operator === true },
     }
   }
 

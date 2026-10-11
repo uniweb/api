@@ -15,7 +15,7 @@ import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
-import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP } from './wire.js'
+import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
 
 /**
@@ -353,6 +353,7 @@ export class ApiClient {
       ...account,
       roles: Array.isArray(me?.roles) ? me.roles : [],
       workspace: viewerWorkspace(me?.workspace),
+      adminApp: me?.[VIEWER.capabilities]?.[VIEWER.adminApp] === true,
     })
     if (this._session.viewer && this._session.viewer.uuid !== viewer.uuid) this.forgetViewer()
     return this.setSession({ status: 'authenticated', viewer, error: null })
@@ -922,6 +923,28 @@ export function getClient() {
   return client
 }
 
+/**
+ * The Admin link — the address that takes the viewer to the backend's administration,
+ * signed in — or `null` when there is none to offer: no backend, nobody signed in, or
+ * an account the administration does not admit (`viewer.adminApp`).
+ *
+ * ⛔ **For a navigation — an `<a href>`, `location.assign` — never a `fetch`.** It
+ * answers with a redirect carrying a one-time credential that no script on a site is to
+ * hold, and a fetch that follows it spends the code (`AUTH.memberHandoff`).
+ *
+ * A function of the client's base and a session snapshot, not a method: an instance an
+ * older copy of this package created has neither, and works here all the same.
+ *
+ * @param {ApiClient|null} client
+ * @param {object} [session] - a snapshot; the client's current one by default
+ * @returns {string|null}
+ */
+export function adminHrefOf(client, session = client?.session) {
+  const base = client?.base ?? null
+  if (base === null || session?.status !== 'authenticated' || session.viewer?.adminApp !== true) return null
+  return composeUrl(base, AUTH.memberHandoff)
+}
+
 // ── The functions — the same client, outside React ───────────────────────────
 
 function required() {
@@ -954,6 +977,8 @@ export const writeItems = (args) => required().writeItems(args)
 export const createEntity = (args) => required().createEntity(args)
 /** @see ApiClient#deleteEntity */
 export const deleteEntity = (args) => required().deleteEntity(args)
+/** The Admin link for the current viewer, or `null` — never throws; see `adminHrefOf`. */
+export const adminHref = () => adminHrefOf(getClient())
 
 export { ApiError, kindOf } from './errors.js'
 export { Ledger } from './ledger.js'

@@ -99,7 +99,31 @@ export const AUTH = {
   verify: '/auth/verify',
   resetRequest: '/auth/reset/request',
   resetConfirm: '/auth/reset/confirm',
+  /**
+   * `GET /auth/member-handoff` — the Admin link (`adminHref` in `./client.js`).
+   * ⛔ **A navigation, never a fetch.** For an account the backend's administration
+   * admits (`VIEWER`'s `admin_app`), it answers `302` toward that administration, on
+   * the backend's own origin, carrying a one-time credential no script on a site is to
+   * hold — a fetch learns nothing from the redirect, and one that follows it spends
+   * the code. `401` no session · `403` an account it does not admit
+   * (`HANDOFF_REFUSAL`) · `404` a backend no site reaches · `503` a backend never told
+   * its own origin — each problem JSON, branched on by `title` or `reason`, never
+   * `detail`. **MEASURED** by backend, 2026-10-10.
+   */
+  memberHandoff: '/auth/member-handoff',
 }
+
+/**
+ * The handoff's `403`, as sent — an account the administration does not admit.
+ * **MEASURED** by backend, 2026-10-10. This package never reads it: the handoff is a
+ * navigation, so the browser shows it. The mock answers it.
+ */
+export const HANDOFF_REFUSAL = Object.freeze({
+  status: 403,
+  title: 'Admin Role Required',
+  detail: "the admin app admits a system_admin or an administrator of this deployment's home org",
+  reason: 'admin_role_required',
+})
 
 /**
  * The bodies of the auth routes. **MEASURED.** This package hands a caller's
@@ -114,7 +138,7 @@ export const AUTH = {
  * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
  * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`; a bad token is `400 Validation`; `code` is required when a second factor is enrolled |
  * | logout | none | `204`; with no session to end, `401` |
- * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle } }` · `401` |
+ * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle }, capabilities: { admin_app } }` · `401` |
  *
  * ⭐ **The session is the cookie, and only the cookie.** A site's backend answers a
  * sign-in with no `token` (since 2026-10-10, MEASURED by backend; `token` was in the
@@ -162,11 +186,22 @@ export const TOTP = {
  * signed up a minute ago, and on a site `roles` name no administrator. Ask about the
  * thing instead — a single-entity read carries `can_edit`, the write gate's own answer
  * for this session.
+ *
+ * `capabilities.admin_app` is the one fact here about the ACCOUNT rather than the
+ * session: `true` when the backend's administration admits it — the operator, and
+ * whoever else administers the service. The viewer carries it as `adminApp`, and the
+ * package then offers the Admin link (`AUTH.memberHandoff`). It decides what to OFFER,
+ * never what is allowed on the site, where the session acts as a member whatever the
+ * account holds. `true` or `false` for every signed-in caller, at the same path as on
+ * `/session/bootstrap` (MEASURED by backend, 2026-10-10); anything else reads as
+ * `false`.
  */
 export const VIEWER = {
   account: 'account',
   roles: 'roles',
   workspace: 'workspace',
+  capabilities: 'capabilities',
+  adminApp: 'admin_app',
 }
 
 /**

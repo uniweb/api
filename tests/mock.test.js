@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
-import { getClient } from '../src/client.js'
+import { getClient, adminHrefOf } from '../src/client.js'
 import { ApiError } from '../src/errors.js'
 import { createMockBackend } from '../src/mock/index.js'
 import { WITH_BACKEND } from './helpers.js'
 import { HOME_ORG } from '../src/mock/store.js'
+import { HANDOFF_REFUSAL } from '../src/wire.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -496,6 +497,43 @@ describe('the client against the mock — accounts', () => {
     const { token } = mock.outbox.find((m) => m.subject === 'Reset your password')
     await expect(client.confirmPasswordReset({ token, new_password: 'fresh-pw' })).resolves.toEqual({ reset: true })
     await expect(client.signIn({ username: 'attendee', password: 'fresh-pw' })).resolves.toMatchObject({ ok: true })
+  })
+})
+
+describe('the client against the mock — the Admin link', () => {
+  it('offers it to the operator and to no one else — the fact rides the probe', async () => {
+    const { client } = stack()
+    await signIn(client, 'organiser')
+    expect(client.session.viewer).toMatchObject({ roles: [], adminApp: true })
+    expect(adminHrefOf(client)).toBe('/_api/auth/member-handoff')
+    await client.signOut()
+    expect(adminHrefOf(client)).toBeNull()
+    await signIn(client, 'attendee')
+    expect(client.session.viewer.adminApp).toBe(false)
+    expect(adminHrefOf(client)).toBeNull()
+  })
+
+  it('answers the handoff as a navigation — a redirect for the operator, a refusal for anyone else', async () => {
+    const at = 'http://site.test/_api/auth/member-handoff'
+    expect((await createMockBackend().fetch(new Request(at))).status).toBe(401)
+
+    // The backend's own bytes (`HANDOFF_REFUSAL`, measured), which the browser shows.
+    const refused = await createMockBackend({ signedInAs: 'attendee' }).fetch(new Request(at))
+    expect(refused.status).toBe(403)
+    expect(refused.headers.get('content-type')).toBe('application/problem+json')
+    expect(await refused.json()).toEqual(HANDOFF_REFUSAL)
+
+    // The administration is the backend's, on its own origin, and not modelled: the
+    // redirect lands on a page of the mock's own, under the path it is mounted at.
+    const operator = createMockBackend({ signedInAs: 'organiser' })
+    const handoff = await operator.fetch(new Request(at))
+    expect(handoff.status).toBe(302)
+    const landing = new URL(handoff.headers.get('location'), at)
+    expect(landing.pathname).toBe('/_api/admin')
+    const page = await operator.fetch(new Request(landing))
+    expect(page.status).toBe(200)
+    expect(page.headers.get('content-type')).toMatch(/^text\/html/)
+    expect(await page.text()).toContain('Signed in as <b>organiser</b>')
   })
 })
 

@@ -1,6 +1,23 @@
-import { AUTH, ENTITIES, MODELS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS } from '../wire.js'
+import { AUTH, ENTITIES, MODELS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
+
+/**
+ * Where the mock's Admin link lands. The backend's administration lives on its own
+ * origin, outside the API, and the mock models none of it: the handoff's redirect
+ * comes here instead, to a page that says so. A path of the mock's, not the backend's.
+ */
+const ADMIN_PAGE = '/admin'
+
+const escapeHtml = (value) =>
+  String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
+
+function adminPage(account) {
+  const who = account ? `Signed in as <b>${escapeHtml(account.handle)}</b>. ` : ''
+  return `<!doctype html><meta charset="utf-8"><title>Administration</title>
+<p>${who}On a live site, the Admin link opens the backend's administration here, signed in. The local mock has none to open.</p>
+`
+}
 
 /**
  * A mock of a site's `backend` service, for local development.
@@ -40,8 +57,11 @@ import { DEFAULT_SEED } from './seed.js'
  * in — the operator too, as on a real site — reads and writes their own entities and
  * nothing of another's (unless the seed's `memberFloor` says the service lets them);
  * anyone signed in may create entries of any Model (Models are open); sign-up
- * leaves an account unverified until the link in `mock.outbox` is followed. It
- * does not model entitlements behind `via`, nested sections, or second factors.
+ * leaves an account unverified until the link in `mock.outbox` is followed. The
+ * operator is the account the backend's administration admits, so its Admin link
+ * answers — with a redirect to a page of the mock's own, since the administration
+ * itself is not modelled. It does not model entitlements behind `via`, nested
+ * sections, or second factors.
  *
  * @param {object} [options]
  * @param {object} [options.seed] - accounts, schemas and entities to start from (see `MockStore`)
@@ -198,6 +218,14 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       if (path === AUTH.me && method === 'GET') {
         const viewer = store.viewer()
         return viewer ? json(200, viewer) : unauthorized()
+      }
+      if (path === AUTH.memberHandoff && method === 'GET') {
+        if (!store.account) return unauthorized()
+        if (!store.account.operator) return problem(HANDOFF_REFUSAL)
+        // The backend redirects to its administration on its own origin. The mock has
+        // none, so the redirect lands on a page of its own that says so (`ADMIN_PAGE`).
+        // Relative, so it lands under whatever path the mock is mounted at.
+        return new Response(null, { status: 302, headers: { location: `..${ADMIN_PAGE}` } })
       }
       if (path === AUTH.login && method === 'POST') {
         const b = await body(request)
@@ -389,6 +417,11 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         store.remove(entity)
         return new Response(null, { status: 204 })
       }
+    }
+
+    // ── Where the Admin link lands ──────────────────────────────────────────
+    if (path === ADMIN_PAGE && method === 'GET') {
+      return new Response(adminPage(store.account), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
     }
 
     return problem({ status: 404, title: 'Not Found', detail: `no route for ${method} ${path}` })

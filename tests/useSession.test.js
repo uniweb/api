@@ -40,6 +40,24 @@ describe('useSession', () => {
     expect(result.current.viewer).toEqual({ id: 1 })
   })
 
+  it('offers `adminHref` only to a signed-in account the administration admits', () => {
+    createUniweb({ config: {} })
+    expect(renderHook(() => useSession()).result.current.adminHref).toBeNull()
+    delete globalThis.uniweb
+
+    createUniweb(withBackend)
+    const { result } = renderHook(() => useSession())
+    expect(result.current.adminHref).toBeNull()
+    act(() => {
+      getClient().setSession({ status: 'authenticated', viewer: { uuid: 'u-1', adminApp: false } })
+    })
+    expect(result.current.adminHref).toBeNull()
+    act(() => {
+      getClient().setSession({ status: 'authenticated', viewer: { uuid: 'u-1', adminApp: true } })
+    })
+    expect(result.current.adminHref).toBe('/_uw/auth/member-handoff')
+  })
+
   it('renders the same first snapshot on the server, and fetches nothing there', () => {
     createUniweb(withBackend)
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {

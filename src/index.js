@@ -26,6 +26,7 @@ export {
   writeItems,
   createEntity,
   deleteEntity,
+  adminHref,
   ApiError,
   Ledger,
 } from './client.js'

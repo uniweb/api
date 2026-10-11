@@ -22,6 +22,8 @@
 import { describe, it, expect, afterEach, beforeAll } from 'vitest'
 import { createUniweb } from '@uniweb/core'
 import { getClient } from '../../src/client.js'
+import { AUTH, HANDOFF_REFUSAL } from '../../src/wire.js'
+import { composeUrl } from '../../src/http.js'
 
 const BASE = process.env.UNIWEB_API_BASE
 const LOGIN = process.env.UNIWEB_API_LOGIN ? JSON.parse(process.env.UNIWEB_API_LOGIN) : null
@@ -102,6 +104,21 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       expect(again.status).toBe('anonymous')
       // Signing out with no session left is not an error.
       await expect(c.signOut()).resolves.toBeUndefined()
+    })
+
+    it('carries whether the administration admits the account — and refuses the handoff to one it does not', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const me = await c.request('GET', AUTH.me, { onUnauthorized: 'ignore' })
+      expect(typeof me.capabilities?.admin_app).toBe('boolean')
+      expect(c.session.viewer.adminApp).toBe(me.capabilities.admin_app)
+      // ⛔ An admitted account's handoff is a redirect carrying a one-time credential;
+      // a test does not read one. Only a refusal is checked here.
+      if (me.capabilities.admin_app) return
+      const res = await c.fetchFn(composeUrl(BASE, AUTH.memberHandoff), { redirect: 'manual' })
+      // A backend no site reaches has no handoff at all: `404`.
+      expect([403, 404]).toContain(res.status)
+      if (res.status === 403) expect(await res.json()).toMatchObject({ title: HANDOFF_REFUSAL.title, reason: HANDOFF_REFUSAL.reason })
     })
 
     it('reads an entity that does not exist as `absent`, signed in', async () => {

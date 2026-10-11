@@ -71,6 +71,23 @@ already taken fails with status `409`.
 second factor is enrolled). **Second factor** — when `signIn` answers
 `{ ok: false, challenge: { kind: 'totp' } }`, finish with `completeChallenge(code)`.
 
+**The Admin link** — some of the site's members administer its backend, the operator
+among them. For them, `adminHref` is the address that takes them to the backend's
+administration, already signed in; for everyone else it is `null`, so draw the link
+only when it is set:
+
+```jsx
+const { adminHref } = useSession()
+
+{adminHref && <a href={adminHref}>Admin</a>}
+```
+
+⛔ **Navigate to it — a link, or `location.assign(adminHref)` — never `fetch` it.** It
+answers with a redirect carrying a one-time credential that no script on the site is
+to hold. The link decides what to offer, not what is allowed: on the site, an
+administrator's session acts as a member's, and administering happens at the other
+end of the link.
+
 ## Reading
 
 ```jsx
@@ -184,7 +201,7 @@ import { createMockBackend } from '@uniweb/api/mock'
 export default createMockBackend({
   seed: {
     accounts: [
-      { username: 'me', password: 'me', operator: true },   // the site's operator
+      { username: 'me', password: 'me', operator: true },   // runs the site, and gets the Admin link
       { username: 'member', password: 'member' },
     ],
     schemas: {
@@ -219,8 +236,9 @@ entities and nothing of anyone else's (`memberFloor: 'read'` in the seed models 
 service set up to let members read each other's — or per Model,
 `memberFloor: { '@acme/course': 'read' }`, so the operator's content is shared while
 each member's own records stay private). A new sign-up must be
-verified: the link is in `mock.outbox` (the standalone server prints it). State is in
-memory: restart to reset.
+verified: the link is in `mock.outbox` (the standalone server prints it). The
+operator's Admin link answers too, landing on a page of the mock's own — the backend's
+administration is not part of it. State is in memory: restart to reset.
 
 There is also a standalone server, for a frontend that is not a Uniweb site:
 
@@ -232,7 +250,7 @@ npx uniweb-api-mock --port 8787
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
 React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
-`createEntity`, `deleteEntity`.
+`createEntity`, `deleteEntity`, `adminHref`.
 
 ## License
 

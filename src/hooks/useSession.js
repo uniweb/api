@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
-import { getClient } from '../client.js'
+import { getClient, adminHrefOf } from '../client.js'
 
 const NONE = Object.freeze({ status: 'anonymous', viewer: null, error: null })
 const noSubscribe = () => () => {}
@@ -15,6 +15,10 @@ const noop = async () => NONE
  * affordance on false. `error` is set when the backend could not be asked;
  * `refresh()` asks again.
  *
+ * `adminHref` is the Admin link — set only for a signed-in account the backend's
+ * administration admits, `null` for everyone else, so draw the link only when it is
+ * set. ⛔ Navigate to it, never `fetch` it (`adminHrefOf` in `../client.js`).
+ *
  * Reads the shared snapshot through `useSyncExternalStore`, so every copy of
  * this package on the page sees one session, and the first render on the
  * server matches the first render in the browser.
@@ -24,6 +28,7 @@ const noop = async () => NONE
  *   viewer: object | null,
  *   error: Error | null,
  *   canSignIn: boolean,
+ *   adminHref: string | null,
  *   signOut: () => Promise<void>,
  *   refresh: () => Promise<object>,
  * }}
@@ -48,6 +53,7 @@ export function useSession() {
     viewer: session.viewer,
     error: session.error,
     canSignIn: !!(client && client.enabled),
+    adminHref: adminHrefOf(client, session),
     signOut,
     refresh,
   }

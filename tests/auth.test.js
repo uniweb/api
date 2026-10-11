@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
-import { getClient, signIn as signInFn, probeSession } from '../src/client.js'
+import { getClient, signIn as signInFn, probeSession, adminHref, adminHrefOf } from '../src/client.js'
 import { fetchStub, json, empty, route, WITH_BACKEND, WITHOUT_BACKEND, ME, HOME } from './helpers.js'
 
 afterEach(() => {
@@ -29,6 +29,7 @@ describe('the probe — GET /auth/me', () => {
       handle: 'ada',
       roles: [{ role: 'content_editor', scope_unit_id: 7 }],
       workspace: { unitUuid: HOME.unit_uuid, handle: 'home' },
+      adminApp: false,
     })
     expect(Object.isFrozen(session.viewer)).toBe(true)
     expect(route(...client.fetchFn.mock.calls[0])).toBe('GET /_api/auth/me')
@@ -176,6 +177,52 @@ describe('sign out', () => {
     await client.ensureSession()
     await expect(client.signOut()).rejects.toMatchObject({ kind: 'unavailable' })
     expect(client.session.status).toBe('anonymous')
+  })
+})
+
+describe('the Admin link — `adminHref`', () => {
+  const ADMIN = { ...ME, capabilities: { admin_app: true } }
+
+  it('is the handoff address for an account the administration admits', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, ADMIN))
+    const { viewer } = await client.ensureSession()
+    expect(viewer.adminApp).toBe(true)
+    expect(adminHref()).toBe('/_api/auth/member-handoff')
+    // Nothing was fetched for it: the probe alone answers, and the link is a navigation.
+    expect(client.fetchFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('is null for everyone else — a member, a probe that says nothing, nobody signed in', async () => {
+    for (const me of [ME, { ...ME, capabilities: { admin_app: false } }, { ...ME, capabilities: {} }]) {
+      clientWith(WITH_BACKEND, () => json(200, me))
+      const { viewer } = await probeSession()
+      expect(viewer.adminApp).toBe(false)
+      expect(adminHref()).toBeNull()
+      delete globalThis.uniweb
+    }
+    const anonymous = clientWith(WITH_BACKEND, () => json(401, { status: 401, title: 'Unauthorized' }))
+    expect(adminHref()).toBeNull() // still loading
+    await anonymous.ensureSession()
+    expect(adminHref()).toBeNull()
+  })
+
+  it('is null with no backend, and with no runtime on the page — it never throws', () => {
+    expect(adminHref()).toBeNull()
+    clientWith(WITHOUT_BACKEND, () => json(200, ADMIN))
+    expect(adminHref()).toBeNull()
+  })
+
+  it('joins the base like every route — an absolute base gives an absolute link', async () => {
+    const client = clientWith({ config: { services: { backend: { endpoint: 'https://svc.example/api' } } } }, () => json(200, ADMIN))
+    await client.ensureSession()
+    expect(adminHref()).toBe('https://svc.example/api/auth/member-handoff')
+  })
+
+  it('reads an instance an older copy of this package made — a base and a snapshot are all it needs', () => {
+    const older = { base: '/_api', session: { status: 'authenticated', viewer: { uuid: 'u-1', adminApp: true } } }
+    expect(adminHrefOf(older)).toBe('/_api/auth/member-handoff')
+    expect(adminHrefOf({ base: '/_api', session: { status: 'authenticated', viewer: { uuid: 'u-1' } } })).toBeNull()
+    expect(adminHrefOf(null)).toBeNull()
   })
 })
 
