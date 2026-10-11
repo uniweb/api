@@ -15,18 +15,19 @@ function clientWith(content, handler) {
   return client
 }
 
-const OPERATOR = { ...ME, roles: [{ role: 'system_admin', scope_unit_id: null }] }
+// A role a session on a site may carry — an administrator's it never does (`VIEWER`).
+const EDITOR = { ...ME, roles: [{ role: 'content_editor', scope_unit_id: 7 }] }
 
 describe('the probe — GET /auth/me', () => {
   it('turns a 200 into an authenticated viewer, flat, with roles as the backend names them', async () => {
-    const client = clientWith(WITH_BACKEND, () => json(200, OPERATOR))
+    const client = clientWith(WITH_BACKEND, () => json(200, EDITOR))
     const session = await client.ensureSession()
     expect(session.status).toBe('authenticated')
     expect(session.viewer).toEqual({
       uuid: 'u-1',
       username: 'ada',
       handle: 'ada',
-      roles: [{ role: 'system_admin', scope_unit_id: null }],
+      roles: [{ role: 'content_editor', scope_unit_id: 7 }],
       workspace: { unitUuid: HOME.unit_uuid, handle: 'home' },
     })
     expect(Object.isFrozen(session.viewer)).toBe(true)

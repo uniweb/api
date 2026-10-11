@@ -140,7 +140,13 @@ export const TOTP = {
  * The viewer, as `/auth/me` answers. **MEASURED.**
  *
  * `roles` is a list of `{ role, scope_unit_id }` — `role` one of `system_admin`,
- * `unit_admin`, `content_editor`, `user`. An ordinary member holds none: `[]`.
+ * `unit_admin`, `content_editor`, `user`. ⭐ **They describe the session, not the
+ * account.** On a site's `backend` service a session signed in on the site holds no
+ * `system_admin` and no `unit_admin` of the home org — the operator's neither — so
+ * `roles` never name an administrator there: a site runs third-party code with its
+ * member's session, and a bug in that code must not act as one. An ordinary member
+ * holds none: `[]`. *(Since 2026-10-10, MEASURED by backend; until then the operator's
+ * session on a site held `system_admin`.)*
  *
  * `workspace` is `{ unit_uuid, handle }` — **the workspace the request works in**. This
  * package's requests name none, and on a site's `backend` service such a request lands in
@@ -152,9 +158,10 @@ export const TOTP = {
  * function the route serializes, 2026-09-23.)*
  *
  * ⛔ **Neither is an operator signal.** Every member of a site's service works in the
- * same home org, so it reads the same for the operator and for someone who signed up a
- * minute ago. The operator holds `system_admin`. Better than either: ask about the
- * thing — a single-entity read carries `can_edit`, the write gate's own answer.
+ * same home org, so `workspace` reads the same for the operator and for someone who
+ * signed up a minute ago, and on a site `roles` name no administrator. Ask about the
+ * thing instead — a single-entity read carries `can_edit`, the write gate's own answer
+ * for this session.
  */
 export const VIEWER = {
   account: 'account',
@@ -229,11 +236,12 @@ export const PARAM = {
  * The list's `scope`. Default `accessible` — everything the viewer may read; `mine`
  * — only what the viewer owns.
  *
- * What a member of a site may read: their own entities, and what was shared with
- * them. Other members' entities are private to their owners unless the site's
- * service was set up to let members read each other's. The operator reads
- * everything. *(A site's service let every member read every other member's
- * entities until 2026-09-18 — measured, and changed on the backend.)*
+ * What a session signed in on a site may read — any member's, the operator's
+ * included (`VIEWER`): its own entities, and what was shared with it. Other members'
+ * entities are private to their owners unless the site's service was set up to let
+ * members read each other's. *(A site's service let every member read every other
+ * member's entities until 2026-09-18, and the operator's session read everything until
+ * 2026-10-10 — both measured, and changed on the backend.)*
  */
 export const SCOPE = {
   mine: 'mine',
@@ -347,9 +355,9 @@ export const CREATE = {
  * paging; a page that came back full is the only sign there may be more.
  *
  * `via` names why the viewer can read the row — `owner`, `grant`, `rbac`,
- * `unit_member`, `entitlement`; treat an unknown value as "no opinion". The
- * operator's own rows are `owner` and the rest `rbac` — since 2026-09-18; an older
- * backend answers `rbac` on the operator's own rows too. ⚠️ An empty list means
+ * `unit_member`, `entitlement`; treat an unknown value as "no opinion". A session's
+ * own rows are `owner` — the operator's too. *(Until 2026-10-10 the operator's session
+ * on a site read the rest as `rbac`, through `system_admin`.)* ⚠️ An empty list means
  * empty: a lapsed session is a `401`, never `200 []`.
  */
 export const LIST = {

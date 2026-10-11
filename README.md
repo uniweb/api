@@ -52,11 +52,13 @@ function Account() {
 ```
 
 `viewer` is flat — `viewer.uuid`, `viewer.username`, `viewer.handle`, and `viewer.roles`,
-a list of `{ role, scope_unit_id }`. A member holds no roles (`[]`); the site's operator
-holds `system_admin`. ⚠️ `viewer.workspace` — the site service's home org,
-`{ handle: 'home', … }` — is the same for every member, so it cannot tell an operator
-from a member. To decide whether to show an edit control for
-a particular record, read that record: `entity.can_edit` is the backend's own answer.
+a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and a session
+signed in on a site holds a member's rights — the operator's too.** A site runs your
+foundation's code with the signed-in member's session, so no administrator's role
+rides with it: `viewer.roles` never names one there, and an ordinary member holds none
+(`[]`). `viewer.workspace` — the site service's home org, `{ handle: 'home', … }` — is
+the same for everyone. To decide whether to show an edit control for a particular
+record, read that record: `entity.can_edit` is the backend's own answer.
 
 **Signing up** — `useSignUp().signUp({ username, email, password })` answers
 `{ status: 'verification_required', email }`, the same answer for an address already in
@@ -84,9 +86,9 @@ live source — no `backend` service, or nobody signed in — so render your sit
 Showing "nothing yet" for the first case tells a visitor their content is missing
 when it is simply not being asked for.
 
-**Whose records.** A member reads their own entities and what was shared with them;
-other members' are private unless the site's service was set up to let members read
-each other's. The site's operator reads everything. `scope: 'mine'` lists only the
+**Whose records.** Everyone signed in on the site — its operator too — reads their own
+entities and what was shared with them; other members' are private unless the site's
+service was set up to let members read each other's. `scope: 'mine'` lists only the
 viewer's own.
 
 A record is a summary: `record.brief` holds the fields of the Model's brief section. It
@@ -210,11 +212,11 @@ production, and nothing in your site's configuration changes between the two.
 
 ⭐ **The mock answers what the backend answers** — the same statuses, bodies and
 refusals, for every route this package uses. It enforces what your schemas declare —
-who may create entries, which sections are insert-only, the fields a section takes —
-and it is as strict as the backend about requests, so a mistake fails here rather
-than in front of a user. Members read and write their own entities and nothing of each
-other's; the operator reads and writes everything (`memberFloor: 'read'` in the seed
-models a service set up to let members read each other's — or per Model,
+which sections are insert-only, the fields a section takes — and it is as strict as
+the backend about requests, so a mistake fails here rather than in front of a user.
+Everyone signed in — the operator too, as on a real site — reads and writes their own
+entities and nothing of anyone else's (`memberFloor: 'read'` in the seed models a
+service set up to let members read each other's — or per Model,
 `memberFloor: { '@acme/course': 'read' }`, so the operator's content is shared while
 each member's own records stay private). A new sign-up must be
 verified: the link is in `mock.outbox` (the standalone server prints it). State is in

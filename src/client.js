@@ -627,8 +627,9 @@ export class ApiClient {
    * a `401` too, never an empty list (so `records: []` means empty).
    *
    * `scope` decides whose: the default, `accessible`, is everything the viewer may
-   * read — for a member of a site, their own entities and what was shared with them;
-   * for the operator, everything. `mine` is only what the viewer owns.
+   * read — signed in on a site, their own entities and what was shared with them, the
+   * operator's session included (`VIEWER` in `./wire.js`). `mine` is only what the
+   * viewer owns.
    *
    * ## Paging, as far as it can honestly be absorbed
    *

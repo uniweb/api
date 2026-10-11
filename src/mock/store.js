@@ -19,10 +19,12 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *   unless shared. A service can be set up to let members read (or edit) each
  *   other's — the seed's `memberFloor` models that choice. *(Until 2026-09-18 the
  *   backend gave every member read access to every other member's entities.)*
- * - **The operator** — the account that runs the site's service — holds
- *   `system_admin`, creates the Models only the operator may, and may write
- *   anything. It is a member of the site's unit like everyone else, so what it
- *   makes is its own. A seeded account is the operator with `operator: true`.
+ * - **The operator** — the account that runs the site's service — owns what the
+ *   seed gives it. ⛔ **Signed in on the site it holds a member's rights**, like
+ *   everyone: no `system_admin` in `roles`, and nothing of another member's unless
+ *   shared — a site runs third-party code with its member's session. *(Until
+ *   2026-10-10 the operator's session held `system_admin` and read and wrote
+ *   everything.)* A seeded account is the operator with `operator: true`.
  *
  * ⛔ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
  * A mock that grows a schema and migrations becomes a second implementation that
@@ -207,12 +209,15 @@ export class MockStore {
     return this.session?.account ?? null
   }
 
-  /** The viewer, in the shape `/auth/me` answers. */
+  /**
+   * The viewer, in the shape `/auth/me` answers. `roles` are the session's, and a
+   * session on a site holds no administrator's — the operator's neither.
+   */
   viewer(account = this.account) {
     if (!account) return null
     return {
       account: this.identity(account),
-      roles: account.operator ? [{ role: 'system_admin', scope_unit_id: null }] : [],
+      roles: [],
       // A request that names no workspace — as this package's never do — lands in the
       // home org, which every account belongs to. Both null would mean a non-member.
       workspace: { ...HOME_ORG },
@@ -469,28 +474,31 @@ export class MockStore {
     return floor[entity.model] ?? null
   }
 
-  /** The operator, the owner — or any member, when the service lets members read each other's. */
+  /**
+   * The owner — or any member, when the service lets members read each other's. The
+   * operator is a member here like everyone: a session on a site holds no
+   * administrator's rights.
+   */
   mayRead(entity) {
     const me = this.account
-    return !!me && (me.operator || entity.owner_id === me.id || this.floorFor(entity) != null)
+    return !!me && (entity.owner_id === me.id || this.floorFor(entity) != null)
   }
 
   mayEdit(entity) {
     const me = this.account
-    return !!me && (me.operator || entity.owner_id === me.id || this.floorFor(entity) === 'edit')
+    return !!me && (entity.owner_id === me.id || this.floorFor(entity) === 'edit')
   }
 
   /**
    * Which branch lets the viewer read a row, as the backend names it — the first to
-   * answer in its order: `owner`, `grant`, `rbac`, `unit_member`. The operator's own rows
-   * are `owner` like anyone's, and the rest it reads as `system_admin`. *(Until
-   * 2026-09-18 the operator was not a member of the site's unit, and ownership speaks
-   * only for a member — so its own rows answered `rbac` too.)*
+   * answer in its order: `owner`, `grant`, `rbac`, `unit_member`. A session's own rows
+   * are `owner`, the operator's too, and the rest it reads by the service's floor.
+   * *(Until 2026-10-10 the operator's session read the rest as `rbac`, through
+   * `system_admin`.)*
    */
   via(entity) {
     const me = this.account
     if (entity.owner_id === me?.id) return 'owner'
-    if (me?.operator) return 'rbac'
     return 'unit_member'
   }
 

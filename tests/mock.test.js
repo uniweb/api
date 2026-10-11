@@ -48,14 +48,14 @@ describe('the client against the mock — reading', () => {
     expect(records[0]).toMatchObject({ model_name: '@/track', via: 'owner' })
   })
 
-  it('shows the operator a member\'s row as `rbac` — it reads what is not its own as `system_admin`', async () => {
+  it('⭐ gives the operator nothing of a member\'s — signed in on the site, it is a member too', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    const theirs = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await client.signOut()
     await signIn(client, 'organiser')
-    const { records } = await client.listEntities({ schema: '@/attendance' })
-    expect(records.map((r) => r.via)).toEqual(['rbac'])
+    expect((await client.listEntities({ schema: '@/attendance' })).records).toEqual([])
+    await expect(client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).resolves.toEqual({ status: 'absent', entity: null })
   })
 
   it('⭐ gives a member nothing of anyone else\'s — sharing is explicit', async () => {
@@ -406,9 +406,9 @@ describe('the client against the mock — writing', () => {
   })
 
   it('keeps members\' entities private to them by default — and a service that chose a floor shares them', async () => {
-    // Measured on a site's api service: a member reads and writes their own entities and
-    // nothing of another's; the operator reads and writes all. A service can be set up
-    // to let members read each other's — the seed's `memberFloor`.
+    // Measured on a site's backend service: a member reads and writes their own entities
+    // and nothing of another's — nor does the operator, signed in on the site. A service
+    // can be set up to let members read each other's — the seed's `memberFloor`.
     const seed = (memberFloor) => ({
       memberFloor,
       accounts: [
@@ -438,7 +438,7 @@ describe('the client against the mock — writing', () => {
     ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'edit' } })
     await privately.signOut()
     await signIn(privately, 'organiser')
-    expect((await privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).entity.can_edit).toBe(true)
+    await expect(privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
     delete globalThis.uniweb
 
     const shared = stack({ seed: seed('read') }).client
@@ -481,10 +481,10 @@ describe('the client against the mock — accounts', () => {
     await expect(client.signUp({ username: 'one', email: 'other@example.test', password: 'pw' })).rejects.toMatchObject({ status: 409 })
   })
 
-  it('names the operator by role — every member works in the same home org', async () => {
+  it('names no administrator — a session on a site holds a member\'s rights, the operator\'s too', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
+    expect(client.session.viewer).toMatchObject({ roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
     await client.signOut()
     await signIn(client, 'attendee')
     expect(client.session.viewer).toMatchObject({ roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })

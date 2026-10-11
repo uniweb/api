@@ -36,9 +36,9 @@ import { DEFAULT_SEED } from './seed.js'
  *
  * ## What it models, and what it does not
  *
- * One operator (`operator: true` on a seeded account) and members; a member reads
- * and writes their own entities and nothing of another's (unless the seed's
- * `memberFloor` says the service lets them), the operator reads and writes all;
+ * One operator (`operator: true` on a seeded account) and members; everyone signed
+ * in — the operator too, as on a real site — reads and writes their own entities and
+ * nothing of another's (unless the seed's `memberFloor` says the service lets them);
  * anyone signed in may create entries of any Model (Models are open); sign-up
  * leaves an account unverified until the link in `mock.outbox` is followed. It
  * does not model entitlements behind `via`, nested sections, or second factors.
