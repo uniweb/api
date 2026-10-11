@@ -108,13 +108,18 @@ export const AUTH = {
  *
  * | route | body | answer |
  * |---|---|---|
- * | login | `{ username, password }` | `200 { token, expires_at, account }` + the session cookie · `200 { status: 'totp_required', challenge_token }` · `401` wrong credential · `403 Email Not Verified` |
+ * | login | `{ username, password }` | `200 { expires_at, account }` + the session cookie · `200 { status: 'totp_required', challenge_token }` · `401` wrong credential · `403 Email Not Verified` |
  * | challenge | `{ challenge_token, code }` | as login's `200`; a bad token or code is `401` |
  * | register | `{ username, email, password }` | `202 { status: 'verification_required', email }` — the same answer for an address already taken; a taken **username** is `409` |
  * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
  * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`; a bad token is `400 Validation`; `code` is required when a second factor is enrolled |
  * | logout | none | `204`; with no session to end, `401` |
  * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle } }` · `401` |
+ *
+ * ⭐ **The session is the cookie, and only the cookie.** A site's backend answers a
+ * sign-in with no `token` (since 2026-10-10, MEASURED by backend; `token` was in the
+ * reply until then), and this package never read one: it signs in, then asks
+ * `/auth/me` who the viewer is.
  */
 export const AUTH_BODY = {
   login: ['username', 'password'],

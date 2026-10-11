@@ -229,7 +229,8 @@ export class MockStore {
     if (!account.verified) return refuse(403, PROBLEM.notVerified, 'verify your email address before signing in')
     this.session = { account }
     const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
-    return { body: { token: `mock-${account.uuid}`, expires_at: expires, account: this.identity(account) } }
+    // No `token`: a site's backend answers a sign-in with the session cookie alone.
+    return { body: { expires_at: expires, account: this.identity(account) } }
   }
 
   signOut() {

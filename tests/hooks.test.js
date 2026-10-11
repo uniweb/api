@@ -51,7 +51,7 @@ describe('useSignIn', () => {
           return json(200, { status: 'totp_required', challenge_token: 'ch' })
         case 'POST /_api/auth/login/challenge':
           signedIn = true
-          return json(200, { token: 't', account: ME.account })
+          return json(200, { expires_at: 'x', account: ME.account })
         default:
           return signedIn ? json(200, ME) : json(401, { title: 'Unauthorized' })
       }

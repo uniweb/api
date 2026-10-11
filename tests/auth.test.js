@@ -86,7 +86,7 @@ describe('the probe — GET /auth/me', () => {
 describe('sign in', () => {
   it('posts the credentials unchanged, then asks who the viewer is', async () => {
     const client = clientWith(WITH_BACKEND, (url, init) =>
-      route(url, init) === 'POST /_api/auth/login' ? json(200, { token: 't', expires_at: 'x', account: ME.account }) : json(200, ME),
+      route(url, init) === 'POST /_api/auth/login' ? json(200, { expires_at: 'x', account: ME.account }) : json(200, ME),
     )
     const result = await client.signIn({ username: 'ada', password: 'pw' })
     expect(result).toEqual({ ok: true, viewer: expect.objectContaining({ uuid: 'u-1', roles: [] }) })
@@ -105,7 +105,7 @@ describe('sign in', () => {
         case 'POST /_api/auth/login':
           return json(200, { status: 'totp_required', challenge_token: 'ch-1' })
         case 'POST /_api/auth/login/challenge':
-          return json(200, { token: 't', account: ME.account })
+          return json(200, { expires_at: 'x', account: ME.account })
         default:
           return json(200, ME)
       }
