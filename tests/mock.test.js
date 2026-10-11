@@ -1,8 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
-import { getClient, adminHrefOf } from '../src/client.js'
+import { getClient, adminHrefOf, mailedLink } from '../src/client.js'
 import { ApiError } from '../src/errors.js'
-import { createMockBackend } from '../src/mock/index.js'
+import { createMockBackend, DEFAULT_SEED } from '../src/mock/index.js'
 import { WITH_BACKEND } from './helpers.js'
 import { HOME_ORG } from '../src/mock/store.js'
 import { HANDOFF_REFUSAL } from '../src/wire.js'
@@ -21,7 +21,8 @@ afterEach(() => {
  * that code written against the mock is code that works against the backend.
  */
 function stack(options) {
-  const mock = createMockBackend(options)
+  // Quiet: the mail the mock sends is checked through `outbox` and `onMail` here.
+  const mock = createMockBackend({ onMail: null, ...options })
   createUniweb(WITH_BACKEND)
   const client = getClient()
   // The site's base is the relative `/_api`, so the client composes a relative URL —
@@ -31,6 +32,8 @@ function stack(options) {
 }
 
 const signIn = (client, username) => client.signIn({ username, password: username })
+/** The step and token of a mailed link, as the page it lands on reads them. */
+const linkOf = (mail) => mailedLink(new URL(mail.link, 'http://site.test').search)
 const TRACK = '01926d5e-0000-7000-8000-00000000a001'
 
 describe('the client against the mock — reading', () => {
@@ -463,9 +466,10 @@ describe('the client against the mock — accounts', () => {
     })
     await expect(client.signIn({ username: 'newbie', password: 'pw' })).rejects.toMatchObject({ kind: 'unverified' })
 
+    // The link lands on the site's root, and the site's page finishes it.
     const mail = mock.outbox.find((m) => m.to === 'newbie@example.test')
-    const verified = await mock.fetch(new Request(`http://site.test/_api${mail.verify}`))
-    expect(await verified.json()).toEqual({ verified: true })
+    expect(mail.link).toBe(`/?verify=${mail.token}`)
+    await expect(client.verifyEmail(linkOf(mail).token)).resolves.toEqual({ verified: true })
 
     const result = await client.signIn({ username: 'newbie', password: 'pw' })
     expect(result.ok).toBe(true)
@@ -491,12 +495,95 @@ describe('the client against the mock — accounts', () => {
     expect(client.session.viewer).toMatchObject({ roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
   })
 
-  it('resets a password with the mailed token', async () => {
+  it('resets a password with the mailed link', async () => {
     const { client, mock } = stack()
     await client.requestPasswordReset({ email: 'attendee@example.test' })
-    const { token } = mock.outbox.find((m) => m.subject === 'Reset your password')
+    const mail = mock.outbox.find((m) => m.subject === 'Reset your password')
+    expect(mail.link).toBe(`/?reset=${mail.token}`)
+    const { token } = linkOf(mail)
     await expect(client.confirmPasswordReset({ token, new_password: 'fresh-pw' })).resolves.toEqual({ reset: true })
     await expect(client.signIn({ username: 'attendee', password: 'fresh-pw' })).resolves.toMatchObject({ ok: true })
+  })
+})
+
+describe('the client against the mock — the mail it sends', () => {
+  const invited = (offer) => ({ seed: { ...DEFAULT_SEED, offers: [offer] } })
+
+  it('mails every link to the site\'s root, its step\'s parameter carrying the token', async () => {
+    const { client, mock } = stack(invited({ email: 'guest@example.test', invitations: 1 }))
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.requestPasswordReset({ email: 'attendee@example.test' })
+    expect(mock.outbox.map((m) => linkOf(m).step)).toEqual(['offer', 'verify', 'reset'])
+    for (const m of mock.outbox) expect(m.link).toBe(`/?${linkOf(m).step}=${m.token}`)
+  })
+
+  it('confirms an address once — the link, used, is `invalid`', async () => {
+    const { client, mock } = stack()
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    const { token } = linkOf(mock.outbox[0])
+    await client.verifyEmail(token)
+    await expect(client.verifyEmail(token)).rejects.toMatchObject({ kind: 'invalid', status: 400 })
+  })
+
+  it('⭐ claims an offer for whoever is signed in — once, as counts, and one answer for a token it cannot use', async () => {
+    const { client, mock } = stack(invited({ email: 'guest@example.test', invitations: 1, grants: 2 }))
+    const { token } = linkOf(mock.outbox[0])
+    await expect(client.claimOffer(token)).rejects.toMatchObject({ kind: 'auth', status: 401 })
+    // Any account: the token is the proof that the address was theirs.
+    await signIn(client, 'attendee')
+    await expect(client.claimOffer(token)).resolves.toEqual({ invitations: 1, grants: 2 })
+    await expect(client.claimOffer(token)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    await expect(client.claimOffer('never-sent')).rejects.toMatchObject({ kind: 'absent', status: 404 })
+  })
+
+  it('refuses a claim that names no token — `400`, as the backend does', async () => {
+    const { client, mock } = stack()
+    await signIn(client, 'attendee')
+    const res = await mock.fetch(
+      new Request('http://site.test/_api/offers/claim', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-uniweb-csrf': '1' },
+        body: '{}',
+      }),
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('hands each message to `onMail` after the request that sent it, its link on that request\'s origin', async () => {
+    const sent = []
+    const { client } = stack({ ...invited({ email: 'guest@example.test' }), onMail: (m, url) => sent.push([m.subject, url]) })
+    // What the seed sent waits for the first request, to know where the site is.
+    expect(sent).toEqual([])
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    expect(sent.map(([subject]) => subject)).toEqual(["You've been invited", 'Confirm your email address'])
+    expect(sent[1][1]).toMatch(/^http:\/\/site\.test\/\?verify=/)
+  })
+
+  it('puts the links on `siteOrigin` when it is given one', async () => {
+    const sent = []
+    const { client } = stack({ siteOrigin: 'https://example.com', onMail: (m, url) => sent.push(url) })
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    expect(sent[0]).toMatch(/^https:\/\/example\.com\/\?verify=/)
+  })
+
+  it('prints each message where it runs, by default', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const mock = createMockBackend()
+    await mock.fetch(
+      new Request('http://localhost:5173/_api/auth/register', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'newbie', email: 'newbie@example.test', password: 'pw' }),
+      }),
+    )
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log.mock.calls[0][0]).toContain('Confirm your email address → newbie@example.test')
+    expect(log.mock.calls[0][0]).toContain('http://localhost:5173/?verify=')
+  })
+
+  it('refuses a seeded offer it could not send', () => {
+    expect(() => createMockBackend({ seed: { offers: [{ invitations: 1 }] } })).toThrow(/offer/)
+    expect(() => createMockBackend({ seed: { offers: [{ email: 'a@b.c', grants: -1 }] } })).toThrow(/offer/)
   })
 })
 

@@ -1,6 +1,14 @@
-import { AUTH, ENTITIES, MODELS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL } from '../wire.js'
+import { AUTH, ENTITIES, MODELS, OFFERS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
+
+/**
+ * The mock's postman: each message, as it is sent, where the mock runs — the dev
+ * server's terminal, under `uniweb dev` — with its link on the site's origin.
+ */
+export function printMail(message, url) {
+  console.log(`[uniweb/api mock] ✉ ${message.subject} → ${message.to}\n    ${url}`)
+}
 
 /**
  * Where the mock's Admin link lands. The backend's administration lives on its own
@@ -57,20 +65,52 @@ function adminPage(account) {
  * in — the operator too, as on a real site — reads and writes their own entities and
  * nothing of another's (unless the seed's `memberFloor` says the service lets them);
  * anyone signed in may create entries of any Model (Models are open); sign-up
- * leaves an account unverified until the link in `mock.outbox` is followed. The
- * operator is the account the backend's administration admits, so its Admin link
- * answers — with a redirect to a page of the mock's own, since the administration
- * itself is not modelled. It does not model entitlements behind `via`, nested
- * sections, or second factors.
+ * leaves an account unverified until its address is confirmed. The operator is the
+ * account the backend's administration admits, so its Admin link answers — with a
+ * redirect to a page of the mock's own, since the administration itself is not
+ * modelled. It does not model entitlements behind `via`, nested sections, second
+ * factors, password rules, or what an offer binds.
+ *
+ * ## The mail it sends
+ *
+ * A sign-up's confirmation, a password reset, and an invitation to an address with no
+ * account (`seed.offers`) are mailed as the backend mails them: a link to the site's
+ * root carrying a token — `/?verify=…`, `/?reset=…`, `/?offer=…` — which the site's
+ * own pages finish (`useMailedLink`). Each message is kept in `outbox` and, as it is
+ * sent, handed to `onMail` — printed, by default, where the mock runs.
  *
  * @param {object} [options]
- * @param {object} [options.seed] - accounts, schemas and entities to start from (see `MockStore`)
+ * @param {object} [options.seed] - accounts, schemas, entities and offers to start from (see `MockStore`)
  * @param {string} [options.signedInAs] - a seeded `username` to start signed in as. Throws if not seeded.
  * @param {string} [options.prefix] - the path the API is mounted under (default `/_api`), stripped when present
+ * @param {string} [options.siteOrigin] - the site's origin, on which the mail's links land. By
+ *   default, the origin of the request that sent the mail — the site's own when the mock is
+ *   mounted in the site's dev server, as `uniweb dev` mounts it
+ * @param {((message: object, url: string) => void) | null} [options.onMail] - called with each
+ *   message as it is sent, and its link on the site's origin. `printMail` by default; `null`
+ *   sends quietly
  * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore, diagnostics: object[], outbox: object[] }}
  */
-export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signedInAs = null } = {}) {
+export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signedInAs = null, siteOrigin = null, onMail = printMail } = {}) {
   const store = new MockStore(seed, { signedInAs })
+
+  // Mail is delivered after the request that sent it, so its link can name that
+  // request's origin. Mail the seed sent waits for the first request.
+  let delivered = 0
+  function deliver(request) {
+    const fresh = store.outbox.slice(delivered)
+    delivered = store.outbox.length
+    if (typeof onMail !== 'function' || !fresh.length) return
+    let origin = siteOrigin
+    if (!origin) {
+      try {
+        origin = new URL(request.url).origin
+      } catch {
+        origin = null
+      }
+    }
+    for (const message of fresh) onMail(message, origin ? new URL(message.link, origin).href : message.link)
+  }
 
   const json = (status, body) =>
     new Response(body === undefined ? null : JSON.stringify(body), {
@@ -258,6 +298,15 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       }
     }
 
+    // ── Offers ──────────────────────────────────────────────────────────────
+    if (path === OFFERS.claim && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const b = await body(request)
+      return fields(b, ['token'], '{"token": ...}') ?? answer(store.claimOffer(b.token))
+    }
+
     // ── A Model's definition ─────────────────────────────────────────────────
     if (path.startsWith(`${MODELS}/`) && method === 'GET') {
       const bad = unexpected(q, [])
@@ -436,18 +485,24 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
     get diagnostics() {
       return store.diagnostics
     },
-    /** The mail the backend would have sent — sign-up verification and password-reset tokens. */
+    /**
+     * The mail the backend would have sent — `{ to, subject, token, link }`, `link` a
+     * site-root link carrying the token (`/?verify=…`, `/?reset=…`, `/?offer=…`).
+     */
     get outbox() {
       return store.outbox
     },
     async fetch(request) {
+      let response
       try {
-        return await route(request)
+        response = await route(request)
       } catch (err) {
         // A mock that throws leaves the caller staring at a network error and
         // blaming their own code. Answer, and say it was us.
-        return problem({ status: 500, title: 'MockFailure', detail: err?.message || 'the mock threw' })
+        response = problem({ status: 500, title: 'MockFailure', detail: err?.message || 'the mock threw' })
       }
+      deliver(request)
+      return response
     },
   }
 }

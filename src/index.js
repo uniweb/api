@@ -21,6 +21,10 @@ export {
   signUp,
   requestPasswordReset,
   confirmPasswordReset,
+  verifyEmail,
+  claimOffer,
+  mailedLink,
+  forgetMailedLink,
   readEntity,
   listEntities,
   writeItems,
@@ -35,6 +39,7 @@ export { useSession } from './hooks/useSession.js'
 export { useSignIn } from './hooks/useSignIn.js'
 export { useSignUp } from './hooks/useSignUp.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'
+export { useMailedLink } from './hooks/useMailedLink.js'
 export { useEntity } from './hooks/useEntity.js'
 export { useRecords } from './hooks/useRecords.js'
 export { useEntityWriter } from './hooks/useEntityWriter.js'

@@ -63,13 +63,49 @@ record, read that record: `entity.can_edit` is the backend's own answer.
 **Signing up** — `useSignUp().signUp({ username, email, password })` answers
 `{ status: 'verification_required', email }`, the same answer for an address already in
 use. The account cannot sign in until the address is confirmed from the email the
-backend sends; until then `signIn` fails with `error.kind === 'unverified'`. A username
-already taken fails with status `409`.
+backend sends — its link lands on your site (below); until then `signIn` fails with
+`error.kind === 'unverified'`. A username already taken fails with status `409`.
 
-**Password reset** — `usePasswordReset()`: `request({ email })`, then
-`confirm({ token, new_password })` with the token the viewer was sent (and `code` when a
-second factor is enrolled). **Second factor** — when `signIn` answers
-`{ ok: false, challenge: { kind: 'totp' } }`, finish with `completeChallenge(code)`.
+**Password reset** — `usePasswordReset().request({ email })` asks for one; the email's
+link lands on your site, where `useMailedLink` finishes it. **Second factor** — when
+`signIn` answers `{ ok: false, challenge: { kind: 'totp' } }`, finish with
+`completeChallenge(code)`.
+
+**The links the backend mails** — a sign-up's confirmation, a password reset, an
+invitation sent to an address with no account here: each is a link to your site's root,
+a token in the query (`?verify=`, `?reset=`, `?offer=`), and the page it lands on
+finishes the step. `useMailedLink()` says which step, and finishes it:
+
+```jsx
+import { useMailedLink } from '@uniweb/api'
+
+// Wherever the site's root renders it — a header or a layout is on every page.
+function FromYourEmail() {
+  const { step, status, result, error, confirm } = useMailedLink()
+  if (step === 'verify' && status === 'done') return <p>Your address is confirmed. Sign in.</p>
+  if (step === 'reset' && status !== 'done') {
+    return <NewPassword onSave={(password) => confirm({ new_password: password })} error={error} />
+  }
+  if (step === 'offer' && status === 'idle') return <p>Sign in, or create an account, to take up your invitation.</p>
+  if (step === 'offer' && status === 'done' && result.invitations + result.grants > 0) return <p>Your invitation is in.</p>
+  if (status === 'error' || status === 'done') return <p>This link can no longer be used.</p>
+  return null
+}
+```
+
+- `verify` finishes by itself. `reset` waits for `confirm({ new_password, code? })` —
+  `code` when the account has a second factor — and supplies the token; a password the
+  backend's rule refuses is `error.extensions.reason === 'password_too_short'` (with
+  `min_length`), and the same link works again. `offer` waits until someone is signed
+  in — whatever their account's own address — and then claims by itself.
+- An offer answers counts, `{ invitations, grants }` — invitations now waiting for this
+  account to accept, and entities now shared with it — never names. Both `0` means it
+  bound nothing. ⛔ A token unknown, revoked or already used is ONE answer,
+  `error.kind === 'absent'`: say one sentence, naming no cause.
+- Once the backend has judged the token, it leaves the address bar, so a reload asks
+  nothing again; a link the backend could not be reached about (`kind: 'unavailable'`)
+  stays, and works on a reload. However many components use the hook, the link is
+  finished once. `dismiss()` forgets it unfinished.
 
 **The Admin link** — some of the site's members administer its backend, the operator
 among them. For them, `adminHref` is the address that takes them to the backend's
@@ -235,22 +271,27 @@ Everyone signed in — the operator too, as on a real site — reads and writes 
 entities and nothing of anyone else's (`memberFloor: 'read'` in the seed models a
 service set up to let members read each other's — or per Model,
 `memberFloor: { '@acme/course': 'read' }`, so the operator's content is shared while
-each member's own records stay private). A new sign-up must be
-verified: the link is in `mock.outbox` (the standalone server prints it). The
-operator's Admin link answers too, landing on a page of the mock's own — the backend's
+each member's own records stay private). The mail the backend would send — a sign-up's
+confirmation, a password reset — is printed where the mock runs, in the terminal of
+`uniweb dev`, its link on your site's root as the backend's is, so following it is
+trying your page; the messages are in `mock.outbox` too. To try an invitation, seed one:
+`offers: [{ email: 'guest@example.test', invitations: 1 }]` is mailed when the mock starts.
+The operator's Admin link answers too, landing on a page of the mock's own — the backend's
 administration is not part of it. State is in memory: restart to reset.
 
-There is also a standalone server, for a frontend that is not a Uniweb site:
+There is also a standalone server, for a frontend that is not a Uniweb site — `--site`
+names that frontend's origin, where the mail's links land:
 
 ```bash
-npx uniweb-api-mock --port 8787
+npx uniweb-api-mock --port 8787 --site http://localhost:3000
 ```
 
 ## Outside React
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
 React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
-`createEntity`, `deleteEntity`, `adminHref`.
+`createEntity`, `deleteEntity`, `adminHref`, and for the links the backend mails,
+`mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`.
 
 ## License
 

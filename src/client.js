@@ -17,6 +17,7 @@ import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
+import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -448,6 +449,31 @@ export class ApiClient {
    */
   confirmPasswordReset(fields) {
     return this.request('POST', AUTH.resetConfirm, { body: fields, onUnauthorized: 'ignore' })
+  }
+
+  /**
+   * Confirm an address with the token of the link the backend mailed for it — `?verify=`
+   * on the site's root (`mailedLink`). Starts no session: once confirmed, the member
+   * signs in. A link used, expired or never valid throws `kind: 'invalid'`.
+   *
+   * @param {string} token
+   * @returns {Promise<{ verified: true }>}
+   */
+  verifyEmail(token) {
+    return verifyEmailWith(this, token)
+  }
+
+  /**
+   * Take up an invitation sent to an address with no account here — with the token of
+   * its mailed link, `?offer=` — for the account signed in, whatever its own address.
+   * Answers counts: `{ invitations, grants }`. A token unknown, revoked or already
+   * claimed throws `kind: 'absent'`, one answer by design; nobody signed in, `auth`.
+   *
+   * @param {string} token
+   * @returns {Promise<{ invitations: number, grants: number }>}
+   */
+  claimOffer(token) {
+    return claimOfferWith(this, token)
   }
 
   // ── The cache ─────────────────────────────────────────────────────────────
@@ -967,6 +993,10 @@ export const signUp = (fields) => required().signUp(fields)
 export const requestPasswordReset = (fields) => required().requestPasswordReset(fields)
 /** @see ApiClient#confirmPasswordReset */
 export const confirmPasswordReset = (fields) => required().confirmPasswordReset(fields)
+/** @see ApiClient#verifyEmail — on any instance, an older copy's too */
+export const verifyEmail = (token) => verifyEmailWith(required(), token)
+/** @see ApiClient#claimOffer — on any instance, an older copy's too */
+export const claimOffer = (token) => claimOfferWith(required(), token)
 /** @see ApiClient#readEntity */
 export const readEntity = (args) => required().readEntity(args)
 /** @see ApiClient#listEntities */
@@ -980,5 +1010,6 @@ export const deleteEntity = (args) => required().deleteEntity(args)
 /** The Admin link for the current viewer, or `null` — never throws; see `adminHrefOf`. */
 export const adminHref = () => adminHrefOf(getClient())
 
+export { mailedLink, forgetMailedLink } from './mailed-links.js'
 export { ApiError, kindOf } from './errors.js'
 export { Ledger } from './ledger.js'

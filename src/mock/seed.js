@@ -13,6 +13,9 @@
  * - **`entities`** — `uuid` must be a UUID, as it is on the wire; content is items,
  *   each naming its section. The entity's `brief` is derived from its brief
  *   section's item, as the backend derives it.
+ * - **`offers`** — optional, and none here: `{ email, invitations?, grants? }`, an
+ *   invitation sent to an address with no account, mailed when the mock starts. Its
+ *   link (`/?offer=…`) is how a site's pages are tried with one.
  */
 export const DEFAULT_SEED = {
   accounts: [

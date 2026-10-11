@@ -1,4 +1,4 @@
-import { FIELD, OP, PROBLEM } from '../wire.js'
+import { CLAIM, FIELD, LINK, OP, PROBLEM } from '../wire.js'
 import { checkItemWrite, OUTCOME } from './schema-shape.js'
 
 /**
@@ -31,8 +31,14 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  * drifts and is believed anyway.
  *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
- * same read), nested sections, second factors, reference fields.
+ * same read), nested sections, second factors, reference fields, password rules,
+ * and what an offer binds — a seeded offer answers the counts its seed gives, and
+ * confirming the address it was sent to takes up nothing (the backend binds every
+ * pending offer then).
  */
+
+/** A mailed link — the site's root, the step's parameter, the token. */
+const linkTo = (step, token) => `/?${step}=${encodeURIComponent(token)}`
 
 /** The unit every account of a site acts in — an entity's `unit_id`. */
 export const SITE_UNIT = 1
@@ -123,6 +129,9 @@ export class MockStore {
    *   member's are private. A string applies to every Model; a map `{ '@scope/name': 'read' }`
    *   applies per Model, so a service can open the operator's content (courses, lessons) to
    *   its members while their own records (progress, submissions) stay theirs alone.
+   * @param {object[]} [seed.offers] - `{ email, invitations?, grants? }`: an invitation sent
+   *   to an address with no account, mailed when the mock starts. Claiming it answers the
+   *   counts given (default `0`), once.
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
    */
@@ -167,9 +176,16 @@ export class MockStore {
      * seed lists as `migration_debt`. Empty is the good state.
      */
     this.diagnostics = []
-    /** Mail the backend would send: `{ to, subject, token, verify? }`, newest last. */
+    /**
+     * Mail the backend would send: `{ to, subject, token, link }`, newest last. `link` is
+     * the mail's link without its origin — the site's root, its step's parameter and the
+     * token (`/?verify=…`); the backend's carries the site's origin.
+     */
     this.outbox = []
     this.pending = { verify: new Map(), reset: new Map() }
+    /** Offers by token: `{ email, invitations, grants, claimed }`. */
+    this.offers = new Map()
+    for (const offer of seed.offers || []) this.addOffer(offer)
     this.entities = new Map()
     for (const e of seed.entities || []) this.seedEntity(e)
 
@@ -255,7 +271,7 @@ export class MockStore {
       const account = this.addAccount({ username, email, password }, { verified: false })
       const token = newUuid()
       this.pending.verify.set(token, account)
-      this.outbox.push({ to: email, subject: 'Confirm your email address', token, verify: `/auth/verify?token=${token}` })
+      this.outbox.push({ to: email, subject: 'Confirm your email address', token, link: linkTo(LINK.verify, token) })
     }
     return { status: 202, body: { status: 'verification_required', email } }
   }
@@ -273,7 +289,7 @@ export class MockStore {
     if (account) {
       const token = newUuid()
       this.pending.reset.set(token, account)
-      this.outbox.push({ to: email, subject: 'Reset your password', token })
+      this.outbox.push({ to: email, subject: 'Reset your password', token, link: linkTo(LINK.reset, token) })
     }
     return { status: 202, body: { status: 'reset_requested' } }
   }
@@ -286,6 +302,33 @@ export class MockStore {
     // A reset revokes the account's sessions.
     if (this.session?.account === account) this.session = null
     return { body: { reset: true } }
+  }
+
+  // ── Offers ──────────────────────────────────────────────────────────────────
+
+  /** An invitation to an address with no account here — its token mailed at once. */
+  addOffer({ email, invitations = 0, grants = 0 } = {}) {
+    const count = (n) => Number.isInteger(n) && n >= 0
+    if (typeof email !== 'string' || !email || !count(invitations) || !count(grants)) {
+      throw new Error(
+        `[uniweb/api mock] an offer is { email, invitations?, grants? }, the counts whole numbers — got ${JSON.stringify({ email, invitations, grants })}`
+      )
+    }
+    const token = newUuid()
+    this.offers.set(token, { email, invitations, grants, claimed: false })
+    this.outbox.push({ to: email, subject: "You've been invited", token, link: linkTo(LINK.offer, token) })
+    return token
+  }
+
+  /**
+   * Claim an offer for the account signed in. Unknown, revoked and already claimed are
+   * one answer, `404`, as on the backend.
+   */
+  claimOffer(token) {
+    const offer = this.offers.get(token)
+    if (!offer || offer.claimed) return refuse(404, 'Not Found', 'offer not found')
+    offer.claimed = true
+    return { body: { [CLAIM.invitations]: offer.invitations, [CLAIM.grants]: offer.grants } }
   }
 
   // ── Models ──────────────────────────────────────────────────────────────────

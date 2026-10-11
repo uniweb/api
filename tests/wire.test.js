@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ } from '../src/wire.js'
+import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ, LINK, OFFERS } from '../src/wire.js'
 import { composeUrl } from '../src/http.js'
 
 /**
@@ -8,10 +8,11 @@ import { composeUrl } from '../src/http.js'
  * against a real backend — they check that the set stays visible and deliberate.
  */
 describe('wire — the assumptions are a reviewable set', () => {
-  // ⭐ Empty since 2026-09-18: `viewer-unit-signal` was answered false and
-  // `via-and-depth-compose` true, both by measurement. A new assumption added
-  // without an entry here fails this — building ahead is paid for in bookkeeping.
-  const EXPECTED = []
+  // Empty from 2026-09-18, when `viewer-unit-signal` was answered false and
+  // `via-and-depth-compose` true, both by measurement, to 2026-10-11, when the mock
+  // began answering an offer claim with no session. A new assumption added without an
+  // entry here fails this — building ahead is paid for in bookkeeping.
+  const EXPECTED = ['offer-claim-needs-a-session']
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)
@@ -45,6 +46,14 @@ describe('wire — the lane', () => {
     for (const [name, path] of Object.entries(AUTH)) {
       expect(path, name).toMatch(/^\/auth\//)
     }
+  })
+
+  it('claims an offer at /offers/claim — the one route a member needs outside /auth and /entities', () => {
+    expect(OFFERS).toEqual({ claim: '/offers/claim' })
+  })
+
+  it('names the three steps a mailed link starts, by the parameters the backend mails', () => {
+    expect(LINK).toEqual({ verify: 'verify', reset: 'reset', offer: 'offer' })
   })
 
   it('encodes a uuid into the path rather than trusting it', () => {

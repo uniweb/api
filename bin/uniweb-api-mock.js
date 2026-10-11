@@ -6,10 +6,12 @@
  * then same-origin with the site, which is what a real deployment looks like. Use
  * this when the frontend is not a Uniweb site, or when proxying to it.
  *
- *   uniweb-api-mock [--port 8787] [--prefix /_api] [--seed ./seed.js]
+ *   uniweb-api-mock [--port 8787] [--prefix /_api] [--seed ./seed.js] [--site http://localhost:3000]
  *
- * The site's `api` address for it is the URL it prints. Mail the backend would
- * send — a sign-up's verification, a password reset — is printed here instead.
+ * The site's `backend` address for it is the URL it prints. Mail the backend would
+ * send — a sign-up's confirmation, a password reset, an invitation — is printed here
+ * instead, its link on the site's root as the backend mails it: on `--site`, the
+ * frontend's origin, or this server's when none is given.
  */
 import { createMockBackend } from '../src/mock/index.js'
 import { serve } from '../src/mock/node.js'
@@ -23,23 +25,10 @@ const flag = (name, fallback) => {
 const seedPath = flag('seed', null)
 const seed = seedPath ? (await import(new URL(seedPath, `file://${process.cwd()}/`).href)).default : undefined
 
-const mock = createMockBackend({ ...(seed ? { seed } : {}) })
+// The mock prints each message as it is sent (`printMail`), its link on the site's origin.
+const mock = createMockBackend({ ...(seed ? { seed } : {}), siteOrigin: flag('site', null) })
 const prefix = flag('prefix', '')
-
-// Print each message the moment it is "sent", with what finishes it.
-let printed = 0
-const serving = {
-  fetch: async (request) => {
-    const response = await mock.fetch(request)
-    for (const message of mock.outbox.slice(printed)) {
-      console.log(`  ✉ ${message.subject} → ${message.to}`)
-      console.log(message.verify ? `    verify: GET ${prefix}${message.verify}` : `    token: ${message.token}`)
-    }
-    printed = mock.outbox.length
-    return response
-  },
-}
-const server = await serve(serving, { port: Number(flag('port', 8787)), prefix })
+const server = await serve(mock, { port: Number(flag('port', 8787)), prefix })
 
 console.log(`uniweb-api-mock listening on ${server.url}`)
 console.log(`  accounts: ${mock.store.accounts.map((a) => `${a.username}${a.operator ? ' (operator)' : ''}`).join(', ')}`)

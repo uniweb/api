@@ -1,7 +1,15 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { createUniweb } from '@uniweb/core'
-import { getClient, signIn as signInFn, probeSession, adminHref, adminHrefOf } from '../src/client.js'
-import { fetchStub, json, empty, route, WITH_BACKEND, WITHOUT_BACKEND, ME, HOME } from './helpers.js'
+import {
+  getClient,
+  signIn as signInFn,
+  probeSession,
+  adminHref,
+  adminHrefOf,
+  verifyEmail as verifyEmailFn,
+  claimOffer as claimOfferFn,
+} from '../src/client.js'
+import { fetchStub, json, empty, route, parse, WITH_BACKEND, WITHOUT_BACKEND, ME, HOME } from './helpers.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -243,5 +251,74 @@ describe('sign up and password reset — passthrough bodies, 202 answers', () =>
     await expect(client.requestPasswordReset({ email: 'a@b.c' })).resolves.toEqual({ status: 'reset_requested' })
     await expect(client.confirmPasswordReset({ token: 't', new_password: 'c' })).resolves.toEqual({ reset: true })
     expect(seen).toEqual(['POST /_api/auth/register', 'POST /_api/auth/reset/request', 'POST /_api/auth/reset/confirm'])
+  })
+})
+
+describe('a mailed link\'s step — `verifyEmail` and `claimOffer`', () => {
+  it('confirms an address with a GET carrying the token — no header, no session started', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, { verified: true }))
+    await expect(client.verifyEmail('t 1')).resolves.toEqual({ verified: true })
+    const [url, init] = client.fetchFn.mock.calls[0]
+    expect(route(url, init)).toBe('GET /_api/auth/verify')
+    expect(parse(url).searchParams.get('token')).toBe('t 1')
+    expect(init.headers['x-uniweb-csrf']).toBeUndefined()
+    expect(client.fetchFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a link used, expired or never valid as `invalid`, and leaves the session alone', async () => {
+    const client = clientWith(WITH_BACKEND, () =>
+      json(400, { status: 400, title: 'Validation', detail: 'invalid or expired verification token' }),
+    )
+    client.setSession({ status: 'authenticated', viewer: { uuid: 'u-1' } })
+    await expect(client.verifyEmail('used')).rejects.toMatchObject({ kind: 'invalid', status: 400 })
+    expect(client.session.status).toBe('authenticated')
+  })
+
+  it('claims an offer with a POST of the token, and answers the counts', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, { invitations: 1, grants: 0 }))
+    await expect(client.claimOffer('t')).resolves.toEqual({ invitations: 1, grants: 0 })
+    const [url, init] = client.fetchFn.mock.calls[0]
+    expect(route(url, init)).toBe('POST /_api/offers/claim')
+    expect(JSON.parse(init.body)).toEqual({ token: 't' })
+    expect(init.headers['x-uniweb-csrf']).toBe('1')
+  })
+
+  it('drops the viewer\'s cached reads when the claim shared something with them — and only then', async () => {
+    let answer = { invitations: 1, grants: 0 }
+    const client = clientWith(WITH_BACKEND, () => json(200, answer))
+    const invalidate = vi.spyOn(client, 'invalidate')
+    await client.claimOffer('t')
+    expect(invalidate).not.toHaveBeenCalled()
+    answer = { invitations: 0, grants: 2 }
+    await client.claimOffer('u')
+    expect(invalidate).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads a token unknown, revoked or already claimed as `absent` — one answer for the three', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(404, { status: 404, title: 'Not Found' }))
+    await expect(client.claimOffer('t')).rejects.toMatchObject({ kind: 'absent', status: 404 })
+  })
+
+  it('turns the session anonymous on a 401 — a claim needs one', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(401, { status: 401, title: 'Unauthorized' }))
+    client.setSession({ status: 'authenticated', viewer: { uuid: 'u-1' } })
+    await expect(client.claimOffer('t')).rejects.toMatchObject({ kind: 'auth' })
+    expect(client.session.status).toBe('anonymous')
+  })
+
+  it('refuses a call with no token before sending anything', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, {}))
+    await expect(client.verifyEmail('')).rejects.toMatchObject({ kind: 'invalid' })
+    await expect(client.claimOffer(undefined)).rejects.toMatchObject({ kind: 'invalid' })
+    expect(client.fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('works on an instance an older copy of this package made — `request` is all it needs', async () => {
+    createUniweb(WITH_BACKEND)
+    const older = { request: vi.fn(async (method) => (method === 'GET' ? { verified: true } : { invitations: 0, grants: 0 })) }
+    globalThis.uniweb.api = older
+    await expect(verifyEmailFn('t')).resolves.toEqual({ verified: true })
+    await expect(claimOfferFn('u')).resolves.toEqual({ invitations: 0, grants: 0 })
+    expect(older.request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual(['GET /auth/verify', 'POST /offers/claim'])
   })
 })

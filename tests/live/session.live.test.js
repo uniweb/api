@@ -76,6 +76,19 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
     expect(err.kind).toBe('auth')
   })
 
+  // A token no mail ever carried — so these spend nothing, whatever the backend holds.
+  const NEVER_SENT = '00000000-0000-4000-8000-000000000000'
+
+  it('reads a verification link it cannot use as `invalid` — used, expired and never valid alike', async () => {
+    const err = await client().verifyEmail(NEVER_SENT).catch((e) => e)
+    expect(err.kind).toBe('invalid')
+  })
+
+  it('refuses an offer claim with nobody signed in — `401` (ASSUMPTIONS: `offer-claim-needs-a-session`)', async () => {
+    const err = await client().claimOffer(NEVER_SENT).catch((e) => e)
+    expect(err.status).toBe(401)
+  })
+
   it.skipIf(!REGISTER)('signs up with 202, and refuses the sign-in until the address is verified', async () => {
     const stamp = Date.now()
     const fields = { username: `api-live-${stamp}`, email: `api-live-${stamp}@example.test`, password: `live-test-${stamp}` }
@@ -119,6 +132,13 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       // A backend no site reaches has no handoff at all: `404`.
       expect([403, 404]).toContain(res.status)
       if (res.status === 403) expect(await res.json()).toMatchObject({ title: HANDOFF_REFUSAL.title, reason: HANDOFF_REFUSAL.reason })
+    })
+
+    it('reads an offer token it cannot use as `absent` — unknown, revoked and claimed are one answer', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const err = await c.claimOffer(NEVER_SENT).catch((e) => e)
+      expect(err).toMatchObject({ kind: 'absent', status: 404 })
     })
 
     it('reads an entity that does not exist as `absent`, signed in', async () => {

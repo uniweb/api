@@ -91,10 +91,12 @@ export const AUTH = {
   logout: '/auth/logout',
   register: '/auth/register',
   /**
-   * `GET /auth/verify?token=` → `{ verified: true }`; a bad token is `400 Validation`.
-   * ⚠️ This package does not call it: the link in the verification email is the
-   * backend's own, not a page of the site. The mock serves it so a sign-up can be
-   * finished locally.
+   * `GET /auth/verify?token=` → `{ verified: true }`: the address is confirmed and the
+   * member may sign in — it starts no session. A token that was used, has expired or
+   * was never valid is `400 Validation`. The token comes from the link the backend
+   * mails, which lands on the site's root (`LINK.verify`), and `verifyEmail` finishes
+   * it. *(Until 2026-10-11 that link named the backend's own sign-in page, and this
+   * package did not call the route.)*
    */
   verify: '/auth/verify',
   resetRequest: '/auth/reset/request',
@@ -136,7 +138,7 @@ export const HANDOFF_REFUSAL = Object.freeze({
  * | challenge | `{ challenge_token, code }` | as login's `200`; a bad token or code is `401` |
  * | register | `{ username, email, password }` | `202 { status: 'verification_required', email }` — the same answer for an address already taken; a taken **username** is `409` |
  * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
- * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`; a bad token is `400 Validation`; `code` is required when a second factor is enrolled |
+ * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`, and every other session of the account ends; a bad token is `400 Validation`; `code` is required when a second factor is enrolled. A password the rule refuses is `400` with `reason: 'password_too_short'` and `min_length` — refused BEFORE the token is spent, so the same link works again (RULED by backend, 2026-10-11) |
  * | logout | none | `204`; with no session to end, `401` |
  * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle }, capabilities: { admin_app } }` · `401` |
  *
@@ -151,6 +153,56 @@ export const AUTH_BODY = {
   register: ['username', 'email', 'password'],
   resetRequest: ['email'],
   resetConfirm: ['token', 'new_password', 'code?'],
+}
+
+/**
+ * The links a site's backend mails. **RULED** by backend, 2026-10-11.
+ *
+ * Every link in the mail a site's backend sends lands on the site's root — `/` on the
+ * site's primary origin — with at most one of these parameters, carrying a token:
+ *
+ * | parameter | the step it starts | finished with |
+ * |---|---|---|
+ * | `verify` | confirm a new account's address | `GET /auth/verify?token=` |
+ * | `reset` | choose a new password — and give a code, with a second factor | `POST /auth/reset/confirm` |
+ * | `offer` | take up an invitation sent to this address | `POST /offers/claim`, signed in |
+ *
+ * The root with none — a notice, such as a password changed or an invitation waiting —
+ * has no step to finish: the member signs in. The names are the ones all of the
+ * backend's mail uses, so a token means the same thing wherever its link lands.
+ *
+ * ⚠️ A root that redirects drops the query unless the redirect carries it.
+ * `@uniweb/runtime` carries it on its own redirects since 0.29.6.
+ */
+export const LINK = {
+  verify: 'verify',
+  reset: 'reset',
+  offer: 'offer',
+}
+
+/**
+ * Offers. **MEASURED** by backend, 2026-09-15.
+ *
+ * Inviting an address nobody here holds — to an organization, or to share an entity —
+ * mints an offer, and the backend mails its token to that address (`LINK.offer`).
+ * Whoever holds the token claims it, signed in, for that account — whatever the
+ * account's own address — and what the offer held binds to it.
+ *
+ * `POST /offers/claim` `{ token }` → `200 { invitations, grants }` (`CLAIM`) —
+ * COUNTS, not names: invitations now waiting for this account to accept, and entities
+ * now shared with it. ⛔ **An unknown, revoked or already-claimed token is ONE answer,
+ * `404`**, so the route never says whether a token was ever real. A missing `token`
+ * is `400`.
+ */
+export const OFFERS = {
+  claim: '/offers/claim',
+}
+
+/** The claim's body and answer. MEASURED. */
+export const CLAIM = {
+  token: 'token',
+  invitations: 'invitations',
+  grants: 'grants',
 }
 
 /** A sign-in that needs a second factor. MEASURED. */
@@ -241,6 +293,7 @@ export const ROUTES = {
  * | items | `model` (required) · `readback` |
  * | create | `model` (required) |
  * | remove | `rev_ref_policy` |
+ * | verify (`AUTH.verify`) | `token` (required) |
  *
  * ✅ **`via` and `depth` compose** (an assumption retired 2026-09-18): both are
  * parameters of the same read and answer different questions — `via` *who may
@@ -265,6 +318,7 @@ export const PARAM = {
   maxDepth: 'max_depth',
   readback: 'readback',
   revRefPolicy: 'rev_ref_policy',
+  token: 'token',
 }
 
 /**
@@ -472,7 +526,7 @@ export const PROBLEM = {
  * ⛔ THE LIST TO HAND BACKEND — everything this package asserts that nobody has
  * confirmed. Each entry says what we do, and what breaks if we are wrong.
  *
- * ⭐ **Empty since 2026-09-18.** The last two were answered by measurement:
+ * Empty from 2026-09-18 to 2026-10-11, when the last two were answered by measurement:
  *
  * | retired | answered as |
  * |---|---|
@@ -483,4 +537,11 @@ export const PROBLEM = {
  * `op-field-names` — see `FIELD` and `OP`.)* A new entry needs `we`, `from` and
  * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
-export const ASSUMPTIONS = []
+export const ASSUMPTIONS = [
+  {
+    id: 'offer-claim-needs-a-session',
+    we: 'claim an offer only once signed in (`useMailedLink`), and answer a claim with no session `401` in the mock',
+    from: 'the backend: the member signs up or signs in, then claims (2026-10-11). Nobody has recorded what a claim with no session answers',
+    breaks: 'nothing the hook does, since it never claims signed out — but the mock would answer a signed-out claim unlike the backend',
+  },
+]
