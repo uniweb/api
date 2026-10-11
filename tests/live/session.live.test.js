@@ -2,7 +2,7 @@
  * The live suite — the same calls, against a real backend.
  *
  * Skipped unless `UNIWEB_API_BASE` names a base: the address of the backend's API
- * route space, exactly what a site is handed for its `api` service —
+ * route space, exactly what a site is handed for its `backend` service —
  * `http://localhost:8080/api` for a local backend, `https://<site>/_api` for a
  * hosted site. Nothing here depends on which.
  *
