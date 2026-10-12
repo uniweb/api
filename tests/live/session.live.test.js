@@ -89,9 +89,9 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
     expect(err).toMatchObject({ kind: 'auth', status: 401, title: 'Unauthorized' })
   })
 
-  it('refuses to list invitations for nobody — `401` (ASSUMPTIONS: `invitations-list-holds-the-waiting`)', async () => {
+  it('refuses to list invitations for nobody — `401`', async () => {
     const err = await client().listInvitations().catch((e) => e)
-    expect(err).toMatchObject({ kind: 'auth', status: 401 })
+    expect(err).toMatchObject({ kind: 'auth', status: 401, title: 'Unauthorized' })
   })
 
   it.skipIf(!REGISTER)('signs up with 202, and refuses the sign-in until the address is verified', async () => {
@@ -157,18 +157,18 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       }
     })
 
-    // An id no invitation has — so these answer nothing, whatever the backend holds.
-    // What the refusal is goes unasserted: ASSUMPTIONS, `invitation-answer-refusals`.
-    const NO_INVITATION = Number.MAX_SAFE_INTEGER
+    // An id no invitation has — so these answer nothing, whatever the backend holds —
+    // and one any integer column holds, so the refusal is about the invitation and not
+    // the number. What answering one that no longer waits gets (`409`) needs an
+    // invitation to answer, which this suite cannot make: the mock's tests pin it.
+    const NO_INVITATION = 2 ** 31 - 1
 
-    it('refuses an answer to an invitation that is not waiting for this account', async () => {
+    it('refuses an answer to an id that is not this account\'s — `absent`, whatever the body\'s own `kind`', async () => {
       const c = client()
       await c.signIn(LOGIN)
       for (const answer of [() => c.acceptInvitation(NO_INVITATION), () => c.declineInvitation(NO_INVITATION)]) {
         const err = await answer().catch((e) => e)
-        expect(err.status).toBeGreaterThanOrEqual(400)
-        expect(err.status).toBeLessThan(500)
-        expect(err.status).not.toBe(401)
+        expect(err).toMatchObject({ kind: 'absent', status: 404, title: 'Not Found', extensions: { kind: 'invitation' } })
       }
     })
 

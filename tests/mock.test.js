@@ -619,7 +619,35 @@ describe('the client against the mock — invitations', () => {
     })
     await expect(client.declineInvitation(waiting[1].id)).resolves.toMatchObject({ id: waiting[1].id, status: 'declined' })
     expect(await client.listInvitations()).toEqual([])
-    await expect(client.acceptInvitation(waiting[0].id)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+
+    // One that no longer waits is `409`, its detail naming what it became — not the
+    // `404` of an id that is not this account's.
+    await expect(client.declineInvitation(waiting[0].id)).rejects.toMatchObject({
+      kind: 'rule',
+      status: 409,
+      detail: 'this invitation was already accepted',
+    })
+    await expect(client.acceptInvitation(waiting[1].id)).rejects.toMatchObject({
+      kind: 'rule',
+      status: 409,
+      detail: 'this invitation was already declined',
+    })
+  })
+
+  it('answers a refusal in the backend\'s own bytes — `404` not this account\'s, `409` no longer waiting', async () => {
+    const mock = createMockBackend({ onMail: null, signedInAs: 'attendee', seed: { ...DEFAULT_SEED, offers: [{ email: 'attendee@example.test', invitations: 1 }] } })
+    const answer = (id, step) =>
+      mock.fetch(new Request(`http://site.test/_api/unit/invitations/${id}/${step}`, { method: 'POST', headers: { 'x-uniweb-csrf': '1' } }))
+    const [waiting] = (await (await mock.fetch(new Request('http://site.test/_api/invitations/me'))).json()).invitations
+
+    const unknown = await answer(170, 'accept')
+    expect(unknown.status).toBe(404)
+    expect(await unknown.json()).toEqual({ status: 404, title: 'Not Found', detail: 'invitation 170 not found', kind: 'invitation', key: '170' })
+
+    expect((await answer(waiting.id, 'accept')).status).toBe(200)
+    const again = await answer(waiting.id, 'accept')
+    expect(again.status).toBe(409)
+    expect(await again.json()).toEqual({ status: 409, title: 'Conflict', detail: 'this invitation was already accepted' })
   })
 
   it('answers nobody with `401` — the list and the answers need a session', async () => {
@@ -636,7 +664,9 @@ describe('the client against the mock — invitations', () => {
     await client.signOut()
     await signIn(client, 'organiser')
     expect(await client.listInvitations()).toEqual([])
+    // Another account's is the `404` an unknown id gets — the two cannot be told apart.
     await expect(client.acceptInvitation(theirs.id)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    await expect(client.acceptInvitation(theirs.id + 1000)).rejects.toMatchObject({ kind: 'absent', status: 404 })
   })
 
   it('⭐ binds an offer when its address is confirmed — and its link then answers `absent`, to that account too', async () => {

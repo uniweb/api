@@ -69,9 +69,9 @@ function adminPage(account) {
  * account the backend's administration admits, so its Admin link answers — with a
  * redirect to a page of the mock's own, since the administration itself is not
  * modelled. An offer, claimed or bound by confirming its address, leaves its
- * invitations waiting, each to answer. It does not model entitlements behind `via`,
- * nested sections, second factors, password rules, an offer's grants, or what joining
- * an organization gives.
+ * invitations waiting, each to answer once. It does not model entitlements behind
+ * `via`, nested sections, second factors, password rules, an offer's grants, what
+ * joining an organization gives, or an organization withdrawing an invitation.
  *
  * ## The mail it sends
  *

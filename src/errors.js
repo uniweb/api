@@ -24,8 +24,9 @@
  *                 ONLY this. Retrying blind would overwrite their change
  *   rule          the write breaks a rule the Model declares — an insert-only
  *                 section, a section that holds one item, a reference that still
- *                 points here. `detail` says which; the same write fails the same
- *                 way again
+ *                 points here — or the backend's own: an invitation is answered
+ *                 once. `detail` says which; the same write fails the same way
+ *                 again
  *   csrf          the mutation lacked the header this package always sends —
  *                 a bug, not a state to handle
  *   step-up       the credential must be re-proven for this mutation
@@ -49,7 +50,8 @@ const TITLE_KINDS = {
  *
  * ⛔ **A `409` is a `conflict` only when it carries `current_updated_at`.** The
  * backend answers `409` for several unrelated refusals — an insert-only section,
- * a second item in a one-item section, a reference that pins an entity — and
+ * a second item in a one-item section, a reference that pins an entity, an
+ * invitation that no longer waits — and
  * reporting those as "someone else changed this first" tells a person to reload
  * and try again when nothing they do will make the write succeed. The token is
  * what marks the stale case; nothing else carries it (measured 2026-09-18).

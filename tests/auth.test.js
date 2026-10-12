@@ -376,11 +376,31 @@ describe('invitations — `listInvitations`, `acceptInvitation`, `declineInvitat
     expect(refresh).not.toHaveBeenCalled()
   })
 
-  it('leaves the cache alone when an answer is refused', async () => {
-    const client = clientWith(WITH_BACKEND, () => json(404, { status: 404, title: 'Not Found' }))
+  it('leaves the cache alone for an id that is not this account\'s — `absent`, whatever the body\'s own `kind`', async () => {
+    // As the backend answers it (2026-10-12): its `kind` names what was not found, and
+    // stays among the extensions rather than becoming the error's.
+    const NOT_FOUND = { status: 404, title: 'Not Found', detail: 'invitation 170 not found', kind: 'invitation', key: '170' }
+    const client = clientWith(WITH_BACKEND, () => json(404, NOT_FOUND))
     const invalidate = vi.spyOn(client, 'invalidate')
-    await expect(client.acceptInvitation(76)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    const err = await client.acceptInvitation(170).catch((e) => e)
+    expect(err).toMatchObject({ kind: 'absent', status: 404, extensions: { kind: 'invitation', key: '170' } })
     expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  it('⭐ reads the list again when the invitation no longer waits — `409`, of kind `rule`, its detail for people', async () => {
+    const NOT_WAITING = { status: 409, title: 'Conflict', detail: 'this invitation was already accepted' }
+    const client = clientWith(WITH_BACKEND, () => json(409, NOT_WAITING))
+    const invalidate = vi.spyOn(client, 'invalidate')
+    const refresh = vi.spyOn(client, 'refresh')
+    for (const answer of [() => client.acceptInvitation(76), () => client.declineInvitation(76)]) {
+      invalidate.mockClear()
+      await expect(answer()).rejects.toMatchObject({ kind: 'rule', status: 409, detail: NOT_WAITING.detail })
+      expect(invalidate).toHaveBeenCalledTimes(1)
+      const drops = invalidate.mock.calls[0][0]
+      expect(drops({ endpoint: '/invitations/me' })).toBe(true)
+      expect(drops({ endpoint: '/entities', schema: '@acme/track' })).toBe(false)
+    }
+    expect(refresh).not.toHaveBeenCalled()
   })
 
   it('refuses an answer that names no invitation before sending anything', async () => {

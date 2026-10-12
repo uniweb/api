@@ -37,8 +37,9 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
  * same read), nested sections, second factors, reference fields, password rules,
- * an offer's grants (a count, sharing nothing), and what joining an organization
- * gives — accepting an invitation answers, and opens nothing to read.
+ * an offer's grants (a count, sharing nothing), what joining an organization
+ * gives — accepting an invitation answers, and opens nothing to read — and an
+ * organization withdrawing an invitation.
  */
 
 /** A mailed link — the site's root, the step's parameter, the token. */
@@ -383,11 +384,14 @@ export class MockStore {
 
   /**
    * Accept or decline an invitation waiting for the account signed in — `accepted` or
-   * `declined`. One answer, `404`, for an id that names no such invitation.
+   * `declined` — as the backend answers (2026-10-12): `404` for an id that is not this
+   * account's to answer, unknown or another's alike, and `409` for one of its own that
+   * no longer waits, its `detail` naming what it became.
    */
   answerInvitation(id, status) {
-    const invitation = this.invitations.find((i) => String(i.id) === String(id) && i.to === this.account?.id && i.status === 'pending')
-    if (!invitation) return refuse(404, 'Not Found', 'invitation not found')
+    const invitation = this.invitations.find((i) => String(i.id) === String(id) && i.to === this.account?.id)
+    if (!invitation) return refuse(404, 'Not Found', `invitation ${id} not found`, { kind: 'invitation', key: String(id) })
+    if (invitation.status !== 'pending') return refuse(INVITATION.notWaiting, 'Conflict', `this invitation was already ${invitation.status}`)
     invitation.status = status
     invitation.resolvedAt = this.clock()
     return {

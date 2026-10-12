@@ -33,6 +33,10 @@ const QUIET = Object.freeze({ answering: null, answerError: null })
  *   `answering` is the id being answered, and `answerError` the last refusal. After
  *   either the list reads again; after an accept, so does everything else the viewer
  *   has read, and the session is asked again.
+ * - An invitation that no longer waits — answered in another tab, or withdrawn by its
+ *   organization — is refused with `kind: 'rule'`, its `detail` saying which, for
+ *   people, and the list reads again without it. `absent` — the id is not this
+ *   account's to answer.
  *
  * ⭐ **Draw it wherever a signed-in member lands, not only after an `?offer=` link.**
  * An invitation sent to an account waits with no link to follow, and a member who

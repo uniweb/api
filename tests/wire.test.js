@@ -11,9 +11,10 @@ describe('wire — the assumptions are a reviewable set', () => {
   // Empty from 2026-09-18, when `viewer-unit-signal` was answered false and
   // `via-and-depth-compose` true, both by measurement, to 2026-10-11 — when
   // `offer-claim-needs-a-session` came and went the same day, answered true by the
-  // backend, and the invitation routes brought these two. A new assumption added
-  // without an entry here fails this — building ahead is paid for in bookkeeping.
-  const EXPECTED = ['invitations-list-holds-the-waiting', 'invitation-answer-refusals']
+  // backend, and the invitation routes brought two more, both answered by the backend
+  // on 2026-10-12. A new assumption added without an entry here fails this — building
+  // ahead is paid for in bookkeeping.
+  const EXPECTED = []
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)

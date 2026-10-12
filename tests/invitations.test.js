@@ -86,10 +86,31 @@ describe('useInvitations', () => {
     await waitFor(() => expect(result.current.invitations).toEqual([]))
 
     await act(async () => {
-      await expect(result.current.accept(only.id)).rejects.toMatchObject({ kind: 'absent' })
+      await expect(result.current.accept(only.id)).rejects.toMatchObject({ kind: 'rule', status: 409 })
     })
-    expect(result.current.answerError).toMatchObject({ kind: 'absent' })
+    expect(result.current.answerError).toMatchObject({ kind: 'rule', detail: 'this invitation was already declined' })
     expect(calls(client, '/decline')).toBe(1)
+  })
+
+  it('⭐ drops one answered elsewhere when the page tries to answer it — the list reads again without it', async () => {
+    const { client, mock } = stack({ seed: offering(), signedInAs: 'attendee' })
+    const { result } = renderHook(() => useInvitations())
+    await waitFor(() => expect(result.current.invitations).toHaveLength(1))
+    const [only] = result.current.invitations
+
+    // Another tab answers it: same session, and nothing of this page's cache moves.
+    const elsewhere = await mock.fetch(
+      new Request(`${window.location.origin}/_api/unit/invitations/${only.id}/accept`, { method: 'POST', headers: { 'x-uniweb-csrf': '1' } }),
+    )
+    expect(elsewhere.status).toBe(200)
+    expect(result.current.invitations).toHaveLength(1)
+
+    await act(async () => {
+      await expect(result.current.decline(only.id)).rejects.toMatchObject({ kind: 'rule', status: 409 })
+    })
+    expect(result.current.answerError).toMatchObject({ detail: 'this invitation was already accepted' })
+    await waitFor(() => expect(result.current.invitations).toEqual([]))
+    expect(calls(client, '/invitations/me')).toBe(2)
   })
 
   it('⭐ reads the list again when a mailed offer is claimed on the page', async () => {

@@ -223,7 +223,7 @@ export const CLAIM = {
 
 /**
  * Invitations to join an organization — a unit, in the backend's word — waiting for the
- * member's answer. **MEASURED** by backend, 2026-10-11.
+ * member's answer. **MEASURED** by backend, 2026-10-11 and 2026-10-12.
  *
  * One sent to an address with no account here is an offer until it is claimed or its
  * address confirmed (`OFFERS`); one sent to an account is waiting at once, and its mail
@@ -233,13 +233,19 @@ export const CLAIM = {
  *
  * | route | answer |
  * |---|---|
- * | `GET /invitations/me` | `{ invitations: [{ id, unit_uuid, unit_handle, unit_name, invited_by_account_id, created_at }] }` — `id` an integer; `unit_handle` and `unit_name` may be `null` |
+ * | `GET /invitations/me` | `{ invitations: [{ id, unit_uuid, unit_handle, unit_name, invited_by_account_id, created_at }] }` — `id` an integer; `unit_handle` and `unit_name` may be `null`. **Only the invitations still waiting**: one answered, or withdrawn by its organization, leaves the list, which is why a row carries no status. With no session, `401 { status: 401, title: 'Unauthorized' }` |
  * | `POST /unit/invitations/{id}/accept` | `{ id, unit_id, to_account_id, invited_by, status: 'accepted', created_at, resolved_at }` |
- * | `POST /unit/invitations/{id}/decline` | not recorded — this package reads nothing of it (`ASSUMPTIONS`) |
+ * | `POST /unit/invitations/{id}/decline` | the same row, `status: 'declined'` |
  *
- * Both answers are sent with no body, as the backend recorded accept's. Which
- * invitations the list holds, and what answering one that is not waiting for this
- * account gets, are on `ASSUMPTIONS`.
+ * Both answers are sent with no body, as the backend's tests send them. Two refusals:
+ *
+ * - **`404 Not Found` + `kind: 'invitation'`, `key`** — the id is not this account's to
+ *   answer: unknown, or another account's, one answer by design.
+ * - **`409 Conflict` (`INVITATION.notWaiting`)** — it no longer waits: this account
+ *   answered it, or its organization withdrew it. Its `detail` names what it became —
+ *   `this invitation was already accepted` (`declined`, `revoked`) — and is for people:
+ *   ⛔ branch on the status, never the detail. It carries no `current_updated_at`, so
+ *   its kind is `rule` (`./errors.js`): the same answer fails the same way again.
  */
 export const INVITATIONS = {
   mine: '/invitations/me',
@@ -247,9 +253,14 @@ export const INVITATIONS = {
   decline: (id) => `/unit/invitations/${segment(id)}/decline`,
 }
 
-/** The list's key — all this package reads of an answer here; the rows go to the caller as they are. MEASURED. */
+/**
+ * The list's key — all this package reads of an answer here, since the rows go to the
+ * caller as they are — and the status of an answer to an invitation that no longer
+ * waits. MEASURED.
+ */
 export const INVITATION = {
   list: 'invitations',
+  notWaiting: 409,
 }
 
 /** A sign-in that needs a second factor. MEASURED. */
@@ -553,6 +564,7 @@ export const SCHEMA = {
  * | answer | means |
  * |---|---|
  * | `409 Conflict` + `item_id`, `current_updated_at` | that item changed since this viewer's token — the ONLY stale-token answer. `item_id` since 2026-09-18; an older backend sends the token alone |
+ * | `409 Conflict`, no token | an invitation that no longer waits — answered, or withdrawn (`INVITATIONS`, 2026-10-12) |
  * | `409 Append-Only Section` + `section` | an insert-only section: its items can be added and moved, not edited or deleted |
  * | `409 Schema Rule Violation` | a rule of the Model: a second item in a one-item section, a section of another Model, a reference that still points here |
  * | `403 Forbidden` + `op`, `target` | may read it, may not do this to it — `edit`, `delete`, `use_model` (create) |
@@ -580,22 +592,11 @@ export const PROBLEM = {
  * | `viewer-unit-signal` | ⛔ false — every member of a site acts in the same unit; see `VIEWER` (2026-09-18) |
  * | `via-and-depth-compose` | ✅ true — see `PARAM` (2026-09-18) |
  * | `offer-claim-needs-a-session` | ✅ true — `401` with no session, and the token is not spent; see `OFFERS` (2026-10-11) |
+ * | `invitations-list-holds-the-waiting` | ✅ true — only the invitations still waiting, and `401` with no session; see `INVITATIONS` (2026-10-12) |
+ * | `invitation-answer-refusals` | ⚠️ half — decline answers as the mock did, but one that no longer waits is `409`, not the `404` an id not this account's gets; see `INVITATIONS` (2026-10-12) |
  *
  * *(Retired 2026-09-17: `write-response-fields`, `move-exists`, `move-position`,
  * `op-field-names` — see `FIELD` and `OP`.)* A new entry needs `we`, `from` and
  * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
-export const ASSUMPTIONS = [
-  {
-    id: 'invitations-list-holds-the-waiting',
-    we: 'read `GET /invitations/me` as the invitations waiting for this account to answer, only once signed in (`useInvitations`) — and the mock lists no answered invitation, and answers `401` signed out',
-    from: 'the backend measured the list holding one waiting invitation, signed in (2026-10-11). Its rows carry no status, and nobody has recorded the list after an answer, or with no session',
-    breaks: 'a member area would offer to answer an invitation already answered — and the mock would list what the backend does not',
-  },
-  {
-    id: 'invitation-answer-refusals',
-    we: 'read nothing of an answer to an invitation but whether it succeeded — and the mock answers decline as it answers accept, with `status: \'declined\'`, and `404` for an id that names no invitation waiting for this account: unknown, someone else\'s, or answered',
-    from: 'the backend measured accept\'s answer (2026-10-11). Decline\'s answer, and what either answers for an invitation that is not waiting for this account, are not recorded',
-    breaks: 'nothing this package does — only a component tried against the mock, which would meet a refusal the backend may answer otherwise',
-  },
-]
+export const ASSUMPTIONS = []

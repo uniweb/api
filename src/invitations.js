@@ -46,9 +46,11 @@ export async function listInvitationsWith(client, { signal } = {}) {
  * @param {object} client
  * @param {number} id - the invitation's `id`, from the list
  * @returns {Promise<object>} the backend's answer — the invitation, `status: 'accepted'`
+ * @throws {ApiError} `rule` — it no longer waits, and the list reads again · `absent` —
+ *   the id is not this account's to answer · `auth` — nobody signed in
  */
 export async function acceptInvitationWith(client, id) {
-  const answer = await client.request('POST', INVITATIONS.accept(required(id, 'acceptInvitation')))
+  const answer = await answered(client, INVITATIONS.accept(required(id, 'acceptInvitation')))
   client.invalidate?.(() => true)
   client.refresh?.()
   return answer
@@ -59,12 +61,28 @@ export async function acceptInvitationWith(client, id) {
  *
  * @param {object} client
  * @param {number} id - the invitation's `id`, from the list
- * @returns {Promise<object>} the backend's answer
+ * @returns {Promise<object>} the backend's answer — the invitation, `status: 'declined'`
+ * @throws {ApiError} as `acceptInvitationWith` does
  */
 export async function declineInvitationWith(client, id) {
-  const answer = await client.request('POST', INVITATIONS.decline(required(id, 'declineInvitation')))
+  const answer = await answered(client, INVITATIONS.decline(required(id, 'declineInvitation')))
   client.invalidate?.(isInvitations)
   return answer
+}
+
+/**
+ * An answer, sent. ⭐ **One that no longer waits is still in the list this page holds**
+ * — answered in another tab, or withdrawn by its organization — so that refusal reads
+ * the list again, and the invitation leaves it. Which of those it was is the refusal's
+ * `detail`, for people; nothing here branches on it. Any other refusal leaves the cache.
+ */
+async function answered(client, route) {
+  try {
+    return await client.request('POST', route)
+  } catch (error) {
+    if (error?.status === INVITATION.notWaiting) client.invalidate?.(isInvitations)
+    throw error
+  }
 }
 
 function required(id, name) {

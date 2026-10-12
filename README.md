@@ -139,6 +139,10 @@ function Invitations() {
   is the id being answered, `answerError` the last refusal. After either the list reads
   again. After an accept, so does everything else the viewer has read, and the session
   is asked again.
+- An invitation that no longer waits — answered in another tab, or withdrawn by its
+  organization — is refused with `kind: 'rule'`, and the list reads again without it.
+  Its `detail` says which, for people: branch on `kind`, never on the words. `absent`
+  means the id is not this member's to answer.
 - ⭐ Draw it wherever a signed-in member lands, not only after an `?offer=` link: an
   invitation sent to an account comes with no link to follow.
 
