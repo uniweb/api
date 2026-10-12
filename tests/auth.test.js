@@ -8,6 +8,9 @@ import {
   adminHrefOf,
   verifyEmail as verifyEmailFn,
   claimOffer as claimOfferFn,
+  listInvitations as listInvitationsFn,
+  acceptInvitation as acceptInvitationFn,
+  declineInvitation as declineInvitationFn,
 } from '../src/client.js'
 import { fetchStub, json, empty, route, parse, WITH_BACKEND, WITHOUT_BACKEND, ME, HOME } from './helpers.js'
 
@@ -283,15 +286,22 @@ describe('a mailed link\'s step — `verifyEmail` and `claimOffer`', () => {
     expect(init.headers['x-uniweb-csrf']).toBe('1')
   })
 
-  it('drops the viewer\'s cached reads when the claim shared something with them — and only then', async () => {
-    let answer = { invitations: 1, grants: 0 }
+  it('reads the invitations again when the claim left some waiting, and every read when it shared something', async () => {
+    let answer = { invitations: 0, grants: 0 }
     const client = clientWith(WITH_BACKEND, () => json(200, answer))
     const invalidate = vi.spyOn(client, 'invalidate')
     await client.claimOffer('t')
     expect(invalidate).not.toHaveBeenCalled()
-    answer = { invitations: 0, grants: 2 }
+
+    answer = { invitations: 1, grants: 0 }
     await client.claimOffer('u')
-    expect(invalidate).toHaveBeenCalledTimes(1)
+    const waiting = invalidate.mock.calls[0][0]
+    expect(waiting({ endpoint: '/invitations/me' })).toBe(true)
+    expect(waiting({ endpoint: '/entities', schema: '@acme/track' })).toBe(false)
+
+    answer = { invitations: 0, grants: 2 }
+    await client.claimOffer('v')
+    expect(invalidate.mock.calls[1][0]({ endpoint: '/entities', schema: '@acme/track' })).toBe(true)
   })
 
   it('reads a token unknown, revoked or already claimed as `absent` — one answer for the three', async () => {
@@ -299,7 +309,7 @@ describe('a mailed link\'s step — `verifyEmail` and `claimOffer`', () => {
     await expect(client.claimOffer('t')).rejects.toMatchObject({ kind: 'absent', status: 404 })
   })
 
-  it('turns the session anonymous on a 401 — a claim needs one', async () => {
+  it('turns the session anonymous on a 401 — a claim needs one, and the token is not spent', async () => {
     const client = clientWith(WITH_BACKEND, () => json(401, { status: 401, title: 'Unauthorized' }))
     client.setSession({ status: 'authenticated', viewer: { uuid: 'u-1' } })
     await expect(client.claimOffer('t')).rejects.toMatchObject({ kind: 'auth' })
@@ -320,5 +330,77 @@ describe('a mailed link\'s step — `verifyEmail` and `claimOffer`', () => {
     await expect(verifyEmailFn('t')).resolves.toEqual({ verified: true })
     await expect(claimOfferFn('u')).resolves.toEqual({ invitations: 0, grants: 0 })
     expect(older.request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual(['GET /auth/verify', 'POST /offers/claim'])
+  })
+})
+
+describe('invitations — `listInvitations`, `acceptInvitation`, `declineInvitation`', () => {
+  // As the backend lists one, and answers an accept (measured 2026-10-11).
+  const ROW = { id: 76, unit_uuid: 'un-1', unit_handle: null, unit_name: null, invited_by_account_id: 9947, created_at: '2026-10-11T00:00:00Z' }
+  const ACCEPTED = { id: 76, unit_id: 3310, to_account_id: 9948, invited_by: 9947, status: 'accepted', created_at: ROW.created_at, resolved_at: ROW.created_at }
+
+  it('lists with a GET, and answers the rows as the backend lists them', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, { invitations: [ROW] }))
+    await expect(client.listInvitations()).resolves.toEqual([ROW])
+    const [url, init] = client.fetchFn.mock.calls[0]
+    expect(route(url, init)).toBe('GET /_api/invitations/me')
+    expect(parse(url).search).toBe('')
+  })
+
+  it('reads an answer that carries no list as none', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, {}))
+    await expect(client.listInvitations()).resolves.toEqual([])
+  })
+
+  it('⭐ accepts with a POST and no body — then drops every cached read, and asks the session again', async () => {
+    const client = clientWith(WITH_BACKEND, (url, init) => (route(url, init) === 'GET /_api/auth/me' ? json(200, ME) : json(200, ACCEPTED)))
+    const invalidate = vi.spyOn(client, 'invalidate')
+    const refresh = vi.spyOn(client, 'refresh')
+    await expect(client.acceptInvitation(76)).resolves.toEqual(ACCEPTED)
+    const [url, init] = client.fetchFn.mock.calls[0]
+    expect(route(url, init)).toBe('POST /_api/unit/invitations/76/accept')
+    expect(init.body).toBeUndefined()
+    expect(init.headers['x-uniweb-csrf']).toBe('1')
+    expect(invalidate.mock.calls[0][0]({ endpoint: '/entities', schema: '@acme/track' })).toBe(true)
+    expect(refresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('declines with a POST, and drops only the list', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, { ...ACCEPTED, status: 'declined' }))
+    const invalidate = vi.spyOn(client, 'invalidate')
+    const refresh = vi.spyOn(client, 'refresh')
+    await client.declineInvitation(76)
+    expect(route(...client.fetchFn.mock.calls[0])).toBe('POST /_api/unit/invitations/76/decline')
+    const drops = invalidate.mock.calls[0][0]
+    expect(drops({ endpoint: '/invitations/me' })).toBe(true)
+    expect(drops({ endpoint: '/entities', schema: '@acme/track' })).toBe(false)
+    expect(refresh).not.toHaveBeenCalled()
+  })
+
+  it('leaves the cache alone when an answer is refused', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(404, { status: 404, title: 'Not Found' }))
+    const invalidate = vi.spyOn(client, 'invalidate')
+    await expect(client.acceptInvitation(76)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    expect(invalidate).not.toHaveBeenCalled()
+  })
+
+  it('refuses an answer that names no invitation before sending anything', async () => {
+    const client = clientWith(WITH_BACKEND, () => json(200, {}))
+    await expect(client.acceptInvitation()).rejects.toMatchObject({ kind: 'invalid' })
+    await expect(client.declineInvitation('')).rejects.toMatchObject({ kind: 'invalid' })
+    expect(client.fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('works on an instance an older copy of this package made — `request` is all it needs', async () => {
+    createUniweb(WITH_BACKEND)
+    const older = { request: vi.fn(async (method) => (method === 'GET' ? { invitations: [ROW] } : ACCEPTED)) }
+    globalThis.uniweb.api = older
+    await expect(listInvitationsFn()).resolves.toEqual([ROW])
+    await expect(acceptInvitationFn(76)).resolves.toEqual(ACCEPTED)
+    await declineInvitationFn(77)
+    expect(older.request.mock.calls.map(([method, path]) => `${method} ${path}`)).toEqual([
+      'GET /invitations/me',
+      'POST /unit/invitations/76/accept',
+      'POST /unit/invitations/77/decline',
+    ])
   })
 })

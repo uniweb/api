@@ -1,4 +1,4 @@
-import { AUTH, ENTITIES, MODELS, OFFERS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL } from '../wire.js'
+import { AUTH, ENTITIES, MODELS, OFFERS, INVITATIONS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
 
@@ -68,8 +68,10 @@ function adminPage(account) {
  * leaves an account unverified until its address is confirmed. The operator is the
  * account the backend's administration admits, so its Admin link answers — with a
  * redirect to a page of the mock's own, since the administration itself is not
- * modelled. It does not model entitlements behind `via`, nested sections, second
- * factors, password rules, or what an offer binds.
+ * modelled. An offer, claimed or bound by confirming its address, leaves its
+ * invitations waiting, each to answer. It does not model entitlements behind `via`,
+ * nested sections, second factors, password rules, an offer's grants, or what joining
+ * an organization gives.
  *
  * ## The mail it sends
  *
@@ -305,6 +307,25 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       if (!store.account) return unauthorized()
       const b = await body(request)
       return fields(b, ['token'], '{"token": ...}') ?? answer(store.claimOffer(b.token))
+    }
+
+    // ── Invitations ─────────────────────────────────────────────────────────
+    if (path === INVITATIONS.mine && method === 'GET') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return json(200, store.invitationsOf(store.account))
+    }
+    const invitation = path.match(/^\/unit\/invitations\/([^/]+)\/[^/]+$/)
+    if (invitation && method === 'POST') {
+      const id = invitation[1]
+      const status = path === INVITATIONS.accept(id) ? 'accepted' : path === INVITATIONS.decline(id) ? 'declined' : null
+      if (status) {
+        const bad = unexpected(q, [])
+        if (bad) return bad
+        if (!store.account) return unauthorized()
+        return answer(store.answerInvitation(id, status))
+      }
     }
 
     // ── A Model's definition ─────────────────────────────────────────────────

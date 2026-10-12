@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ, LINK, OFFERS } from '../src/wire.js'
+import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ, LINK, OFFERS, INVITATIONS } from '../src/wire.js'
 import { composeUrl } from '../src/http.js'
 
 /**
@@ -9,10 +9,11 @@ import { composeUrl } from '../src/http.js'
  */
 describe('wire — the assumptions are a reviewable set', () => {
   // Empty from 2026-09-18, when `viewer-unit-signal` was answered false and
-  // `via-and-depth-compose` true, both by measurement, to 2026-10-11, when the mock
-  // began answering an offer claim with no session. A new assumption added without an
-  // entry here fails this — building ahead is paid for in bookkeeping.
-  const EXPECTED = ['offer-claim-needs-a-session']
+  // `via-and-depth-compose` true, both by measurement, to 2026-10-11 — when
+  // `offer-claim-needs-a-session` came and went the same day, answered true by the
+  // backend, and the invitation routes brought these two. A new assumption added
+  // without an entry here fails this — building ahead is paid for in bookkeeping.
+  const EXPECTED = ['invitations-list-holds-the-waiting', 'invitation-answer-refusals']
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)
@@ -48,8 +49,15 @@ describe('wire — the lane', () => {
     }
   })
 
-  it('claims an offer at /offers/claim — the one route a member needs outside /auth and /entities', () => {
+  it('claims an offer and answers an invitation — the routes a member needs outside /auth and /entities', () => {
     expect(OFFERS).toEqual({ claim: '/offers/claim' })
+    expect(INVITATIONS.mine).toBe('/invitations/me')
+    expect(INVITATIONS.accept(76)).toBe('/unit/invitations/76/accept')
+    expect(INVITATIONS.decline(76)).toBe('/unit/invitations/76/decline')
+    expect(INVITATIONS.accept('a/b')).toBe('/unit/invitations/a%2Fb/accept')
+    for (const path of [OFFERS.claim, INVITATIONS.mine, INVITATIONS.accept(1), INVITATIONS.decline(1)]) {
+      expect(path).not.toContain('/sites/')
+    }
   })
 
   it('names the three steps a mailed link starts, by the parameters the backend mails', () => {

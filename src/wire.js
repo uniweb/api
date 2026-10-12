@@ -49,7 +49,13 @@
  * `/sites/*`. Those routes create sites, which is the app's job, not a
  * foundation's, and a site's own `backend` service has no site to address.
  *
- * ⛔ Do not add a route that is not under `/entities`, `/models` or `/auth`.
+ * Its routes are under `/entities`, `/models` and `/auth`, plus what a member does
+ * with an invitation — claim an offer (`OFFERS`), answer an invitation
+ * (`INVITATIONS`) — the steps the backend's mail asks a member to finish on the site
+ * (2026-10-11). ⛔ Never `/sites/*`, and nothing that administers: the backend's
+ * administration is reached through the Admin link (`AUTH.memberHandoff`), never
+ * wrapped. *(This said "no route that is not under `/entities`, `/models` or
+ * `/auth`" until 2026-10-11.)*
  */
 export const ENTITIES = '/entities'
 
@@ -92,11 +98,13 @@ export const AUTH = {
   register: '/auth/register',
   /**
    * `GET /auth/verify?token=` → `{ verified: true }`: the address is confirmed and the
-   * member may sign in — it starts no session. A token that was used, has expired or
-   * was never valid is `400 Validation`. The token comes from the link the backend
-   * mails, which lands on the site's root (`LINK.verify`), and `verifyEmail` finishes
-   * it. *(Until 2026-10-11 that link named the backend's own sign-in page, and this
-   * package did not call the route.)*
+   * member may sign in — it starts no session — and every offer sent to that address
+   * binds to the account, its invitations waiting (`OFFERS`, `INVITATIONS`; MEASURED by
+   * backend, 2026-10-11). A token that was used, has expired or was never valid is
+   * `400 Validation`. The token comes from the link the backend mails, which lands on
+   * the site's root (`LINK.verify`), and `verifyEmail` finishes it. *(Until 2026-10-11
+   * that link named the backend's own sign-in page, and this package did not call the
+   * route.)*
    */
   verify: '/auth/verify',
   resetRequest: '/auth/reset/request',
@@ -181,7 +189,7 @@ export const LINK = {
 }
 
 /**
- * Offers. **MEASURED** by backend, 2026-09-15.
+ * Offers. **MEASURED** by backend, 2026-09-15 and 2026-10-11.
  *
  * Inviting an address nobody here holds — to an organization, or to share an entity —
  * mints an offer, and the backend mails its token to that address (`LINK.offer`).
@@ -189,10 +197,18 @@ export const LINK = {
  * account's own address — and what the offer held binds to it.
  *
  * `POST /offers/claim` `{ token }` → `200 { invitations, grants }` (`CLAIM`) —
- * COUNTS, not names: invitations now waiting for this account to accept, and entities
- * now shared with it. ⛔ **An unknown, revoked or already-claimed token is ONE answer,
- * `404`**, so the route never says whether a token was ever real. A missing `token`
- * is `400`.
+ * COUNTS, not names: invitations now waiting for this account to answer
+ * (`INVITATIONS`), and entities now shared with it, live at once. ⛔ **An unknown,
+ * revoked or already-claimed token is ONE answer, `404`**, so the route never says
+ * whether a token was ever real. A missing `token` is `400`.
+ *
+ * - **With no session, `401 { status: 401, title: 'Unauthorized' }`, and the token is
+ *   not spent** — the same link works once someone signs in (2026-10-11).
+ * - **The token is spent by the claim — or earlier, by the member confirming the
+ *   address the offer was sent to** (`AUTH.verify`), which binds the offer to that
+ *   account. From then on it answers `404`, as an unknown token does — even to the
+ *   account that holds what it bound (2026-10-11). ⇒ A `404` on a claim does not mean
+ *   no invitation is waiting: list them.
  */
 export const OFFERS = {
   claim: '/offers/claim',
@@ -203,6 +219,37 @@ export const CLAIM = {
   token: 'token',
   invitations: 'invitations',
   grants: 'grants',
+}
+
+/**
+ * Invitations to join an organization — a unit, in the backend's word — waiting for the
+ * member's answer. **MEASURED** by backend, 2026-10-11.
+ *
+ * One sent to an address with no account here is an offer until it is claimed or its
+ * address confirmed (`OFFERS`); one sent to an account is waiting at once, and its mail
+ * is the site's root with no parameter — the member signs in (`LINK`). Either way it
+ * waits here, and the claim's answer names none of them, so the list is how a member
+ * area finds one:
+ *
+ * | route | answer |
+ * |---|---|
+ * | `GET /invitations/me` | `{ invitations: [{ id, unit_uuid, unit_handle, unit_name, invited_by_account_id, created_at }] }` — `id` an integer; `unit_handle` and `unit_name` may be `null` |
+ * | `POST /unit/invitations/{id}/accept` | `{ id, unit_id, to_account_id, invited_by, status: 'accepted', created_at, resolved_at }` |
+ * | `POST /unit/invitations/{id}/decline` | not recorded — this package reads nothing of it (`ASSUMPTIONS`) |
+ *
+ * Both answers are sent with no body, as the backend recorded accept's. Which
+ * invitations the list holds, and what answering one that is not waiting for this
+ * account gets, are on `ASSUMPTIONS`.
+ */
+export const INVITATIONS = {
+  mine: '/invitations/me',
+  accept: (id) => `/unit/invitations/${segment(id)}/accept`,
+  decline: (id) => `/unit/invitations/${segment(id)}/decline`,
+}
+
+/** The list's key — all this package reads of an answer here; the rows go to the caller as they are. MEASURED. */
+export const INVITATION = {
+  list: 'invitations',
 }
 
 /** A sign-in that needs a second factor. MEASURED. */
@@ -526,12 +573,13 @@ export const PROBLEM = {
  * ⛔ THE LIST TO HAND BACKEND — everything this package asserts that nobody has
  * confirmed. Each entry says what we do, and what breaks if we are wrong.
  *
- * Empty from 2026-09-18 to 2026-10-11, when the last two were answered by measurement:
+ * Retired by measurement:
  *
  * | retired | answered as |
  * |---|---|
- * | `viewer-unit-signal` | ⛔ false — every member of a site acts in the same unit; see `VIEWER` |
- * | `via-and-depth-compose` | ✅ true — see `PARAM` |
+ * | `viewer-unit-signal` | ⛔ false — every member of a site acts in the same unit; see `VIEWER` (2026-09-18) |
+ * | `via-and-depth-compose` | ✅ true — see `PARAM` (2026-09-18) |
+ * | `offer-claim-needs-a-session` | ✅ true — `401` with no session, and the token is not spent; see `OFFERS` (2026-10-11) |
  *
  * *(Retired 2026-09-17: `write-response-fields`, `move-exists`, `move-position`,
  * `op-field-names` — see `FIELD` and `OP`.)* A new entry needs `we`, `from` and
@@ -539,9 +587,15 @@ export const PROBLEM = {
  */
 export const ASSUMPTIONS = [
   {
-    id: 'offer-claim-needs-a-session',
-    we: 'claim an offer only once signed in (`useMailedLink`), and answer a claim with no session `401` in the mock',
-    from: 'the backend: the member signs up or signs in, then claims (2026-10-11). Nobody has recorded what a claim with no session answers',
-    breaks: 'nothing the hook does, since it never claims signed out — but the mock would answer a signed-out claim unlike the backend',
+    id: 'invitations-list-holds-the-waiting',
+    we: 'read `GET /invitations/me` as the invitations waiting for this account to answer, only once signed in (`useInvitations`) — and the mock lists no answered invitation, and answers `401` signed out',
+    from: 'the backend measured the list holding one waiting invitation, signed in (2026-10-11). Its rows carry no status, and nobody has recorded the list after an answer, or with no session',
+    breaks: 'a member area would offer to answer an invitation already answered — and the mock would list what the backend does not',
+  },
+  {
+    id: 'invitation-answer-refusals',
+    we: 'read nothing of an answer to an invitation but whether it succeeded — and the mock answers decline as it answers accept, with `status: \'declined\'`, and `404` for an id that names no invitation waiting for this account: unknown, someone else\'s, or answered',
+    from: 'the backend measured accept\'s answer (2026-10-11). Decline\'s answer, and what either answers for an invitation that is not waiting for this account, are not recorded',
+    breaks: 'nothing this package does — only a component tried against the mock, which would meet a refusal the backend may answer otherwise',
   },
 ]

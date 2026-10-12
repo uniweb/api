@@ -84,9 +84,14 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
     expect(err.kind).toBe('invalid')
   })
 
-  it('refuses an offer claim with nobody signed in — `401` (ASSUMPTIONS: `offer-claim-needs-a-session`)', async () => {
+  it('refuses an offer claim with nobody signed in — `401`, before it looks at the token', async () => {
     const err = await client().claimOffer(NEVER_SENT).catch((e) => e)
-    expect(err.status).toBe(401)
+    expect(err).toMatchObject({ kind: 'auth', status: 401, title: 'Unauthorized' })
+  })
+
+  it('refuses to list invitations for nobody — `401` (ASSUMPTIONS: `invitations-list-holds-the-waiting`)', async () => {
+    const err = await client().listInvitations().catch((e) => e)
+    expect(err).toMatchObject({ kind: 'auth', status: 401 })
   })
 
   it.skipIf(!REGISTER)('signs up with 202, and refuses the sign-in until the address is verified', async () => {
@@ -139,6 +144,32 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       await c.signIn(LOGIN)
       const err = await c.claimOffer(NEVER_SENT).catch((e) => e)
       expect(err).toMatchObject({ kind: 'absent', status: 404 })
+    })
+
+    it('lists the invitations waiting for this account — each with an integer id', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const invitations = await c.listInvitations()
+      expect(Array.isArray(invitations)).toBe(true)
+      for (const invitation of invitations) {
+        expect(Number.isInteger(invitation.id)).toBe(true)
+        expect(invitation).toHaveProperty('unit_uuid')
+      }
+    })
+
+    // An id no invitation has — so these answer nothing, whatever the backend holds.
+    // What the refusal is goes unasserted: ASSUMPTIONS, `invitation-answer-refusals`.
+    const NO_INVITATION = Number.MAX_SAFE_INTEGER
+
+    it('refuses an answer to an invitation that is not waiting for this account', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      for (const answer of [() => c.acceptInvitation(NO_INVITATION), () => c.declineInvitation(NO_INVITATION)]) {
+        const err = await answer().catch((e) => e)
+        expect(err.status).toBeGreaterThanOrEqual(400)
+        expect(err.status).toBeLessThan(500)
+        expect(err.status).not.toBe(401)
+      }
     })
 
     it('reads an entity that does not exist as `absent`, signed in', async () => {

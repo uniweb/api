@@ -81,15 +81,15 @@ import { useMailedLink } from '@uniweb/api'
 
 // Wherever the site's root renders it — a header or a layout is on every page.
 function FromYourEmail() {
-  const { step, status, result, error, confirm } = useMailedLink()
-  if (step === 'verify' && status === 'done') return <p>Your address is confirmed. Sign in.</p>
+  const { step, status, error, confirm } = useMailedLink()
   if (step === 'reset' && status !== 'done') {
     return <NewPassword onSave={(password) => confirm({ new_password: password })} error={error} />
   }
+  if (step === 'verify' && status === 'done') return <p>Your address is confirmed. Sign in.</p>
+  if (step === 'reset' && status === 'done') return <p>Your password is changed. Sign in.</p>
   if (step === 'offer' && status === 'idle') return <p>Sign in, or create an account, to take up your invitation.</p>
-  if (step === 'offer' && status === 'done' && result.invitations + result.grants > 0) return <p>Your invitation is in.</p>
-  if (status === 'error' || status === 'done') return <p>This link can no longer be used.</p>
-  return null
+  if (error?.kind === 'invalid' || error?.kind === 'absent') return <p>This link can no longer be used.</p>
+  return null   // a claimed offer: what it holds is listed by useInvitations, below
 }
 ```
 
@@ -99,13 +99,48 @@ function FromYourEmail() {
   `min_length`), and the same link works again. `offer` waits until someone is signed
   in — whatever their account's own address — and then claims by itself.
 - An offer answers counts, `{ invitations, grants }` — invitations now waiting for this
-  account to accept, and entities now shared with it — never names. Both `0` means it
+  account's answer, and entities now shared with it — never names. Both `0` means it
   bound nothing. ⛔ A token unknown, revoked or already used is ONE answer,
-  `error.kind === 'absent'`: say one sentence, naming no cause.
+  `error.kind === 'absent'`: say one sentence, naming no cause. It is not "no
+  invitation": a member who confirmed the address the offer was sent to holds what it
+  bound already, and its link then answers `absent`.
 - Once the backend has judged the token, it leaves the address bar, so a reload asks
   nothing again; a link the backend could not be reached about (`kind: 'unavailable'`)
   stays, and works on a reload. However many components use the hook, the link is
   finished once. `dismiss()` forgets it unfinished.
+
+**Invitations** — to join an organization on the site's backend. One sent to a member's
+account waits at once (its email is a plain link to your site: they sign in); one sent to
+an address with no account here waits once its `?offer=` link is claimed, or once someone
+signs up with that address and confirms it. `useInvitations()` lists the ones waiting,
+and answers them:
+
+```jsx
+import { useInvitations } from '@uniweb/api'
+
+function Invitations() {
+  const { status, invitations, accept, decline, answering } = useInvitations()
+  if (status !== 'ready') return null
+  return invitations.map((invitation) => (
+    <p key={invitation.id}>
+      {invitation.unit_name ?? 'An organization'} invited you.
+      <button disabled={answering === invitation.id} onClick={() => accept(invitation.id)}>Join</button>
+      <button disabled={answering === invitation.id} onClick={() => decline(invitation.id)}>Decline</button>
+    </p>
+  ))
+}
+```
+
+- An invitation is `{ id, unit_uuid, unit_handle, unit_name, invited_by_account_id,
+  created_at }`, as the backend lists it; `unit_handle` and `unit_name` may be `null`.
+- `absent` — no backend, or nobody signed in. `ready` with `invitations: []` — none
+  waiting.
+- `accept(id)` and `decline(id)` answer one and reject as the backend does; `answering`
+  is the id being answered, `answerError` the last refusal. After either the list reads
+  again. After an accept, so does everything else the viewer has read, and the session
+  is asked again.
+- ⭐ Draw it wherever a signed-in member lands, not only after an `?offer=` link: an
+  invitation sent to an account comes with no link to follow.
 
 **The Admin link** — some of the site's members administer its backend, the operator
 among them. For them, `adminHref` is the address that takes them to the backend's
@@ -275,7 +310,10 @@ each member's own records stay private). The mail the backend would send — a s
 confirmation, a password reset — is printed where the mock runs, in the terminal of
 `uniweb dev`, its link on your site's root as the backend's is, so following it is
 trying your page; the messages are in `mock.outbox` too. To try an invitation, seed one:
-`offers: [{ email: 'guest@example.test', invitations: 1 }]` is mailed when the mock starts.
+`offers: [{ email: 'guest@example.test', invitations: 1 }]` is mailed when the mock starts,
+and claiming it — or signing up with that address and confirming it — leaves the
+invitation waiting. An offer to an address a seeded account holds waits for that account
+from the start.
 The operator's Admin link answers too, landing on a page of the mock's own — the backend's
 administration is not part of it. State is in memory: restart to reset.
 
@@ -290,8 +328,9 @@ npx uniweb-api-mock --port 8787 --site http://localhost:3000
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
 React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
-`createEntity`, `deleteEntity`, `adminHref`, and for the links the backend mails,
-`mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`.
+`createEntity`, `deleteEntity`, `adminHref`, for the links the backend mails,
+`mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`, and for invitations,
+`listInvitations`, `acceptInvitation` and `declineInvitation`.
 
 ## License
 

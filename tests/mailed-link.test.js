@@ -135,6 +135,15 @@ describe('useMailedLink', () => {
     expect(window.location.search).toBe('')
   })
 
+  it('asks whether someone is signed in by itself — an offer is claimed with no other component on the page', async () => {
+    const { client, mock } = stack({ seed: { ...DEFAULT_SEED, offers: [{ email: 'guest@example.test', invitations: 1 }] }, signedInAs: 'attendee' })
+    land(mock.outbox[0])
+    const { result } = renderHook(() => useMailedLink())
+    await waitFor(() => expect(result.current.status).toBe('done'))
+    expect(result.current.result).toEqual({ invitations: 1, grants: 0 })
+    expect(calls(client, '/auth/me')).toBe(1)
+  })
+
   it('reads an offer it cannot claim as `absent` — one answer, whatever the cause', async () => {
     const { client, mock } = stack({ seed: { ...DEFAULT_SEED, offers: [{ email: 'guest@example.test' }] } })
     await client.signIn({ username: 'attendee', password: 'attendee' })

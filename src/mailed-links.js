@@ -14,6 +14,7 @@
 
 import { ApiError } from './errors.js'
 import { AUTH, CLAIM, LINK, OFFERS, PARAM } from './wire.js'
+import { isInvitations } from './invitations.js'
 
 const STEPS = Object.values(LINK)
 
@@ -75,20 +76,26 @@ export async function verifyEmailWith(client, token) {
 
 /**
  * Claim an offer with the token of its mailed link (`?offer=`), for the account signed
- * in. Answers counts (`CLAIM`): invitations now waiting for this account to accept, and
- * entities now shared with it — so when there are any, the viewer's cached reads go,
- * and what is mounted reads again.
+ * in. Answers counts (`CLAIM`): invitations now waiting for this account to answer
+ * (`./invitations.js`), and entities now shared with it — so the invitations list reads
+ * again when there are any of the first, and every cached read of the viewer's when
+ * there are any of the second.
+ *
+ * ⛔ **`absent` does not mean nothing is waiting.** A member who confirmed the address
+ * the offer was sent to holds what it bound already, and its token then answers
+ * `absent` like any other it cannot use.
  *
  * @param {object} client
  * @param {string} token
  * @returns {Promise<{ invitations: number, grants: number }>}
  * @throws {ApiError} `absent` — unknown, revoked or already claimed, one answer by design ·
- *   `auth` — nobody signed in
+ *   `auth` — nobody signed in, and the token is not spent
  */
 export async function claimOfferWith(client, token) {
   if (!token) throw ApiError.invalid('No Token', 'claimOffer needs the token of the mailed link')
   const answer = await client.request('POST', OFFERS.claim, { body: { [CLAIM.token]: token } })
-  if (answer?.[CLAIM.grants] > 0) client.invalidate?.(() => true)
+  const shared = answer?.[CLAIM.grants] > 0
+  if (shared || answer?.[CLAIM.invitations] > 0) client.invalidate?.((spec) => shared || isInvitations(spec))
   return answer
 }
 

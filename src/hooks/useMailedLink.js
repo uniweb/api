@@ -22,7 +22,7 @@ const noSnapshot = () => null
  * // link.status: 'idle' | 'working' | 'done' | 'error'
  * if (link.step === 'verify' && link.status === 'done') return <p>Your address is confirmed. Sign in.</p>
  * if (link.step === 'reset' && link.status !== 'done') return <NewPassword onSubmit={(p) => link.confirm({ new_password: p })} />
- * if (link.step === 'offer' && link.status === 'done') return <p>{link.result.invitations} invitation(s) waiting for you.</p>
+ * if (link.step === 'offer' && link.status === 'idle') return <p>Sign in, or create an account, to take up your invitation.</p>
  * ```
  *
  * - **`verify`** finishes by itself: `working`, then `done` (`result: { verified: true }`),
@@ -34,10 +34,12 @@ const noSnapshot = () => null
  *   'password_too_short'` and `min_length`, and the same link works again.
  * - **`offer`** waits for a sign-in — `idle` until someone is signed in, so offer the
  *   sign-in and sign-up — then claims by itself: `done` with `result: { invitations,
- *   grants }`, COUNTS — invitations waiting for this account to accept, entities now
- *   shared with it — or `error`, `kind: 'absent'` for a token unknown, revoked or
- *   already claimed. ⛔ One sentence for that, naming no cause: the backend keeps the
- *   three indistinguishable on purpose.
+ *   grants }`, COUNTS — invitations now waiting for this account's answer, which
+ *   `useInvitations` lists and answers, and entities now shared with it — or `error`,
+ *   `kind: 'absent'` for a token unknown, revoked or already used. ⛔ One sentence for
+ *   that, naming no cause: the backend keeps them indistinguishable on purpose — and
+ *   it is not "no invitation": a member who confirmed the address the offer was sent to
+ *   holds its invitation already, and the link then answers `absent`.
  *
  * Once the backend has judged the token, its parameter leaves the address bar, so a
  * reload asks nothing again. `dismiss()` forgets the link without finishing it. On a
@@ -84,9 +86,16 @@ export function useMailedLink() {
     if (client?.enabled) setLink(mailedLink())
   }, [client])
 
+  // An offer waits for a session — so ask whether there is one, rather than wait for
+  // another component to.
+  const offer = link?.step === LINK.offer
+  useEffect(() => {
+    if (offer) client.ensureSession()
+  }, [client, offer])
+
   // An offer is claimed for whoever is signed in — and again, for another account.
   const signedIn = session?.status === 'authenticated' ? (session.viewer?.uuid ?? 'signed-in') : null
-  const claimant = link?.step === LINK.offer ? signedIn : null
+  const claimant = offer ? signedIn : null
   const finishes = !!link && (link.step === LINK.verify || claimant !== null)
 
   useEffect(() => {

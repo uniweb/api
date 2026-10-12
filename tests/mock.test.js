@@ -587,6 +587,84 @@ describe('the client against the mock — the mail it sends', () => {
   })
 })
 
+describe('the client against the mock — invitations', () => {
+  const invited = (offer, more = {}) => ({ seed: { ...DEFAULT_SEED, offers: [offer] }, ...more })
+
+  it('⭐ leaves a claimed offer\'s invitations waiting, and answers each once', async () => {
+    const { client, mock } = stack(invited({ email: 'guest@example.test', invitations: 2 }))
+    await signIn(client, 'attendee')
+    expect(await client.listInvitations()).toEqual([])
+    await client.claimOffer(linkOf(mock.outbox[0]).token)
+
+    const waiting = await client.listInvitations()
+    expect(waiting).toHaveLength(2)
+    // The row the backend lists — an organization with no handle and no name, as measured.
+    expect(waiting[0]).toEqual({
+      id: expect.any(Number),
+      unit_uuid: expect.any(String),
+      unit_handle: null,
+      unit_name: null,
+      invited_by_account_id: expect.any(Number),
+      created_at: expect.any(String),
+    })
+
+    await expect(client.acceptInvitation(waiting[0].id)).resolves.toEqual({
+      id: waiting[0].id,
+      unit_id: expect.any(Number),
+      to_account_id: expect.any(Number),
+      invited_by: waiting[0].invited_by_account_id,
+      status: 'accepted',
+      created_at: waiting[0].created_at,
+      resolved_at: expect.any(String),
+    })
+    await expect(client.declineInvitation(waiting[1].id)).resolves.toMatchObject({ id: waiting[1].id, status: 'declined' })
+    expect(await client.listInvitations()).toEqual([])
+    await expect(client.acceptInvitation(waiting[0].id)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+  })
+
+  it('answers nobody with `401` — the list and the answers need a session', async () => {
+    const { client } = stack()
+    await expect(client.listInvitations()).rejects.toMatchObject({ kind: 'auth', status: 401 })
+    await expect(client.acceptInvitation(1)).rejects.toMatchObject({ kind: 'auth', status: 401 })
+  })
+
+  it('keeps one account\'s invitations from another', async () => {
+    const { client, mock } = stack(invited({ email: 'guest@example.test', invitations: 1 }))
+    await signIn(client, 'attendee')
+    await client.claimOffer(linkOf(mock.outbox[0]).token)
+    const [theirs] = await client.listInvitations()
+    await client.signOut()
+    await signIn(client, 'organiser')
+    expect(await client.listInvitations()).toEqual([])
+    await expect(client.acceptInvitation(theirs.id)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+  })
+
+  it('⭐ binds an offer when its address is confirmed — and its link then answers `absent`, to that account too', async () => {
+    const { client, mock } = stack(invited({ email: 'newbie@example.test', invitations: 1 }))
+    const offer = linkOf(mock.outbox[0])
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.verifyEmail(linkOf(mock.outbox.find((m) => m.subject === 'Confirm your email address')).token)
+    await client.signIn({ username: 'newbie', password: 'pw' })
+    expect(await client.listInvitations()).toHaveLength(1)
+    await expect(client.claimOffer(offer.token)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+  })
+
+  it('leaves an offer\'s token unspent by a claim with no session', async () => {
+    const { client, mock } = stack(invited({ email: 'guest@example.test', invitations: 1 }))
+    const { token } = linkOf(mock.outbox[0])
+    await expect(client.claimOffer(token)).rejects.toMatchObject({ kind: 'auth', status: 401 })
+    await signIn(client, 'attendee')
+    await expect(client.claimOffer(token)).resolves.toEqual({ invitations: 1, grants: 0 })
+  })
+
+  it('gives a seeded offer to an address a seeded account holds to that account from the start, unmailed', async () => {
+    const { client, mock } = stack(invited({ email: 'attendee@example.test', invitations: 1 }))
+    expect(mock.outbox).toEqual([])
+    await signIn(client, 'attendee')
+    expect(await client.listInvitations()).toHaveLength(1)
+  })
+})
+
 describe('the client against the mock — the Admin link', () => {
   it('offers it to the operator and to no one else — the fact rides the probe', async () => {
     const { client } = stack()

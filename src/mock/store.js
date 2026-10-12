@@ -1,4 +1,4 @@
-import { CLAIM, FIELD, LINK, OP, PROBLEM } from '../wire.js'
+import { CLAIM, FIELD, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
 import { checkItemWrite, OUTCOME } from './schema-shape.js'
 
 /**
@@ -25,6 +25,11 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *   shared — a site runs third-party code with its member's session. *(Until
  *   2026-10-10 the operator's session held `system_admin` and read and wrote
  *   everything.)* A seeded account is the operator with `operator: true`.
+ * - **An offer binds when it is claimed, or when its address is confirmed** — and
+ *   then its token answers `404`, as an unknown one does (backend, 2026-10-11). What
+ *   it binds: its invitations, each waiting for the account's answer, to an
+ *   organization of its own with no handle and no name. A seeded offer to an address a
+ *   seeded account holds is bound to that account from the start, and is not mailed.
  *
  * ⛔ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
  * A mock that grows a schema and migrations becomes a second implementation that
@@ -32,9 +37,8 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
  * same read), nested sections, second factors, reference fields, password rules,
- * and what an offer binds — a seeded offer answers the counts its seed gives, and
- * confirming the address it was sent to takes up nothing (the backend binds every
- * pending offer then).
+ * an offer's grants (a count, sharing nothing), and what joining an organization
+ * gives — accepting an invitation answers, and opens nothing to read.
  */
 
 /** A mailed link — the site's root, the step's parameter, the token. */
@@ -131,13 +135,14 @@ export class MockStore {
    *   its members while their own records (progress, submissions) stay theirs alone.
    * @param {object[]} [seed.offers] - `{ email, invitations?, grants? }`: an invitation sent
    *   to an address with no account, mailed when the mock starts. Claiming it answers the
-   *   counts given (default `0`), once.
+   *   counts given (default `0`), once, and leaves that many invitations waiting. One to
+   *   an address a seeded account holds is that account's from the start.
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
    */
   constructor(seed = {}, { signedInAs = null } = {}) {
     this.clock = makeClock()
-    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0 }
+    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT }
     this.accounts = []
     for (const a of seed.accounts || []) this.addAccount(a, { verified: true })
 
@@ -185,6 +190,8 @@ export class MockStore {
     this.pending = { verify: new Map(), reset: new Map() }
     /** Offers by token: `{ email, invitations, grants, claimed }`. */
     this.offers = new Map()
+    /** Invitations: `{ id, unit, invitedBy, to, status, createdAt, resolvedAt }` — `to` an account id. */
+    this.invitations = []
     for (const offer of seed.offers || []) this.addOffer(offer)
     this.entities = new Map()
     for (const e of seed.entities || []) this.seedEntity(e)
@@ -281,6 +288,8 @@ export class MockStore {
     if (!account) return refuse(400, 'Validation', 'invalid or expired verification token')
     this.pending.verify.delete(token)
     account.verified = true
+    // Every offer sent to the address it confirmed is the account's now — and its token spent.
+    for (const offer of this.offers.values()) if (!offer.claimed && offer.email === account.email) this.bind(offer, account)
     return { body: { verified: true } }
   }
 
@@ -306,7 +315,11 @@ export class MockStore {
 
   // ── Offers ──────────────────────────────────────────────────────────────────
 
-  /** An invitation to an address with no account here — its token mailed at once. */
+  /**
+   * An invitation to an address with no account here — its token mailed at once. To an
+   * address a verified account holds, it is bound to that account at once, as confirming
+   * the address would have bound it, and nothing is mailed.
+   */
   addOffer({ email, invitations = 0, grants = 0 } = {}) {
     const count = (n) => Number.isInteger(n) && n >= 0
     if (typeof email !== 'string' || !email || !count(invitations) || !count(grants)) {
@@ -315,20 +328,79 @@ export class MockStore {
       )
     }
     const token = newUuid()
-    this.offers.set(token, { email, invitations, grants, claimed: false })
-    this.outbox.push({ to: email, subject: "You've been invited", token, link: linkTo(LINK.offer, token) })
+    const offer = { email, invitations, grants, claimed: false }
+    this.offers.set(token, offer)
+    const holder = this.accounts.find((a) => a.email === email && a.verified)
+    if (holder) this.bind(offer, holder)
+    else this.outbox.push({ to: email, subject: "You've been invited", token, link: linkTo(LINK.offer, token) })
     return token
   }
 
   /**
-   * Claim an offer for the account signed in. Unknown, revoked and already claimed are
+   * Claim an offer for the account signed in. Unknown, revoked, claimed and bound are
    * one answer, `404`, as on the backend.
    */
   claimOffer(token) {
     const offer = this.offers.get(token)
     if (!offer || offer.claimed) return refuse(404, 'Not Found', 'offer not found')
-    offer.claimed = true
+    this.bind(offer, this.account)
     return { body: { [CLAIM.invitations]: offer.invitations, [CLAIM.grants]: offer.grants } }
+  }
+
+  /** An offer becomes the account's: its token is spent, and its invitations wait. */
+  bind(offer, account) {
+    offer.claimed = true
+    for (let n = 0; n < offer.invitations; n += 1) {
+      this.invitations.push({
+        id: (this.ids.invitation += 1),
+        unit: { id: (this.ids.unit += 1), uuid: newUuid(), handle: null, name: null },
+        invitedBy: this.operator()?.id ?? null,
+        to: account.id,
+        status: 'pending',
+        createdAt: this.clock(),
+        resolvedAt: null,
+      })
+    }
+  }
+
+  // ── Invitations ─────────────────────────────────────────────────────────────
+
+  /** `GET /invitations/me` — the ones waiting for this account's answer, in the backend's shape. */
+  invitationsOf(account) {
+    return {
+      [INVITATION.list]: this.invitations
+        .filter((i) => i.to === account.id && i.status === 'pending')
+        .map((i) => ({
+          id: i.id,
+          unit_uuid: i.unit.uuid,
+          unit_handle: i.unit.handle,
+          unit_name: i.unit.name,
+          invited_by_account_id: i.invitedBy,
+          created_at: i.createdAt,
+        })),
+    }
+  }
+
+  /**
+   * Accept or decline an invitation waiting for the account signed in — `accepted` or
+   * `declined`. One answer, `404`, for an id that names no such invitation.
+   */
+  answerInvitation(id, status) {
+    const invitation = this.invitations.find((i) => String(i.id) === String(id) && i.to === this.account?.id && i.status === 'pending')
+    if (!invitation) return refuse(404, 'Not Found', 'invitation not found')
+    invitation.status = status
+    invitation.resolvedAt = this.clock()
+    return {
+      body: {
+        id: invitation.id,
+        unit_id: invitation.unit.id,
+        to_account_id: invitation.to,
+        invited_by: invitation.invitedBy,
+        status,
+        created_at: invitation.createdAt,
+        resolved_at: invitation.resolvedAt,
+      },
+    }
   }
 
   // ── Models ──────────────────────────────────────────────────────────────────

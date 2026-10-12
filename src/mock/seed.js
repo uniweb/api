@@ -15,7 +15,10 @@
  *   section's item, as the backend derives it.
  * - **`offers`** — optional, and none here: `{ email, invitations?, grants? }`, an
  *   invitation sent to an address with no account, mailed when the mock starts. Its
- *   link (`/?offer=…`) is how a site's pages are tried with one.
+ *   link (`/?offer=…`) is how a site's pages are tried with one. Claimed — or bound,
+ *   by signing up with that address and confirming it — it leaves `invitations`
+ *   waiting to be answered. One to an address a seeded account holds is that
+ *   account's from the start, and is not mailed: a way to open with one waiting.
  */
 export const DEFAULT_SEED = {
   accounts: [

@@ -18,6 +18,7 @@ import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
+import { listInvitationsWith, acceptInvitationWith, declineInvitationWith } from './invitations.js'
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -474,6 +475,39 @@ export class ApiClient {
    */
   claimOffer(token) {
     return claimOfferWith(this, token)
+  }
+
+  /**
+   * The invitations waiting for the signed-in account's answer — to join an
+   * organization — each as the backend lists it: `{ id, unit_uuid, unit_handle,
+   * unit_name, invited_by_account_id, created_at }`. Nobody signed in throws `auth`.
+   *
+   * @param {{ signal?: AbortSignal }} [options]
+   * @returns {Promise<object[]>}
+   */
+  listInvitations(options) {
+    return listInvitationsWith(this, options)
+  }
+
+  /**
+   * Accept an invitation by its `id`. What the viewer has read is read again, and the
+   * session is asked again.
+   *
+   * @param {number} id
+   * @returns {Promise<object>}
+   */
+  acceptInvitation(id) {
+    return acceptInvitationWith(this, id)
+  }
+
+  /**
+   * Decline an invitation by its `id`.
+   *
+   * @param {number} id
+   * @returns {Promise<object>}
+   */
+  declineInvitation(id) {
+    return declineInvitationWith(this, id)
   }
 
   // ── The cache ─────────────────────────────────────────────────────────────
@@ -997,6 +1031,12 @@ export const confirmPasswordReset = (fields) => required().confirmPasswordReset(
 export const verifyEmail = (token) => verifyEmailWith(required(), token)
 /** @see ApiClient#claimOffer — on any instance, an older copy's too */
 export const claimOffer = (token) => claimOfferWith(required(), token)
+/** @see ApiClient#listInvitations — on any instance, an older copy's too */
+export const listInvitations = (options) => listInvitationsWith(required(), options)
+/** @see ApiClient#acceptInvitation — on any instance, an older copy's too */
+export const acceptInvitation = (id) => acceptInvitationWith(required(), id)
+/** @see ApiClient#declineInvitation — on any instance, an older copy's too */
+export const declineInvitation = (id) => declineInvitationWith(required(), id)
 /** @see ApiClient#readEntity */
 export const readEntity = (args) => required().readEntity(args)
 /** @see ApiClient#listEntities */
