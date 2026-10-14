@@ -52,14 +52,17 @@ describe('the client against the mock — reading', () => {
     expect(records[0]).toMatchObject({ model_name: '@/track', via: 'owner' })
   })
 
-  it('⭐ gives the operator nothing of a member\'s — signed in on the site, it is a member too', async () => {
+  it('⭐ lets the operator read a member\'s through its role — and change nothing of it until it elevates', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
     const theirs = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await client.signOut()
     await signIn(client, 'organiser')
-    expect((await client.listEntities({ schema: '@/attendance' })).records).toEqual([])
-    await expect(client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    expect((await client.listEntities({ schema: '@/attendance' })).records.map((r) => r.via)).toEqual(['rbac'])
+    const seen = await client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })
+    expect(seen.entity.hydrated.entity.brief).toEqual({ who: 'Ada' })
+    expect(seen.entity.can_edit).toBe(false)
+    await expect(client.deleteEntity({ uuid: theirs.uuid })).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'delete' } })
   })
 
   it('⭐ reads a Model\'s definition for anyone signed in — not only its creators — and for nobody signed out', async () => {
@@ -422,8 +425,9 @@ describe('the client against the mock — writing', () => {
 
   it('keeps members\' entities private to them by default — and a service that chose a floor shares them', async () => {
     // Measured on a site's backend service: a member reads and writes their own entities
-    // and nothing of another's — nor does the operator, signed in on the site. A service
-    // can be set up to let members read each other's — the seed's `memberFloor`.
+    // and nothing of another's. The operator reads them through its role and changes
+    // nothing until it elevates. A service can be set up to let members read each
+    // other's — the seed's `memberFloor`.
     const seed = (memberFloor) => ({
       memberFloor,
       accounts: [
@@ -453,7 +457,7 @@ describe('the client against the mock — writing', () => {
     ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'edit' } })
     await privately.signOut()
     await signIn(privately, 'organiser')
-    await expect(privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    expect((await privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).entity.can_edit).toBe(false)
     delete globalThis.uniweb
 
     const shared = stack({ seed: seed('read') }).client
@@ -497,13 +501,21 @@ describe('the client against the mock — accounts', () => {
     await expect(client.signUp({ username: 'one', email: 'other@example.test', password: 'pw' })).rejects.toMatchObject({ status: 409 })
   })
 
-  it('names no administrator — a session on a site holds a member\'s rights, the operator\'s too', async () => {
+  it('names the operator\'s role as a reader\'s until it elevates — and a member\'s, none', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    expect(client.session.viewer).toMatchObject({ roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
+    expect(client.session.viewer).toMatchObject({
+      roles: [{ role: 'content_reader', scope_unit_id: null }],
+      workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' },
+      elevation: { available: true, until: null },
+    })
     await client.signOut()
     await signIn(client, 'attendee')
-    expect(client.session.viewer).toMatchObject({ roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
+    expect(client.session.viewer).toMatchObject({
+      roles: [],
+      workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' },
+      elevation: { available: false, until: null },
+    })
   })
 
   it('resets a password with the mailed link', async () => {
@@ -710,7 +722,7 @@ describe('the client against the mock — the Admin link', () => {
   it('offers it to the operator and to no one else — the fact rides the probe', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    expect(client.session.viewer).toMatchObject({ roles: [], adminApp: true })
+    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'content_reader', scope_unit_id: null }], adminApp: true })
     expect(adminHrefOf(client)).toBe('/_api/auth/member-handoff')
     await client.signOut()
     expect(adminHrefOf(client)).toBeNull()
@@ -740,6 +752,88 @@ describe('the client against the mock — the Admin link', () => {
     expect(page.status).toBe(200)
     expect(page.headers.get('content-type')).toMatch(/^text\/html/)
     expect(await page.text()).toContain('Signed in as <b>organiser</b>')
+  })
+})
+
+describe('the client against the mock — elevation', () => {
+  /** A member's entry, and the operator signed in to look at it. */
+  async function membersEntry() {
+    const { client, mock } = stack()
+    await signIn(client, 'attendee')
+    const theirs = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    await client.signOut()
+    await signIn(client, 'organiser')
+    return { client, mock, theirs }
+  }
+
+  it('⭐ the operator reads a member\'s, elevates, removes it — and lowered, changes nothing again', async () => {
+    const { client, theirs } = await membersEntry()
+    expect(client.session.viewer.elevation).toEqual({ available: true, until: null })
+    await expect(client.deleteEntity({ uuid: theirs.uuid, schema: '@/attendance' })).rejects.toMatchObject({ kind: 'forbidden' })
+
+    const { until } = await client.elevate({ password: 'organiser' })
+    expect(Date.parse(until) - Date.now()).toBeGreaterThan(14 * 60_000)
+    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], elevation: { available: true, until } })
+    expect((await client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).entity.can_edit).toBe(true)
+
+    const another = await (async () => {
+      await client.signOut()
+      await signIn(client, 'attendee')
+      const made = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Bo' } }] })
+      await client.signOut()
+      await signIn(client, 'organiser')
+      return made
+    })()
+    // A new sign-in is a new session: it reads until it is elevated again.
+    expect(client.session.viewer.elevation.until).toBeNull()
+    await client.elevate({ password: 'organiser' })
+    await client.deleteEntity({ uuid: theirs.uuid, schema: '@/attendance' })
+    await expect(client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+
+    await client.lower()
+    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'content_reader', scope_unit_id: null }], elevation: { until: null } })
+    await expect(client.deleteEntity({ uuid: another.uuid })).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'delete' } })
+  })
+
+  it('refuses a wrong password `401`, one answer — and the session is still signed in', async () => {
+    const { client } = await membersEntry()
+    await expect(client.elevate({ password: 'nope' })).rejects.toMatchObject({ kind: 'auth', status: 401 })
+    expect(client.session.status).toBe('authenticated')
+    expect(client.session.viewer.elevation.until).toBeNull()
+  })
+
+  it('offers a member nothing to elevate — `available: false` — and their own content was theirs all along', async () => {
+    const { client } = stack()
+    await signIn(client, 'attendee')
+    expect(client.session.viewer.elevation).toEqual({ available: false, until: null })
+    const mine = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    expect((await client.readEntity({ schema: '@/attendance', uuid: mine.uuid })).entity.can_edit).toBe(true)
+  })
+
+  it('closes the window on its own', async () => {
+    const { client, mock } = await membersEntry()
+    await client.elevate({ password: 'organiser' })
+    mock.store.session.elevatedUntil = new Date(Date.now() - 1000).toISOString()
+    await client.refresh()
+    expect(client.session.viewer).toMatchObject({ roles: [{ role: 'content_reader', scope_unit_id: null }], elevation: { until: null } })
+  })
+
+  it('answers nobody `401`, and a body with no password `400`, as the backend does', async () => {
+    const at = 'http://site.test/_api/auth/elevate'
+    const anonymous = createMockBackend()
+    expect((await anonymous.fetch(new Request(at, { method: 'POST', body: '{"password":"x"}', headers: { 'x-uniweb-csrf': '1' } }))).status).toBe(401)
+    expect((await anonymous.fetch(new Request(at, { method: 'DELETE', headers: { 'x-uniweb-csrf': '1' } }))).status).toBe(401)
+    const signedIn = createMockBackend({ signedInAs: 'organiser' })
+    const missing = await signedIn.fetch(new Request(at, { method: 'POST', body: '{}', headers: { 'x-uniweb-csrf': '1' } }))
+    expect(missing.status).toBe(400)
+    expect((await missing.json()).detail).toContain('missing field `password`')
+  })
+
+  it('has no sign-in providers — the provider\'s elevation is not a route of the mock', async () => {
+    const mock = createMockBackend({ signedInAs: 'organiser' })
+    const answer = await mock.fetch(new Request('http://site.test/_api/auth/elevate/google/authorize?redirect_uri=x&state=y'))
+    expect(answer.status).toBe(404)
+    expect((await answer.json()).detail).toContain('no sign-in providers')
   })
 })
 

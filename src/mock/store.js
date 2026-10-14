@@ -20,11 +20,14 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  *   other's — the seed's `memberFloor` models that choice. *(Until 2026-09-18 the
  *   backend gave every member read access to every other member's entities.)*
  * - **The operator** — the account that runs the site's service — owns what the
- *   seed gives it. ⛔ **Signed in on the site it holds a member's rights**, like
- *   everyone: no `system_admin` in `roles`, and nothing of another member's unless
- *   shared — a site runs third-party code with its member's session. *(Until
- *   2026-10-10 the operator's session held `system_admin` and read and wrote
- *   everything.)* A seeded account is the operator with `operator: true`.
+ *   seed gives it, and holds `system_admin` over the whole service. ⛔ **Signed in on
+ *   the site, it holds that role as a reader until it is elevated**: it reads every
+ *   member's entities (`via: rbac`) and changes none of them — a site runs third-party
+ *   code with its member's session. Elevated, with its password again, its role answers
+ *   in full until the window closes (`ELEVATION_WINDOW`) or it lowers it. *(Stated by
+ *   the backend, 2026-10-14. From 2026-10-10 the operator's session held a member's
+ *   rights only, and before that `system_admin` in full.)* A seeded account is the
+ *   operator with `operator: true`.
  * - **An offer binds when it is claimed, or when its address is confirmed** — and
  *   then its token answers `404`, as an unknown one does (backend, 2026-10-11). What
  *   it binds: its invitations, each waiting for the account's answer, to an
@@ -36,8 +39,10 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  * drifts and is believed anyway.
  *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
- * same read), a Model whose creation is closed, nested sections, second factors,
- * reference fields, password rules,
+ * same read), a Model whose creation is closed, nested sections, second factors —
+ * at a sign-in or an elevation, where a `code` is accepted and not checked —
+ * sign-in providers, and so no elevation through one, roles other than the operator's,
+ * step-up, reference fields, password rules,
  * an offer's grants (a count, sharing nothing), what joining an organization
  * gives — accepting an invitation answers, and opens nothing to read — and an
  * organization withdrawing an invitation.
@@ -59,6 +64,15 @@ export const HOME_ORG = Object.freeze({
   unit_uuid: '01926d5e-0000-7000-8000-0000000000a0',
   handle: 'home',
 })
+
+/**
+ * How long an elevation lasts — the backend's window, 15 minutes on 2026-10-14, as the
+ * backend states it. The client never assumes it; it reads `until`.
+ */
+export const ELEVATION_WINDOW = 15 * 60 * 1000
+
+/** The operator's role, as `/auth/me` names it — MEASURED 2026-09-18. */
+const OPERATOR_ROLE = Object.freeze({ role: 'system_admin', scope_unit_id: null })
 
 /** The gap between neighbouring items' order numbers, as the backend spaces them. */
 const GAP = 1_000_000
@@ -209,7 +223,7 @@ export class MockStore {
         const known = this.accounts.map((a) => a.username).join(', ') || '(none)'
         throw new Error(`[uniweb/api mock] signedInAs: '${signedInAs}' is not a seeded account. Seeded: ${known}`)
       }
-      this.session = { account }
+      this.session = { account, elevatedUntil: null }
     }
   }
 
@@ -234,22 +248,50 @@ export class MockStore {
     return this.session?.account ?? null
   }
 
+  /** Whether the session is elevated now — its window still open. */
+  get elevated() {
+    const until = this.session?.elevatedUntil
+    return until != null && Date.parse(until) > Date.now()
+  }
+
   /**
-   * The viewer, in the shape `/auth/me` answers. `roles` are the session's, and a
-   * session on a site holds no administrator's — the operator's neither. Whether the
-   * backend's administration admits the ACCOUNT is `capabilities.admin_app`: the
-   * operator's yes, a member's no.
+   * The viewer, in the shape `/auth/me` answers. `roles` are the session's: the
+   * operator's `system_admin`, held as `content_reader` at the same scope until the
+   * session is elevated; a member's, none. `elevation` says whether it can be — the
+   * operator's yes — and until when it is. Whether the backend's administration admits
+   * the ACCOUNT is `capabilities.admin_app`: the operator's yes, a member's no.
    */
   viewer(account = this.account) {
     if (!account) return null
+    const elevated = this.elevated
+    const roles = account.operator ? [elevated ? { ...OPERATOR_ROLE } : { ...OPERATOR_ROLE, role: 'content_reader' }] : []
     return {
       account: this.identity(account),
-      roles: [],
+      roles,
       // A request that names no workspace — as this package's never do — lands in the
       // home org, which every account belongs to. Both null would mean a non-member.
       workspace: { ...HOME_ORG },
       capabilities: { admin_app: account.operator === true },
+      elevation: { available: account.operator === true, ...(elevated ? { until: this.session.elevatedUntil } : {}) },
     }
+  }
+
+  /**
+   * `POST /auth/elevate` — the password again, and the window opens: `elevated_until`.
+   * A wrong password is `401`, as the backend's one answer for a wrong password or code.
+   * An account with nothing to elevate is answered the same way — what the backend does
+   * then is not measured, and it changes nothing the account may do.
+   */
+  elevate({ password }) {
+    if (!this.account || this.account.password !== password) return refuse(401, 'Unauthorized')
+    this.session.elevatedUntil = new Date(Date.now() + ELEVATION_WINDOW).toISOString()
+    return { body: { elevated_until: this.session.elevatedUntil } }
+  }
+
+  /** `DELETE /auth/elevate` — the window closes now. */
+  lower() {
+    this.session.elevatedUntil = null
+    return { body: { elevated_until: null } }
   }
 
   identity(account) {
@@ -260,7 +302,7 @@ export class MockStore {
     const account = this.accounts.find((a) => a.username === username)
     if (!account || account.password !== password) return refuse(401, 'Unauthorized')
     if (!account.verified) return refuse(403, PROBLEM.notVerified, 'verify your email address before signing in')
-    this.session = { account }
+    this.session = { account, elevatedUntil: null }
     const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
     // No `token`: a site's backend answers a sign-in with the session cookie alone.
     return { body: { expires_at: expires, account: this.identity(account) } }
@@ -599,30 +641,35 @@ export class MockStore {
   }
 
   /**
-   * The owner — or any member, when the service lets members read each other's. The
-   * operator is a member here like everyone: a session on a site holds no
-   * administrator's rights.
+   * The owner — or the operator, whose role reads everything, elevated or not — or any
+   * member, when the service lets members read each other's.
    */
   mayRead(entity) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || this.floorFor(entity) != null)
+    return !!me && (entity.owner_id === me.id || me.operator === true || this.floorFor(entity) != null)
   }
 
+  /**
+   * The owner — or the operator while its session is elevated — or any member, when the
+   * service lets members edit each other's.
+   */
   mayEdit(entity) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || this.floorFor(entity) === 'edit')
+    return !!me && (entity.owner_id === me.id || (me.operator === true && this.elevated) || this.floorFor(entity) === 'edit')
   }
 
   /**
    * Which branch lets the viewer read a row, as the backend names it — the first to
    * answer in its order: `owner`, `grant`, `rbac`, `unit_member`. A session's own rows
-   * are `owner`, the operator's too, and the rest it reads by the service's floor.
-   * *(Until 2026-10-10 the operator's session read the rest as `rbac`, through
-   * `system_admin`.)*
+   * are `owner`, the operator's too; the rest the operator reads through its role,
+   * `rbac`; a member reads the rest by the service's floor. *(From 2026-10-10 to
+   * 2026-10-14 the operator's session read nothing of a member's, and before that the
+   * rest as `rbac`, through `system_admin`.)*
    */
   via(entity) {
     const me = this.account
     if (entity.owner_id === me?.id) return 'owner'
+    if (me?.operator === true) return 'rbac'
     return 'unit_member'
   }
 

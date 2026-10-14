@@ -7,7 +7,8 @@
  * hosted site. Nothing here depends on which.
  *
  * - **`UNIWEB_API_LOGIN`** — the JSON body of a sign-in (`{"username","password"}`)
- *   for a verified account. Turns on the signed-in half.
+ *   for a verified account with no second factor. Turns on the signed-in half — its
+ *   elevation too, on a backend a site reaches.
  * - **`UNIWEB_API_MODEL`** — a Model that account may create (`@scope/name`), with a
  *   brief section. Turns on the entities half: create, list, read, item writes, a
  *   conflict, and — when the Model has an insert-only section — its rule.
@@ -137,6 +138,31 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       // A backend no site reaches has no handoff at all: `404`.
       expect([403, 404]).toContain(res.status)
       if (res.status === 403) expect(await res.json()).toMatchObject({ title: HANDOFF_REFUSAL.title, reason: HANDOFF_REFUSAL.reason })
+    })
+
+    it('says whether the session can be elevated — and elevates with the password, then lowers', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const me = await c.request('GET', AUTH.me, { onUnauthorized: 'ignore' })
+      // A backend no site reaches sends no `elevation`: its roles answer in full.
+      if (!me.elevation) {
+        expect(c.session.viewer.elevation).toBeNull()
+        return
+      }
+      expect(typeof me.elevation.available).toBe('boolean')
+      expect(me.elevation.until).toBeUndefined()
+      expect(c.session.viewer.elevation).toEqual({ available: me.elevation.available, until: null })
+
+      const refused = await c.elevate({ password: `${LOGIN.password}-not` }).catch((e) => e)
+      expect(refused).toMatchObject({ kind: 'auth', status: 401 })
+      expect(c.session.status).toBe('authenticated')
+
+      const { until } = await c.elevate({ password: LOGIN.password })
+      expect(Date.parse(until)).toBeGreaterThan(Date.now())
+      expect(c.session.viewer.elevation.until).toBe(until)
+
+      await expect(c.lower()).resolves.toEqual({ until: null })
+      expect(c.session.viewer.elevation.until).toBeNull()
     })
 
     it('reads an offer token it cannot use as `absent` — unknown, revoked and claimed are one answer', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ, LINK, OFFERS, INVITATIONS } from '../src/wire.js'
+import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ, LINK, OFFERS, INVITATIONS, ELEVATION, VIEWER } from '../src/wire.js'
 import { composeUrl } from '../src/http.js'
 
 /**
@@ -12,9 +12,10 @@ describe('wire — the assumptions are a reviewable set', () => {
   // `via-and-depth-compose` true, both by measurement, to 2026-10-11 — when
   // `offer-claim-needs-a-session` came and went the same day, answered true by the
   // backend, and the invitation routes brought two more, both answered by the backend
-  // on 2026-10-12. A new assumption added without an entry here fails this — building
-  // ahead is paid for in bookkeeping.
-  const EXPECTED = []
+  // on 2026-10-12. Since 2026-10-14 it holds `elevation-by-provider`: the backend names
+  // that route and its answers, and not what `state` must be. A new assumption added
+  // without an entry here fails this — building ahead is paid for in bookkeeping.
+  const EXPECTED = ['elevation-by-provider']
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)
@@ -59,6 +60,13 @@ describe('wire — the lane', () => {
     for (const path of [OFFERS.claim, INVITATIONS.mine, INVITATIONS.accept(1), INVITATIONS.decline(1)]) {
       expect(path).not.toContain('/sites/')
     }
+  })
+
+  it('elevates under /auth — and through a provider by a navigation that names it', () => {
+    expect(AUTH.elevate).toBe('/auth/elevate')
+    expect(ELEVATION.byProvider('google')).toBe('/auth/elevate/google/authorize')
+    expect(ELEVATION.byProvider('a/b')).toBe('/auth/elevate/a%2Fb/authorize')
+    expect(VIEWER.elevation).toBe('elevation')
   })
 
   it('names the three steps a mailed link starts, by the parameters the backend mails', () => {

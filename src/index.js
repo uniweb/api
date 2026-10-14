@@ -18,6 +18,11 @@ export {
   signIn,
   completeChallenge,
   signOut,
+  elevate,
+  lower,
+  elevateWithProvider,
+  isElevated,
+  rolesInFull,
   signUp,
   requestPasswordReset,
   confirmPasswordReset,
@@ -39,6 +44,7 @@ export {
 } from './client.js'
 
 export { useSession } from './hooks/useSession.js'
+export { useElevation } from './hooks/useElevation.js'
 export { useSignIn } from './hooks/useSignIn.js'
 export { useSignUp } from './hooks/useSignUp.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'

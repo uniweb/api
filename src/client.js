@@ -19,6 +19,7 @@ import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA
 import { Ledger } from './ledger.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
 import { listInvitationsWith, acceptInvitationWith, declineInvitationWith } from './invitations.js'
+import { viewerElevation, watchLapse, elevateWith, lowerWith, elevateWithProviderOf } from './elevation.js'
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -219,6 +220,8 @@ export class ApiClient {
     const error = next.error ?? null
     if (cur.status === next.status && cur.viewer === viewer && cur.error === error) return cur
     this._session = Object.freeze({ status: next.status, viewer, error })
+    // An elevated session is asked again when its elevation runs out (`./elevation.js`).
+    watchLapse(this)
     for (const fn of this._listeners) fn()
     return this._session
   }
@@ -356,6 +359,7 @@ export class ApiClient {
       roles: Array.isArray(me?.roles) ? me.roles : [],
       workspace: viewerWorkspace(me?.workspace),
       adminApp: me?.[VIEWER.capabilities]?.[VIEWER.adminApp] === true,
+      elevation: viewerElevation(me?.[VIEWER.elevation]),
     })
     if (this._session.viewer && this._session.viewer.uuid !== viewer.uuid) this.forgetViewer()
     return this.setSession({ status: 'authenticated', viewer, error: null })
@@ -425,6 +429,35 @@ export class ApiClient {
     } finally {
       this._sessionLost()
     }
+  }
+
+  /**
+   * Elevate the session — `{ password, code? }` — so it acts through the account's roles
+   * for a while. Answers `{ until }`. A refused credential throws `kind: 'auth'`, one
+   * answer for a wrong password or code (`./elevation.js`).
+   *
+   * @param {{ password: string, code?: string }} credentials
+   * @returns {Promise<{ until: string|null }>}
+   */
+  elevate(credentials) {
+    return elevateWith(this, credentials)
+  }
+
+  /** Lower the session before its time runs out. */
+  lower() {
+    return lowerWith(this)
+  }
+
+  /**
+   * Elevate through the account's provider — a navigation to its sign-in, which comes
+   * back to the page elevated. For an account with no password.
+   *
+   * @param {string} provider
+   * @param {{ returnTo?: string }} [options]
+   * @returns {string|null} the address navigated to
+   */
+  elevateWithProvider(provider, options) {
+    return elevateWithProviderOf(this, provider, options)
   }
 
   /**
@@ -688,9 +721,9 @@ export class ApiClient {
    * a `401` too, never an empty list (so `records: []` means empty).
    *
    * `scope` decides whose: the default, `accessible`, is everything the viewer may
-   * read — signed in on a site, their own entities and what was shared with them, the
-   * operator's session included (`VIEWER` in `./wire.js`). `mine` is only what the
-   * viewer owns.
+   * read — signed in on a site, their own entities, what was shared with them, and what
+   * a role of theirs reaches, elevated or not: the operator's, every member's (`SCOPE`
+   * in `./wire.js`). `mine` is only what the viewer owns.
    *
    * ## Paging, as far as it can honestly be absorbed
    *
@@ -1023,6 +1056,12 @@ export const signIn = (credentials) => required().signIn(credentials)
 export const completeChallenge = (code) => required().completeChallenge(code)
 /** @see ApiClient#signOut */
 export const signOut = () => required().signOut()
+/** @see ApiClient#elevate — on any instance, an older copy's too */
+export const elevate = (credentials) => elevateWith(required(), credentials)
+/** @see ApiClient#lower — on any instance, an older copy's too */
+export const lower = () => lowerWith(required())
+/** @see ApiClient#elevateWithProvider — on any instance, an older copy's too */
+export const elevateWithProvider = (provider, options) => elevateWithProviderOf(required(), provider, options)
 /** @see ApiClient#signUp */
 export const signUp = (fields) => required().signUp(fields)
 /** @see ApiClient#requestPasswordReset */
@@ -1053,5 +1092,6 @@ export const deleteEntity = (args) => required().deleteEntity(args)
 export const adminHref = () => adminHrefOf(getClient())
 
 export { mailedLink, forgetMailedLink } from './mailed-links.js'
+export { isElevated, rolesInFull, elevationReturn } from './elevation.js'
 export { ApiError, kindOf } from './errors.js'
 export { Ledger } from './ledger.js'

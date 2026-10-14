@@ -15,6 +15,11 @@ const noop = async () => NONE
  * affordance on false. `error` is set when the backend could not be asked;
  * `refresh()` asks again.
  *
+ * `viewer.roles` describe the session, not the account: on a site's backend an
+ * administrator's session holds its roles as a reader until it is elevated, and
+ * `viewer.elevation` — `{ available, until }`, or `null` on a backend that never asks —
+ * says whether it can be, and until when it is. `useElevation` reads it and elevates.
+ *
  * `adminHref` is the Admin link — set only for a signed-in account the backend's
  * administration admits, `null` for everyone else, so draw the link only when it is
  * set. ⛔ Navigate to it, never `fetch` it (`adminHrefOf` in `../client.js`).

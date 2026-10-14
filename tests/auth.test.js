@@ -41,6 +41,8 @@ describe('the probe — GET /auth/me', () => {
       roles: [{ role: 'content_editor', scope_unit_id: 7 }],
       workspace: { unitUuid: HOME.unit_uuid, handle: 'home' },
       adminApp: false,
+      // No `elevation` on the answer: a backend no site reaches, whose roles answer in full.
+      elevation: null,
     })
     expect(Object.isFrozen(session.viewer)).toBe(true)
     expect(route(...client.fetchFn.mock.calls[0])).toBe('GET /_api/auth/me')

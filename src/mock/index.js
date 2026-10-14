@@ -1,4 +1,4 @@
-import { AUTH, ENTITIES, MODELS, OFFERS, INVITATIONS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL } from '../wire.js'
+import { AUTH, ENTITIES, MODELS, OFFERS, INVITATIONS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL, ELEVATION } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
 
@@ -255,8 +255,21 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         const token = q.get('token') || ''
         return token ? answer(store.verify(token)) : badRequest('verify requires `token`')
       }
+      if (path.startsWith(`${AUTH.elevate}/`) && method === 'GET') {
+        // The provider's elevation — a navigation. The mock has no sign-in providers.
+        return problem({ status: 404, title: 'Not Found', detail: 'the mock has no sign-in providers — elevate with the password' })
+      }
       const bad = unexpected(q, [])
       if (bad) return bad
+      if (path === AUTH.elevate && method === 'POST') {
+        if (!store.account) return unauthorized()
+        const b = await body(request)
+        return fields(b, [ELEVATION.password], '{"password": ..., "code": ...}') ?? answer(store.elevate(b))
+      }
+      if (path === AUTH.elevate && method === 'DELETE') {
+        if (!store.account) return unauthorized()
+        return answer(store.lower())
+      }
       if (path === AUTH.me && method === 'GET') {
         const viewer = store.viewer()
         return viewer ? json(200, viewer) : unauthorized()

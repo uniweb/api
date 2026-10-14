@@ -52,13 +52,16 @@ function Account() {
 ```
 
 `viewer` is flat — `viewer.uuid`, `viewer.username`, `viewer.handle`, and `viewer.roles`,
-a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and a session
-signed in on a site holds a member's rights — the operator's too.** A site runs your
-foundation's code with the signed-in member's session, so no administrator's role
-rides with it: `viewer.roles` never names one there, and an ordinary member holds none
-(`[]`). `viewer.workspace` — the site service's home org, `{ handle: 'home', … }` — is
-the same for everyone. To decide whether to show an edit control for a particular
-record, read that record: `entity.can_edit` is the backend's own answer.
+a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and on a site a
+session holds the account's roles as a reader's until it is elevated.** A site runs
+your foundation's code with the signed-in member's session, so an administrator signed
+in on it reads what their role reaches — the operator reads every member's content —
+and changes nothing through the role until they confirm it is them (*Acting as an
+administrator*, below). Their own content they edit, delete and share as always. An
+ordinary member holds no role (`[]`). `viewer.workspace` — the site service's home org,
+`{ handle: 'home', … }` — is the same for everyone. To decide whether to show an edit
+control for a particular record, read that record: `entity.can_edit` is the backend's
+own answer.
 
 **Signing up** — `useSignUp().signUp({ username, email, password })` answers
 `{ status: 'verification_required', email }`, the same answer for an address already in
@@ -146,6 +149,42 @@ function Invitations() {
 - ⭐ Draw it wherever a signed-in member lands, not only after an `?offer=` link: an
   invitation sent to an account comes with no link to follow.
 
+**Acting as an administrator** — an administrator on the site reads what their role
+reaches; to change something through it — remove a member's post, grade a submission —
+they confirm it is them, and for a while the session acts through the role.
+`useElevation()` offers it:
+
+```jsx
+import { useElevation } from '@uniweb/api'
+
+function AdminMode() {
+  const { available, elevated, until, elevate, lower, error } = useElevation()
+  if (!available) return null
+  if (elevated) {
+    return <p>Acting as administrator until {new Date(until).toLocaleTimeString()}. <button onClick={lower}>Stop</button></p>
+  }
+  return <ConfirmItsYou onSubmit={(password, code) => elevate({ password, code })} refused={error?.kind === 'auth'} />
+}
+```
+
+- `available` — the account holds a role that does more than read. Offer it only then.
+- `elevate({ password, code })` — the account's password again, and `code` when it has a
+  second factor. Nothing tells you whether it has one, so offer the field to whoever
+  might. A wrong password or code is `error.kind === 'auth'`, one answer for both.
+- It lasts as long as the backend decides; `until` says when it ends. `elevated` turns
+  false by itself then, and the session is asked again. Elevating again starts the time
+  again; nothing extends it on its own. `lower()` ends it early.
+- While it lasts, `viewer.roles` names the role, and every record read before is read
+  again — `entity.can_edit` is the record's answer for the session as it is now.
+- `rolesInFull` — draw controls that act through a role from this: true while elevated,
+  and always on a backend that asks for no elevation.
+- An account with no password elevates through its provider:
+  `elevateWithProvider('google')` goes to the provider's sign-in and back to this page.
+  If the identity that comes back is not this account's, `error.extensions.reason` is
+  `'oauth_step_up_not_linked'`.
+
+Elevating does not open the backend's administration — the Admin link does.
+
 **The Admin link** — some of the site's members administer its backend, the operator
 among them. For them, `adminHref` is the address that takes them to the backend's
 administration, already signed in; for everyone else it is `null`, so draw the link
@@ -160,8 +199,8 @@ const { adminHref } = useSession()
 ⛔ **Navigate to it — a link, or `location.assign(adminHref)` — never `fetch` it.** It
 answers with a redirect carrying a one-time credential that no script on the site is
 to hold. The link decides what to offer, not what is allowed: on the site, an
-administrator's session acts as a member's, and administering happens at the other
-end of the link.
+administrator's session acts through their role only while elevated, and administering
+the backend happens at the other end of the link.
 
 ## Reading
 
@@ -178,10 +217,10 @@ live source — no `backend` service, or nobody signed in — so render your sit
 Showing "nothing yet" for the first case tells a visitor their content is missing
 when it is simply not being asked for.
 
-**Whose records.** Everyone signed in on the site — its operator too — reads their own
-entities and what was shared with them; other members' are private unless the site's
-service was set up to let members read each other's. `scope: 'mine'` lists only the
-viewer's own.
+**Whose records.** Everyone signed in on the site reads their own entities, what was
+shared with them, and what a role of theirs reaches — the operator's reaches every
+member's; other members' are private unless the site's service was set up to let members
+read each other's. `scope: 'mine'` lists only the viewer's own.
 
 A record is a summary: `record.brief` holds the fields of the Model's brief section. It
 carries no items — read the entity for those. `hasMore` is true when a page came back
@@ -306,11 +345,12 @@ production, and nothing in your site's configuration changes between the two.
 refusals, for every route this package uses. It enforces what your schemas declare —
 which sections are insert-only, the fields a section takes — and it is as strict as
 the backend about requests, so a mistake fails here rather than in front of a user.
-Everyone signed in — the operator too, as on a real site — reads and writes their own
-entities and nothing of anyone else's (`memberFloor: 'read'` in the seed models a
-service set up to let members read each other's — or per Model,
-`memberFloor: { '@acme/course': 'read' }`, so the operator's content is shared while
-each member's own records stay private). The mail the backend would send — a sign-up's
+Everyone signed in reads and writes their own entities, and a member nothing of anyone
+else's (`memberFloor: 'read'` in the seed models a service set up to let members read
+each other's — or per Model, `memberFloor: { '@acme/course': 'read' }`, so the
+operator's content is shared while each member's own records stay private). The
+operator, as on a real site, reads every member's entities and changes them only once
+elevated, with its password, for fifteen minutes. The mail the backend would send — a sign-up's
 confirmation, a password reset — is printed where the mock runs, in the terminal of
 `uniweb dev`, its link on your site's root as the backend's is, so following it is
 trying your page; the messages are in `mock.outbox` too. To try an invitation, seed one:
@@ -332,7 +372,8 @@ npx uniweb-api-mock --port 8787 --site http://localhost:3000
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
 React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
-`createEntity`, `deleteEntity`, `adminHref`, for the links the backend mails,
+`createEntity`, `deleteEntity`, `adminHref`, for elevation, `elevate`, `lower`,
+`elevateWithProvider`, `isElevated` and `rolesInFull`, for the links the backend mails,
 `mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`, and for invitations,
 `listInvitations`, `acceptInvitation` and `declineInvitation`.
 

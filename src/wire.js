@@ -121,6 +121,10 @@ export const AUTH = {
    * `detail`. **MEASURED** by backend, 2026-10-10.
    */
   memberHandoff: '/auth/member-handoff',
+  /**
+   * `POST /auth/elevate` elevates a site's session; `DELETE` lowers it (`ELEVATION`).
+   */
+  elevate: '/auth/elevate',
 }
 
 /**
@@ -148,7 +152,8 @@ export const HANDOFF_REFUSAL = Object.freeze({
  * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
  * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`, and every other session of the account ends; a bad token is `400 Validation`; `code` is required when a second factor is enrolled. A password the rule refuses is `400` with `reason: 'password_too_short'` and `min_length` — refused BEFORE the token is spent, so the same link works again (RULED by backend, 2026-10-11) |
  * | logout | none | `204`; with no session to end, `401` |
- * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle }, capabilities: { admin_app } }` · `401` |
+ * | me | none | `200 { account: { uuid, username, handle }, roles, workspace: { unit_uuid, handle }, capabilities: { admin_app }, elevation? }` · `401` |
+ * | elevate | `{ password, code? }` | `200 { elevated_until }` · `401`, one answer for a wrong password or code (`ELEVATION`) |
  *
  * ⭐ **The session is the cookie, and only the cookie.** A site's backend answers a
  * sign-in with no `token` (since 2026-10-10, MEASURED by backend; `token` was in the
@@ -161,6 +166,54 @@ export const AUTH_BODY = {
   register: ['username', 'email', 'password'],
   resetRequest: ['email'],
   resetConfirm: ['token', 'new_password', 'code?'],
+  elevate: ['password', 'code?'],
+}
+
+/**
+ * Elevation. **Stated by the backend, 2026-10-14, and measured by its own end-to-end
+ * test; not yet measured here.**
+ *
+ * On a site's backend, a session signed in on the site holds each of the account's
+ * roles as `content_reader`, at the same scope, until it is ELEVATED: it reads wherever
+ * a role reached and changes nothing through one. Ownership and grants work as always —
+ * a member edits, deletes and shares their own. To act through a role — an
+ * administrator removing a member's post — the session elevates, for a while.
+ *
+ * | route | body | answer |
+ * |---|---|---|
+ * | `GET /auth/me` | none | carries `elevation: { available, until? }` on such a session — `available` when the account holds a role that answers more than `read`; `until`, an ISO time, while elevated. A backend no site reaches sends no `elevation`: its roles answer in full |
+ * | `POST /auth/elevate` | `{ password, code? }` — `code` when a second factor is live | `200 { elevated_until }`. A wrong password or code is `401`, one answer — and so is no session at all |
+ * | `DELETE /auth/elevate` | none | `200 { elevated_until: null }` |
+ * | `GET /auth/elevate/{provider}/authorize?redirect_uri=&state=` | — | ⛔ **a navigation**, for an account with no password: the provider's sign-in, then back to `redirect_uri` with `?elevate=ok`, or `?error=oauth_step_up_not_linked` when the identity that came back is not the account's |
+ *
+ * - **The window is the backend's** — 15 minutes on 2026-10-14 — and this package never
+ *   assumes it: it reads `until`. Elevating again starts it again; nothing extends it.
+ * - **`roles` on `/auth/me` is what the session holds now** — `content_reader` rows until
+ *   it is elevated, the account's roles while it is (`VIEWER`).
+ * - **Elevating is step-up's proof too** (`PROBLEM.stepUp`).
+ * - **It does not reach the backend's administration**, which takes a site's session as
+ *   a reader, elevated or not. The Admin link does (`AUTH.memberHandoff`).
+ * - **What an elevated session may do to an entity is still the entity's answer** —
+ *   `can_edit` on a read (`READ`), so a read made before elevating is read again.
+ */
+export const ELEVATION = {
+  /** `/auth/me`'s field, and its two keys. */
+  me: 'elevation',
+  available: 'available',
+  until: 'until',
+  /** The answer of `POST` and `DELETE /auth/elevate`: an ISO time, or `null`. */
+  answer: 'elevated_until',
+  password: 'password',
+  code: 'code',
+  /** The provider's elevation — a navigation, never a fetch. */
+  byProvider: (provider) => `/auth/elevate/${segment(provider)}/authorize`,
+  redirect: 'redirect_uri',
+  state: 'state',
+  /** What the provider's elevation returns with: `?elevate=ok`, or `?error=oauth_step_up_not_linked`. */
+  returned: 'elevate',
+  ok: 'ok',
+  error: 'error',
+  notLinked: 'oauth_step_up_not_linked',
 }
 
 /**
@@ -274,13 +327,20 @@ export const TOTP = {
  * The viewer, as `/auth/me` answers. **MEASURED.**
  *
  * `roles` is a list of `{ role, scope_unit_id }` — `role` one of `system_admin`,
- * `unit_admin`, `content_editor`, `user`. ⭐ **They describe the session, not the
- * account.** On a site's `backend` service a session signed in on the site holds no
- * `system_admin` and no `unit_admin` of the home org — the operator's neither — so
- * `roles` never name an administrator there: a site runs third-party code with its
- * member's session, and a bug in that code must not act as one. An ordinary member
- * holds none: `[]`. *(Since 2026-10-10, MEASURED by backend; until then the operator's
- * session on a site held `system_admin`.)*
+ * `unit_admin`, `content_editor`, `content_reader`, `user`; the operator's is
+ * `{ role: 'system_admin', scope_unit_id: null }` (MEASURED 2026-09-18). ⭐ **They
+ * describe the session, not the account.** On a site's `backend` service a session
+ * signed in on the site holds each of the account's roles as `content_reader`, at the
+ * same scope, until it is elevated — so `roles` name an administrator there only while
+ * the session is (`ELEVATION`): a site runs third-party code with its member's session,
+ * and a bug in that code acts with whatever the session holds. An ordinary member holds
+ * none: `[]`. *(Since 2026-10-14, stated by backend. From 2026-10-10 such a session held
+ * no `system_admin` and no `unit_admin` of the home org and every other role whole, and
+ * before that the operator's session on a site held `system_admin`.)*
+ *
+ * `elevation` is `{ available, until? }` on a site's session (`ELEVATION`), absent on a
+ * backend no site reaches. The viewer carries it as `{ available, until }` — `until`
+ * `null` when not elevated — or `null` when absent.
  *
  * `workspace` is `{ unit_uuid, handle }` — **the workspace the request works in**. This
  * package's requests name none, and on a site's `backend` service such a request lands in
@@ -293,16 +353,16 @@ export const TOTP = {
  *
  * ⛔ **Neither is an operator signal.** Every member of a site's service works in the
  * same home org, so `workspace` reads the same for the operator and for someone who
- * signed up a minute ago, and on a site `roles` name no administrator. Ask about the
- * thing instead — a single-entity read carries `can_edit`, the write gate's own answer
- * for this session.
+ * signed up a minute ago, and on a site `roles` name an administrator only while the
+ * session is elevated. Ask about the thing instead — a single-entity read carries
+ * `can_edit`, the write gate's own answer for this session.
  *
  * `capabilities.admin_app` is the one fact here about the ACCOUNT rather than the
  * session: `true` when the backend's administration admits it — the operator, and
  * whoever else administers the service. The viewer carries it as `adminApp`, and the
  * package then offers the Admin link (`AUTH.memberHandoff`). It decides what to OFFER,
- * never what is allowed on the site, where the session acts as a member whatever the
- * account holds. `true` or `false` for every signed-in caller, at the same path as on
+ * never what is allowed on the site, where the session acts through its roles only
+ * while elevated. `true` or `false` for every signed-in caller, at the same path as on
  * `/session/bootstrap` (MEASURED by backend, 2026-10-10); anything else reads as
  * `false`.
  */
@@ -312,6 +372,7 @@ export const VIEWER = {
   workspace: 'workspace',
   capabilities: 'capabilities',
   adminApp: 'admin_app',
+  elevation: ELEVATION.me,
 }
 
 /**
@@ -383,12 +444,15 @@ export const PARAM = {
  * The list's `scope`. Default `accessible` — everything the viewer may read; `mine`
  * — only what the viewer owns.
  *
- * What a session signed in on a site may read — any member's, the operator's
- * included (`VIEWER`): its own entities, and what was shared with it. Other members'
- * entities are private to their owners unless the site's service was set up to let
- * members read each other's. *(A site's service let every member read every other
- * member's entities until 2026-09-18, and the operator's session read everything until
- * 2026-10-10 — both measured, and changed on the backend.)*
+ * What a session signed in on a site may read: its own entities, what was shared with
+ * it, and — for an account that holds a role — whatever that role reaches, elevated or
+ * not (`ELEVATION`): the operator's session reads every member's. An ordinary member's
+ * holds no role, and other members' entities are private to their owners unless the
+ * site's service was set up to let members read each other's. *(A site's service let
+ * every member read every other member's entities until 2026-09-18 — measured, and
+ * changed on the backend. The operator's session read everything until 2026-10-10,
+ * nothing of a member's from then, and since 2026-10-14 reads everything again and
+ * changes it only while elevated — stated by the backend.)*
  */
 export const SCOPE = {
   mine: 'mine',
@@ -503,8 +567,9 @@ export const CREATE = {
  *
  * `via` names why the viewer can read the row — `owner`, `grant`, `rbac`,
  * `unit_member`, `entitlement`; treat an unknown value as "no opinion". A session's
- * own rows are `owner` — the operator's too. *(Until 2026-10-10 the operator's session
- * on a site read the rest as `rbac`, through `system_admin`.)* `rbac` is any
+ * own rows are `owner` — the operator's too — and the rest the operator's session reads
+ * are `rbac`, through its role, elevated or not. *(From 2026-10-10 to 2026-10-14 the
+ * operator's session on a site read nothing of a member's.)* `rbac` is any
  * administrative path — a role, and since 2026-10-14 a reader held at a unit over its
  * people's content, and a reference whose field declares `readable_with` and whose
  * target the viewer holds at that level *[backend, 2026-10-14; not measured here]* —
@@ -607,4 +672,14 @@ export const PROBLEM = {
  * `op-field-names` — see `FIELD` and `OP`.)* A new entry needs `we`, `from` and
  * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
-export const ASSUMPTIONS = []
+export const ASSUMPTIONS = [
+  {
+    id: 'elevation-by-provider',
+    we:
+      "send the page's address without its query or fragment as `redirect_uri`, and a fresh `state` of our own per attempt, which we never read back — the session's own `elevation.until` says whether it worked; we then take `?elevate=ok`, `?error=oauth_step_up_not_linked` and our `state` off the address bar",
+    from:
+      'the backend names the route, its two parameters and the two answers (2026-10-14), and says it works as step-up\'s provider flow does; what `state` must be, and how an answer joins a `redirect_uri` that has a query of its own, it does not say — a sign-in through a provider sends a fresh `state` per attempt and gets it back',
+    breaks:
+      "a backend that refuses a `state` it did not mint, or this site's origin as a `redirect_uri`, answers the navigation with a page of its own: the viewer is not elevated, and nothing else changes",
+  },
+]
