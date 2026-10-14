@@ -62,6 +62,17 @@ describe('the client against the mock — reading', () => {
     await expect(client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).resolves.toEqual({ status: 'absent', entity: null })
   })
 
+  it('⭐ reads a Model\'s definition for anyone signed in — not only its creators — and for nobody signed out', async () => {
+    // Ruled 2026-10-14: closing a Model gates creating its entries, never reading its
+    // definition. A member reads the operator's programme Model, though none of its entries.
+    const { client } = stack()
+    await expect(client.sections('@/track')).rejects.toMatchObject({ kind: 'auth', status: 401 })
+    await signIn(client, 'attendee')
+    const sections = await client.sections('@/track')
+    expect(sections.length).toBeGreaterThan(0)
+    expect(sections.every((s) => typeof s.id === 'number' && typeof s.name === 'string')).toBe(true)
+  })
+
   it('⭐ gives a member nothing of anyone else\'s — sharing is explicit', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')

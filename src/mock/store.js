@@ -36,7 +36,8 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  * drifts and is believed anyway.
  *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
- * same read), nested sections, second factors, reference fields, password rules,
+ * same read), a Model whose creation is closed, nested sections, second factors,
+ * reference fields, password rules,
  * an offer's grants (a count, sharing nothing), what joining an organization
  * gives — accepting an invitation answers, and opens nothing to read — and an
  * organization withdrawing an invitation.
@@ -463,10 +464,11 @@ export class MockStore {
   }
 
   /**
-   * The definition is readable by anyone signed in. ⭐ Models are open (2026-09-23):
-   * anyone signed in may create entries of any Model, and what protects content is the
-   * entry — `mayEdit`, `mayRead` — never who may create. *(Until then a Model declaring
-   * `creatable_by: unit_members` was the operator's alone, and so was its definition.)*
+   * The definition is readable by anyone signed in, whatever they may create — as on the
+   * backend, where closing a Model gates creating its entries and never its definition
+   * (ruled 2026-10-14). What protects content is the entry — `mayEdit`, `mayRead` —
+   * never who may create. *(Until 2026-09-23 a Model declaring `creatable_by:
+   * unit_members` was the operator's alone, and so was its definition.)*
    */
   maySeeSchema() {
     return !!this.account

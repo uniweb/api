@@ -762,11 +762,13 @@ export class ApiClient {
    * section names; the item route after it takes ids, and ids differ from one
    * backend to the next. So a name is resolved here, from the Model's definition.
    *
-   * ⚠️ The definition is readable by any signed-in viewer — Models are open, so every
-   * Model is one they may create (2026-09-23; until then only the Models a viewer
-   * could create, and the operator). Where it cannot be read this cannot resolve a
-   * name, and says so — pass the section's numeric id instead (an item's
-   * `section_id` on a read).
+   * ⚠️ The definition is readable by any signed-in viewer, whatever they may create —
+   * closing a Model gates creating its entries, never its definition (`SCHEMA` in
+   * `wire.js`). Where a backend refuses it anyway — a closed Model, from 2026-10-10
+   * until the backend's fix — this cannot resolve a name, and says so: pass the
+   * section's numeric id instead (an item's `section_id` on a read). *(This read
+   * "Models are open, so every Model is one they may create" until 2026-10-14: true
+   * from 2026-09-23, and no reason since closing arrived.)*
    *
    * @param {string} schema
    * @param {string|number} section - a name, a `parent/child` path, or an id

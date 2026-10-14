@@ -545,9 +545,13 @@ export const READ = {
  * fields, other_data, constraints }] }` — `kind` is `single` or `multi`;
  * `other_data.append_only` marks an insert-only section.
  *
- * ⚠️ **Readable by the Models the viewer may create, and by the operator.** A
- * member reading entities of a Model only the operator creates gets `404` here —
- * so a member can read those items but cannot learn their section names.
+ * ⭐ **Readable by every signed-in account, whatever it may create** — closing a
+ * Model gates creating its entries, never reading its definition (ruled 2026-10-14;
+ * stated by the backend from its code, not yet measured here). Signed out is `401`,
+ * an unknown Model `404`. ⛔ *Until 2026-10-14 this said readable only by "the Models
+ * the viewer may create, and by the operator" — the rule before 2026-09-23, and in
+ * effect for a closed Model from 2026-10-10 until the backend's fix, where a member
+ * reads that Model's items but not their section names.*
  */
 export const SCHEMA = {
   sections: 'sections',

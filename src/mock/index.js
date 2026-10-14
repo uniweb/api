@@ -384,9 +384,11 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         }
         const model = store.model(q.get(PARAM.model))
         if (!model) return notFound('model', q.get(PARAM.model))
-        // ⭐ No creation gate: Models are open (2026-09-23) — anyone signed in may create
-        // entries of any Model. Until then `creatable_by: unit_members` answered `403
-        // use_model` here for a member.
+        // ⭐ No creation gate: the mock models no closing, so anyone signed in may create
+        // entries of any Model — as on the backend for an open one. A backend can close a
+        // Model's creation since 2026-10-10, and then a create is `403` for anyone but its
+        // owner, its `use` grantees and the holders of a role over it. Until 2026-09-23
+        // `creatable_by: unit_members` answered `403 use_model` here for a member.
         // Any other top-level key is ignored, exactly as the backend ignores it.
         return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} }))))
       }
