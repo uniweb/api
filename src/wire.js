@@ -504,8 +504,12 @@ export const CREATE = {
  * `via` names why the viewer can read the row — `owner`, `grant`, `rbac`,
  * `unit_member`, `entitlement`; treat an unknown value as "no opinion". A session's
  * own rows are `owner` — the operator's too. *(Until 2026-10-10 the operator's session
- * on a site read the rest as `rbac`, through `system_admin`.)* ⚠️ An empty list means
- * empty: a lapsed session is a `401`, never `200 []`.
+ * on a site read the rest as `rbac`, through `system_admin`.)* `rbac` is any
+ * administrative path — a role, and since 2026-10-14 a reader held at a unit over its
+ * people's content, and a reference whose field declares `readable_with` and whose
+ * target the viewer holds at that level *[backend, 2026-10-14; not measured here]* —
+ * while `grant` stays "shared with you". ⚠️ An empty list means empty: a lapsed session
+ * is a `401`, never `200 []`.
  */
 export const LIST = {
   records: 'entities',
