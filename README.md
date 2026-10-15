@@ -264,9 +264,10 @@ schema })` is the same outside React.
 
 ### A field's choices
 
-A field that picks from a list — in a schema, `type: item_ref` with `options:` naming a
-section of a lists type — stores the uuid of the item chosen. Its choices are that
-section's items:
+A field that picks from a list — in a data schema, `options:` naming the section of a lists
+type that holds the choices, `options: '@/lists/countries'` — stores the uuid of the item
+chosen (the definition calls it a field of kind `item_ref`). Its choices are that section's
+items:
 
 ```jsx
 import { useChoices } from '@uniweb/api'
@@ -358,11 +359,12 @@ keeps it.
 | `required: true` | refuses a write without the field |
 | `max_length` on `string`, `text` | counts characters — each language of a localized value on its own |
 | `min`, `max` on `int`, `decimal` | refuses a value outside them |
-| `format` — `email`, `url` on `string` and `text`; `currency` on `string`; `markdown`, `html` on `text` | checks `email`, `url` and `currency` (an ISO 4217 code); `markdown` and `html` mark what the text is |
-| `localized: true` on text | holds one string for every language, or one per language |
-| `format: year-month` or `format: year` on `date` | holds a month, `2024-05`, or a year, `2024` — ISO 8601's reduced precision, stored as written (a backend from before 2026-10-14 refuses the declaration). With no `format`, a `date` holds a day, `2024-05-14` |
+| `format` — `email`, `url` on `string` and `text`; `currency` on `string`; `markdown` on `text` | checks `email`, `url` and `currency` (an ISO 4217 code); `markdown` marks what the text is |
+| `string` and `text` — translatable unless `translatable: false` | holds one string for every language, or one per language (`localized` in the definition) |
+| `format: year-month` or `format: year` on `date` | holds a month, `'2024-05'`, or a year, `'2024'` — ISO 8601's reduced precision, stored as written, and always text: a year written as the number `2024` is refused (a backend from before 2026-10-14 refuses the declaration). With no `format`, a `date` holds a day, `2024-05-14` |
+| `mime_types`, `max_size` on `file` | keeps an upload to those types (`'image/*'`) and that many bytes |
 | `enum: [...]` | keeps the field to those values — in the definition, as its section's `one_of` rule |
-| `type: item_ref`, `options: '@acme/lists/countries'` | keeps the value to an item of that section — an item of another is `409`, `kind: 'rule'` |
+| `options: '@/lists/countries'` | keeps the value to an item of that section — an item of another is `409`, `kind: 'rule'` |
 
 A refused value is `kind: 'invalid'`, its `extensions` naming the field (`data.title`,
 `data.label.fr` for one language), the `rule` it broke and the bound
@@ -370,14 +372,17 @@ A refused value is `kind: 'invalid'`, its `extensions` naming the field (`data.t
 `enum`'s refusal, `rule: 'one_of'`, names its field too — a backend from before 2026-10-14
 names it only in `detail`.
 
-⛔ **A declaration the backend does not take refuses the whole schema** when it reaches
-the backend, naming the field and the key: a `format` its kind does not have (`month-day`
-on a `date`, `year` on an `int`), a key it does not know (`help`), or one it does not check
-yet (`pattern`, `min_length`).
+⛔ **A declaration the backend does not take stops your build first**, naming the field and
+the key — a `format` its kind does not take (`month-day` on a `date`, `year` on an `int`), a
+key a data schema does not have (`maxLength` — it is `max_length`), one the backend does not
+check yet (`pattern`, `min_length`), or a field's `help` (write it as its `description`).
+`uniweb validate` reports the same. A backend refuses the whole schema for any of them.
 
 ### On a section — rules across fields, and across items
 
-A section's `constraints` — a list of rules, in its definition as `rules`:
+A section's `constraints` — a list of rules, in its definition as `rules`. In a schema
+written with `fields:`, they sit beside `fields:` and rule its one section; a rule on one
+field's own declaration is refused, since it names the section's fields:
 
 | rule | keeps |
 |---|---|
@@ -395,8 +400,10 @@ Put the lists your fields pick from in **one lists type, a section per list** �
 type per list — and its entries where the people who should see them can read them.
 Then:
 
-- **A field that picks from one** is `type: item_ref` with `options:` naming its section
-  (`'@acme/lists/countries'`, a nested one by its path), and `useChoices` offers it.
+- **A field that picks from one** names its section in `options:` (`'@/lists/countries'`,
+  a nested one by its path, `'@/lists/countries/subdivisions'`), and `useChoices` offers
+  it. A lists type with one list may be named alone (`'@/countries'`); with several, the
+  build asks which. A field cannot pick from a section of its own type.
 - **A list too long for a dropdown** is searched: `q` with `searchIn`, a page at a time.
 - **A dependent list** — a country, then one of its provinces — is a section nested in
   the other: `countries` holding `subdivisions`, a field picking from each. The second
