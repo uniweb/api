@@ -666,7 +666,10 @@ export const READ = {
  *   **`type.data` is the field's whole declaration**: `key`, `kind`, and what the field
  *   declares — `required`, `multi`, `label`, `description`, `localized`, `format`,
  *   `max_length`, `min`, `max` among them. `type` is a wrapper kept from an older
- *   shape: its `id` is always `-1`, and its `name` is the kind.
+ *   shape: its `id` is always `-1`, and its `name` is the kind. ⭐ A `date` field's
+ *   `format` is its precision — `year-month` or `year`, ISO 8601's reduced precision, its
+ *   values `YYYY-MM` or `YYYY` as written — and a `date` with none holds a day (since
+ *   2026-10-14).
  * - **a field of kind `item_ref`** — a choice from a list — carries `section_uuid`, the
  *   section whose items are its choices (a schema's `options:` path becomes it), and
  *   `entity_uuid` when it pins the entry that holds them. Its choices are
@@ -776,9 +779,10 @@ export const SECTION_ITEMS = {
  * | `required` | `field: 'data.title'` |
  * | `max_length` — in characters, per language for a localized value | `field: 'data.title'` (`'data.label.en'`), `max_length` |
  * | `min` · `max` | `field`, and `min` or `max` |
- * | `format` — a `date` that is not `YYYY-MM-DD`, a calendar day; `2024-05` is refused | `field`, `format: 'date'` |
+ * | `format` — a `date` at another precision than its field declares: a day `YYYY-MM-DD`, or with `format: year-month` a month `YYYY-MM`, with `format: year` a year `YYYY` | `field`, `format` — the precision it should be: `'date'`, `'year-month'`, `'year'` |
+ * | `format` — a `string` or `text` that is not its `format`: `email`, `url`, `currency` | `field`, `format` |
  * | `type` | `field` |
- * | `one_of` — a value outside a field's `enum` | ⚠️ **no `field`**: the field is named only in `detail` (`item.level = "x" is not one of the allowed values …`) |
+ * | `one_of` — a value outside a field's `enum` | `field` — since 2026-10-14. ⚠️ A backend from before names the field only in `detail` (`item.level = "x" is not one of the allowed values …`), so read `field` when it is there |
  */
 export const PROBLEM = {
   csrf: 'CSRF Header Required',

@@ -224,8 +224,9 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       for (const f of section.fields || []) {
         if (!f.required) continue
         const kind = f.type?.kind
+        const day = { 'year-month': '2026-01', year: '2026' }[f.type?.data?.format] ?? '2026-01-01'
         data[f.key] =
-          kind === 'int' ? 1 : kind === 'decimal' ? 1.5 : kind === 'bool' ? true : kind === 'date' ? '2026-01-01' : `live-${f.key}`
+          kind === 'int' ? 1 : kind === 'decimal' ? 1.5 : kind === 'bool' ? true : kind === 'date' ? day : `live-${f.key}`
       }
       return data
     }

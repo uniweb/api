@@ -1149,12 +1149,12 @@ export class MockStore {
     const check = checkItemWrite({ decl: model.decl, section: section.path ?? section.name, data })
     if (check.outcome === OUTCOME.VIOLATES) {
       const first = check.problems[0]
-      // As the backend refuses it (MEASURED 2026-10-14): `reason`, `rule`, the bound beside
-      // it — and the field, except for a `one_of`, which names it only in `detail`.
+      // As the backend refuses it (MEASURED 2026-10-14): `reason`, the field, the `rule` and the
+      // bound beside it — an `enum`'s `one_of` naming its field too, as it has since that day.
       if (first.rule === 'undeclared-section') return refuse(400, 'Validation', first.detail, { field: first.field })
       return refuse(400, 'Validation', first.detail, {
         reason: 'invalid_field',
-        ...(first.rule === 'one_of' ? {} : { field: `data.${first.field}` }),
+        field: `data.${first.field}`,
         rule: first.rule,
         ...(first.params || {}),
       })

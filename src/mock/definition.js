@@ -15,11 +15,12 @@
  * | `string` · `text` | `max_length`, `languages`, `format` |
  * | `int` | `min`, `max` |
  * | `decimal` | `precision`, `scale`, `min`, `max` |
+ * | `date` | `format` — `year-month` or `year` |
  * | `item_ref` | `options` (a schema's) → `section_uuid`; `entity_uuid` |
  * | `entity_ref` | `model` (a schema's) → `model_uuid`; `model_uuids`, `contains`, `readable_with` |
  * | `file` | `mime_types`, `max_size` |
  * | `json` | `languages`, `format` |
- * | `bool` · `date` · `datetime` · `secret` | none |
+ * | `bool` · `datetime` · `secret` | none |
  *
  * And what moves: an `enum` becomes its section's `one_of` rule; `multiple: true` is
  * `multi`; a nested section is a section of its own.
@@ -31,6 +32,7 @@ const KIND_KEYS = {
   text: ['max_length', 'languages', 'format'],
   int: ['min', 'max'],
   decimal: ['precision', 'scale', 'min', 'max'],
+  date: ['format'],
   item_ref: ['entity_uuid'],
   entity_ref: ['model_uuids', 'contains', 'readable_with'],
   file: ['mime_types', 'max_size'],

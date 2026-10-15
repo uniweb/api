@@ -245,7 +245,18 @@ const TEXT_TYPES = new Set(['string', 'text', 'html', 'markdown', 'email', 'url'
 /** Characters, as the backend counts them — code points, not UTF-16 units. */
 const charCount = (s) => [...s].length
 
-/** `YYYY-MM-DD`, a day the calendar has — the one form a `date` holds (MEASURED 2026-10-14: `2024-5-3` passes, `2024-05` and `2024-02-30` do not). */
+/**
+ * A `date` at the precision its field declares, as the backend checks it (MEASURED 2026-10-14):
+ * `format: year-month` holds `YYYY-MM`, a month `01` to `12`; `format: year` holds `YYYY`; and
+ * with no `format`, a day the calendar has (`2024-5-3` passes, `2024-05` and `2024-02-30` do not).
+ */
+function isDateAt(value, format) {
+  if (format === 'year-month') return /^\d{4}-(0[1-9]|1[0-2])$/.test(value)
+  if (format === 'year') return /^\d{4}$/.test(value)
+  return isDate(value)
+}
+
+/** `YYYY-MM-DD`, a day the calendar has. */
 function isDate(value) {
   const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value)
   if (!m) return false
@@ -406,7 +417,7 @@ export function checkFields(fields, data, path = '') {
 
 /**
  * The bound a value of a field's type breaks, as the backend checks it — `max_length`
- * on text, `min` and `max` on a number, the one form a `date` takes — or null.
+ * on text, `min` and `max` on a number, a `date`'s precision — or null.
  * (MEASURED 2026-10-14, each with the bound beside the rule.)
  */
 function boundOf(field, value, at) {
@@ -419,8 +430,9 @@ function boundOf(field, value, at) {
       return { field: at, rule: 'max', detail: `item.data.${at}=${value} above max=${field.max}`, params: { max: field.max } }
     }
   }
-  if (field.type === 'date' && typeof value === 'string' && !isDate(value)) {
-    return { field: at, rule: 'format', detail: `item.data.${at} is not a valid date (\`${value}\`)`, params: { format: 'date' } }
+  if (field.type === 'date' && typeof value === 'string' && !isDateAt(value, field.format)) {
+    const shape = ['year-month', 'year'].includes(field.format) ? field.format : 'date'
+    return { field: at, rule: 'format', detail: `item.data.${at} is not a valid ${shape} (\`${value}\`)`, params: { format: shape } }
   }
   return null
 }

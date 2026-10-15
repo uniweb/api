@@ -53,6 +53,7 @@ const SCHEMAS = {
           discipline: { type: 'item_ref', options: '@acme/lists/disciplines' },
           level: { type: 'string', enum: ['junior', 'senior'] },
           started: { type: 'date' },
+          published: { type: 'date', format: 'year-month' },
           years: { type: 'int', min: 0, max: 80 },
         },
       },
@@ -149,6 +150,7 @@ describe('a Model\'s definition, as the backend answers it', () => {
       type: { id: -1, name: 'string', kind: 'string', data: { key: 'title', kind: 'string', required: true, label: 'Title', max_length: 250 } },
     })
     expect(field('years').type.data).toEqual({ key: 'years', kind: 'int', min: 0, max: 80 })
+    expect(field('published').type.data).toEqual({ key: 'published', kind: 'date', format: 'year-month' })
     // ⛔ An enum is not on its field: it is the section's `one_of` rule.
     expect(field('level').type.data).toEqual({ key: 'level', kind: 'string' })
     expect(head.constraints).toEqual({ rules: [{ kind: 'one_of', field: 'level', values: ['junior', 'senior'] }] })
@@ -346,10 +348,15 @@ describe('a write that picks from a list, and the rules a field declares', () =>
     await expect(create(client, { started: '2024-05' })).rejects.toMatchObject({ extensions: { field: 'data.started', rule: 'format', format: 'date' } })
     await expect(create(client, { started: '2024-02-30' })).rejects.toMatchObject({ extensions: { rule: 'format' } })
     expect((await create(client, { started: '2024-5-3' })).uuid).toBeTruthy()
-    // ⚠️ An enum's refusal names its field only in `detail`, as the backend's does.
+    // An enum's refusal names its field, as the backend's has since 2026-10-14.
     const outside = await create(client, { level: 'emeritus' }).catch((e) => e)
-    expect(outside.extensions).toEqual({ reason: 'invalid_field', rule: 'one_of' })
-    expect(outside.detail).toContain('level')
+    expect(outside.extensions).toEqual({ reason: 'invalid_field', field: 'data.level', rule: 'one_of' })
+    // A date declaring its precision holds a month, as written — and only a month.
+    const month = await create(client, { published: '2024-05' })
+    expect(month.brief.published).toBe('2024-05')
+    await expect(create(client, { published: '2024-05-14' })).rejects.toMatchObject({
+      extensions: { field: 'data.published', rule: 'format', format: 'year-month' },
+    })
   })
 
   it('takes a localized value as a string or by language, each language checked', async () => {

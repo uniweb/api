@@ -107,6 +107,8 @@ describe('checkFields', () => {
       label: { type: 'string', localized: true, max_length: 3 },
       n: { type: 'int', min: 0, max: 9 },
       on: { type: 'date' },
+      month: { type: 'date', format: 'year-month' },
+      year: { type: 'date', format: 'year' },
       email: { type: 'string', format: 'email' },
       site: { type: 'string', format: 'url' },
       body: { type: 'text', format: 'markdown' },
@@ -119,6 +121,10 @@ describe('checkFields', () => {
     expect(rule({ n: -1 })).toEqual([['n', 'min', { min: 0 }]])
     expect(rule({ on: '2024-05' })).toEqual([['on', 'format', { format: 'date' }]])
     expect(rule({ on: '2024-5-3' })).toEqual([])
+    expect(rule({ month: '2024-05', year: '2024' })).toEqual([])
+    expect(rule({ month: '2024-05-14' })).toEqual([['month', 'format', { format: 'year-month' }]])
+    expect(rule({ month: '2024-13' })).toEqual([['month', 'format', { format: 'year-month' }]])
+    expect(rule({ year: '24' })).toEqual([['year', 'format', { format: 'year' }]])
     expect(rule({ email: 'a@b' })).toEqual([['email', 'format', { format: 'email' }]])
     expect(rule({ email: 'a@b.co', site: 'ftp://files.example.com/a.pdf', body: '# hi' })).toEqual([])
     expect(rule({ site: '/about' })).toEqual([['site', 'format', { format: 'url' }]])

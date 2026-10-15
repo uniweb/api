@@ -360,21 +360,20 @@ keeps it.
 | `min`, `max` on `int`, `decimal` | refuses a value outside them |
 | `format` — `email`, `url` on `string` and `text`; `currency` on `string`; `markdown`, `html` on `text` | checks `email`, `url` and `currency` (an ISO 4217 code); `markdown` and `html` mark what the text is |
 | `localized: true` on text | holds one string for every language, or one per language |
+| `format: year-month` or `format: year` on `date` | holds a month, `2024-05`, or a year, `2024` — ISO 8601's reduced precision, stored as written (a backend from before 2026-10-14 refuses the declaration). With no `format`, a `date` holds a day, `2024-05-14` |
 | `enum: [...]` | keeps the field to those values — in the definition, as its section's `one_of` rule |
 | `type: item_ref`, `options: '@acme/lists/countries'` | keeps the value to an item of that section — an item of another is `409`, `kind: 'rule'` |
 
 A refused value is `kind: 'invalid'`, its `extensions` naming the field (`data.title`,
 `data.label.fr` for one language), the `rule` it broke and the bound
-(`{ rule: 'max_length', max_length: 250 }`). ⚠️ An `enum`'s refusal, `rule: 'one_of'`,
-names its field only in `detail`.
+(`{ rule: 'max_length', max_length: 250 }`, `{ rule: 'format', format: 'year-month' }`). An
+`enum`'s refusal, `rule: 'one_of'`, names its field too — a backend from before 2026-10-14
+names it only in `detail`.
 
 ⛔ **A declaration the backend does not take refuses the whole schema** when it reaches
-the backend, naming the field and the key: a `format` its kind does not have
-(`year-month` on a `date`, `year` on an `int`), a key it does not know (`help`), or one it
-does not check yet (`pattern`, `min_length`).
-
-⚠️ **A `date` is a calendar day**, `YYYY-MM-DD`: `2024-05` is refused. A year alone is an
-`int`, with `min` and `max`.
+the backend, naming the field and the key: a `format` its kind does not have (`month-day`
+on a `date`, `year` on an `int`), a key it does not know (`help`), or one it does not check
+yet (`pattern`, `min_length`).
 
 ### On a section — rules across fields, and across items
 
