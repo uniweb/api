@@ -10,7 +10,7 @@ const DISABLED = Object.freeze({ status: 'absent', entity: null, error: null })
  * when `via` names one.
  *
  * ```jsx
- * const { status, entity } = useEntity({ schema: '@/lesson', uuid, via: course.uuid })
+ * const { status, entity } = useEntity({ schema: '@acme/lesson', uuid, via: course.uuid })
  * // status: 'loading' | 'ready' | 'absent' | 'error'
  * if (status === 'absent') return <EnrolWall />   // not found OR not permitted — one word, by design
  * ```

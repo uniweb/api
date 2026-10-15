@@ -712,7 +712,7 @@ export class ApiClient {
    * visible without every caller hand-rolling it.
    *
    * ```js
-   * client.invalidate((spec) => spec.schema === '@/session')
+   * client.invalidate((spec) => spec.schema === '@acme/session')
    * ```
    *
    * ⛔ **A key with no remembered spec is never matched, and never swept.** It is

@@ -10,7 +10,7 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * The entities of a Model the viewer may see.
  *
  * ```jsx
- * const { status, records } = useRecords({ schema: '@/session' })
+ * const { status, records } = useRecords({ schema: '@acme/session' })
  * if (status === 'absent') return <StaticProgramme />   // no backend — render the site's own content
  * if (status === 'ready' && records.length === 0) return <Empty />
  * ```
