@@ -15,7 +15,7 @@ import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
-import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, PAGE, TOTP, VIEWER } from './wire.js'
+import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
 import { listInvitationsWith, acceptInvitationWith, declineInvitationWith } from './invitations.js'
@@ -139,6 +139,68 @@ function labelSections(items, sections) {
     const section = item && byId.get(item[READ.itemSection])
     if (section) item[CREATE.sectionName] = pathOf(section)
   }
+}
+
+/** The values a `one_of` rule allows — `values`, or the `options: [{ value, label }]` form's values. */
+function allowedValues(rule) {
+  if (Array.isArray(rule?.[SCHEMA.ruleValues])) return rule[SCHEMA.ruleValues]
+  if (Array.isArray(rule?.options)) return rule.options.map((o) => o?.value)
+  return []
+}
+
+/**
+ * A definition as a form reads it (`ApiClient.readDefinition`): each field its own
+ * declaration, its `enum` folded back from its section's `one_of` rule; each section
+ * with what the schema declares of it, its `path`, and its rules.
+ *
+ * @param {object} body - `GET /models/@scope/name`, as the backend answers it (`SCHEMA`)
+ */
+function formOf(body) {
+  const rows = Array.isArray(body?.[SCHEMA.sections]) ? body[SCHEMA.sections] : []
+  const byId = new Map(rows.map((s) => [s[SCHEMA.id], s]))
+  const pathOf = (row) => {
+    const names = []
+    const seen = new Set()
+    for (let at = row; at && !seen.has(at[SCHEMA.id]); at = byId.get(at[SCHEMA.parent])) {
+      seen.add(at[SCHEMA.id])
+      names.unshift(at[SCHEMA.name])
+    }
+    return names.join('/')
+  }
+  const sections = rows.map((row) => {
+    const declared = row?.[SCHEMA.constraints]?.[SCHEMA.rules]
+    const rules = Array.isArray(declared) ? declared : []
+    const enums = new Map(
+      rules
+        .filter((r) => r?.kind === SCHEMA.oneOf && typeof r[SCHEMA.ruleField] === 'string')
+        .map((r) => [r[SCHEMA.ruleField], allowedValues(r)]),
+    )
+    const fields = (Array.isArray(row?.[SCHEMA.fields]) ? row[SCHEMA.fields] : []).map((f) => {
+      const declaration = f?.[SCHEMA.fieldType]?.[SCHEMA.fieldDecl] ?? {}
+      const field = {
+        ...declaration,
+        key: f?.key ?? declaration.key,
+        kind: declaration.kind ?? f?.[SCHEMA.fieldType]?.kind,
+        required: f?.required === true || declaration.required === true,
+        multi: f?.multi === true || declaration.multi === true,
+      }
+      if (enums.has(field.key)) field.enum = enums.get(field.key)
+      return field
+    })
+    const other = row?.[SCHEMA.otherData]
+    return {
+      ...(other && typeof other === 'object' ? other : {}),
+      id: row[SCHEMA.id],
+      name: row[SCHEMA.name],
+      path: pathOf(row),
+      kind: row[SCHEMA.kind],
+      brief: row[SCHEMA.isBrief] === true,
+      parent: row[SCHEMA.parent] ?? null,
+      rules,
+      fields,
+    }
+  })
+  return { model: body?.model ?? null, sections }
 }
 
 export class ApiClient {
@@ -770,21 +832,180 @@ export class ApiClient {
    */
   sections(schema, signal) {
     if (!schema) return Promise.reject(ApiError.invalid('No Model', 'sections needs a schema'))
-    const held = this._schemas.get(schema)
-    if (held) return held
-    const pending = this.request('GET', ROUTES.schema(schema), { signal }).then((body) =>
+    return this._definition(schema, signal).then((body) =>
       (Array.isArray(body?.[SCHEMA.sections]) ? body[SCHEMA.sections] : []).map((s) => ({
         id: s[SCHEMA.id],
         name: s[SCHEMA.name],
         parent: s[SCHEMA.parent] ?? null,
       })),
     )
+  }
+
+  /** Drop a Model's kept definition, so the next read asks the backend again. */
+  forgetDefinition(schema) {
+    this._schemas.delete(schema)
+  }
+
+  /** The definition as the backend answers it — read once per viewer, and kept. */
+  _definition(schema, signal) {
+    const held = this._schemas.get(schema)
+    if (held) return held
+    const pending = this.request('GET', ROUTES.schema(schema), { signal })
     this._schemas.set(schema, pending)
-    // A failure is not kept: the next write asks again.
+    // A failure is not kept: the next read asks again.
     pending.catch(() => {
       if (this._schemas.get(schema) === pending) this._schemas.delete(schema)
     })
     return pending
+  }
+
+  /**
+   * A Model's definition — what an editor builds a form from.
+   *
+   * ```js
+   * const { sections } = await readDefinition({ schema: '@acme/cv' })
+   * const brief = sections.find((s) => s.brief)
+   * // brief.fields → [{ key: 'title', kind: 'string', required: true, label: 'Title', max_length: 250 }, …]
+   * ```
+   *
+   * Each section is `{ id, name, path, kind, brief, parent, rules, fields }` plus what the
+   * schema declares of it — `label`, `description`, `append_only`, `allow_self_nesting`:
+   * `path` is the name a write takes (`parent/child` for a nested section), `parent` the
+   * parent section's id, `rules` its rules (`[]` with none). Each field is its declaration
+   * as the backend stores it — `key`, `kind`, `required`, `multi`, and what it declares:
+   * `label`, `description`, `localized`, `format`, `max_length`, `min`, `max` — with
+   * `enum`, the values its section's `one_of` rule allows, when it has one. A field of
+   * kind `item_ref` is a choice from a list: `section_uuid` names the section whose items
+   * are its choices (`listChoices`), and `entity_uuid` the entry that holds them, when the
+   * field pins one. `model` is the Model's row.
+   *
+   * ⭐ **These are the rules the backend applies to every write**, so a form that reads
+   * them checks what will be checked. What a form does with them — how a field is edited,
+   * what it shows — is the foundation's.
+   *
+   * Read once per viewer and kept. Signed out, the backend answers `401` (`auth`); an
+   * unknown Model is `absent`.
+   *
+   * @param {object} args
+   * @param {string} args.schema - the Model, e.g. `@acme/cv`
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<{ model: object|null, sections: object[] }>}
+   */
+  async readDefinition({ schema, signal } = {}) {
+    if (!schema) throw ApiError.invalid('No Model', 'readDefinition needs a schema')
+    return formOf(await this._definition(schema, signal))
+  }
+
+  /**
+   * One page of a section's items — the choices an `item_ref` field offers, read by the
+   * section the field names (`section_uuid` on its declaration). `listChoices` finds
+   * that section for you from a field.
+   *
+   * Each item is `{ uuid, entity, parent?, data, has_children? }`: `uuid` is the value the
+   * field stores; `data` the item's content, in the site's language (`locale`, as every
+   * read); `parent` the item it sits under; `has_children` — for a list whose items nest
+   * — whether items sit under it.
+   *
+   * - **Whose items:** every entry of the section's Model the viewer may read, or only
+   *   `entity`'s.
+   * - **One level at a time:** without `parent`, the section's top level; with it, the
+   *   items under that item — the next level of a nesting list, or a dependent list's
+   *   choices under the item chosen in the field it depends on.
+   * - **A search:** `q` matched, ignoring case, anywhere in the section's field `field`
+   *   (a `string` or `text` field), in the site's language for a localized one.
+   * - **Paging:** pass `nextCursor` back as `cursor`. ⚠️ A searched page can be short
+   *   while more follow, so `hasMore` — a cursor came back — is the only end signal.
+   *
+   * @param {object} args
+   * @param {string} args.section - the section's uuid
+   * @param {string} [args.entity] - only this entry's items
+   * @param {string} [args.parent] - the uuid of the item whose children to read
+   * @param {string} [args.field] - the field `q` is matched in
+   * @param {string} [args.q] - the search term
+   * @param {string} [args.cursor] - the previous page's `nextCursor`
+   * @param {number} [args.limit] - default 50, at most 1000
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<{ items: object[], nextCursor: string|null, hasMore: boolean }>}
+   */
+  async listSectionItems({ section, entity, parent, field, q, cursor, limit, signal } = {}) {
+    if (!section) throw ApiError.invalid('No Section', 'listSectionItems needs a section uuid')
+    const query = {
+      [PARAM.entity]: entity || undefined,
+      [PARAM.parent]: parent || undefined,
+      [PARAM.field]: field || undefined,
+      [PARAM.q]: q || undefined,
+      [PARAM.cursor]: cursor || undefined,
+      [PARAM.limit]: limit ?? PAGE.size,
+      ...this._localeQuery(),
+    }
+    const body = await this.request('GET', ROUTES.sectionItems(section), { query, signal })
+    const items = Array.isArray(body?.[SECTION_ITEMS.items]) ? body[SECTION_ITEMS.items] : []
+    const nextCursor = typeof body?.[SECTION_ITEMS.next] === 'string' ? body[SECTION_ITEMS.next] : null
+    return { items, nextCursor, hasMore: nextCursor != null }
+  }
+
+  /**
+   * The choices a field offers — the field's own list, read from the Model's definition.
+   *
+   * ```js
+   * const { items } = await listChoices({ schema: '@acme/cv', field: 'country', q: 'can', searchIn: 'label' })
+   * // items[i].uuid is the value to store in `country`
+   * const provinces = await listChoices({ schema: '@acme/cv', field: 'province', parent: country })
+   * ```
+   *
+   * `field` is a field of kind `item_ref` — in a schema, `type: item_ref` with
+   * `options: '@scope/lists/countries'` — and `section` names its section when several
+   * declare a field of that name. Everything else is `listSectionItems`'s: `parent` reads
+   * the items under an item, which is how a dependent list follows the field it depends
+   * on; `q` searches the choices' field `searchIn`.
+   *
+   * @param {object} args
+   * @param {string} args.schema - the Model whose field offers the choices
+   * @param {string} args.field - the field's key
+   * @param {string} [args.section] - the field's section, by name or path
+   * @param {string} [args.parent]
+   * @param {string} [args.q]
+   * @param {string} [args.searchIn] - the field of the choices `q` is matched in
+   * @param {string} [args.cursor]
+   * @param {number} [args.limit]
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<{ items: object[], nextCursor: string|null, hasMore: boolean }>}
+   */
+  async listChoices({ schema, field, section, parent, q, searchIn, cursor, limit, signal } = {}) {
+    if (!schema) throw ApiError.invalid('No Model', 'listChoices needs the schema whose field offers the choices')
+    if (!field) throw ApiError.invalid('No Field', 'listChoices needs the field whose choices to list')
+    const { sections } = await this.readDefinition({ schema, signal })
+    const found = sections
+      .filter((s) => section == null || s.name === section || s.path === section)
+      .flatMap((s) => s.fields.filter((f) => f.key === field))
+    if (found.length !== 1) {
+      throw ApiError.invalid(
+        'Unknown Field',
+        found.length
+          ? `${schema} declares '${field}' in several sections — name the section`
+          : `${schema} has no field '${field}'${section != null ? ` in section '${section}'` : ''}`,
+      )
+    }
+    const [declared] = found
+    const pinned = declared[SCHEMA.choicesSection]
+    if (!pinned) {
+      throw ApiError.invalid(
+        'No Choices',
+        declared.kind === 'item_ref'
+          ? `'${field}' of ${schema} names no list its choices are in`
+          : `'${field}' of ${schema} is not a choice from a list — its kind is ${declared.kind}`,
+      )
+    }
+    return this.listSectionItems({
+      section: pinned,
+      entity: declared[SCHEMA.choicesEntity],
+      parent,
+      field: searchIn,
+      q,
+      cursor,
+      limit,
+      signal,
+    })
   }
 
   /**
@@ -1082,6 +1303,12 @@ export const declineInvitation = (id) => declineInvitationWith(required(), id)
 export const readEntity = (args) => required().readEntity(args)
 /** @see ApiClient#listEntities */
 export const listEntities = (args) => required().listEntities(args)
+
+export const readDefinition = (args) => required().readDefinition(args)
+
+export const listSectionItems = (args) => required().listSectionItems(args)
+
+export const listChoices = (args) => required().listChoices(args)
 /** @see ApiClient#writeItems */
 export const writeItems = (args) => required().writeItems(args)
 /** @see ApiClient#createEntity */

@@ -149,6 +149,20 @@ function listElement(field) {
 }
 
 /**
+ * A section of the declaration by name — or by `parent/child` path for a nested one,
+ * declared as a field of `type: 'section'` inside its parent.
+ */
+function sectionAt(sections, path) {
+  const [first, ...rest] = String(path).split('/')
+  let at = sections[first]
+  for (const name of rest) {
+    const next = at?.fields?.[name]
+    at = next?.type === 'section' ? next : undefined
+  }
+  return at
+}
+
+/**
  * Is this section a multi section of the model's declaration?
  *
  * `decl.sections` is the lowered sections map (`{ [name]: { kind, brief, fields } }`)
@@ -158,7 +172,7 @@ function listElement(field) {
 export function classifySection(decl, section) {
   const sections = decl?.sections
   if (!sections || typeof sections !== 'object') return null
-  const found = sections[section]
+  const found = sectionAt(sections, section)
 
   // ⭐ The debt list is consulted FIRST and is an exact `(model, section)` match, so
   // it can excuse a declared section whose records diverge as well as an undeclared
@@ -225,8 +239,69 @@ function satisfiesType(type, value) {
   }
 }
 
+/** The text kinds — what a `localized` value, a `max_length` and a search apply to. */
+const TEXT_TYPES = new Set(['string', 'text', 'html', 'markdown', 'email', 'url'])
+
+/** Characters, as the backend counts them — code points, not UTF-16 units. */
+const charCount = (s) => [...s].length
+
+/** `YYYY-MM-DD`, a day the calendar has — the one form a `date` holds (MEASURED 2026-10-14: `2024-5-3` passes, `2024-05` and `2024-02-30` do not). */
+function isDate(value) {
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value)
+  if (!m) return false
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  const day = new Date(Date.UTC(y, mo - 1, d))
+  return day.getUTCFullYear() === y && day.getUTCMonth() === mo - 1 && day.getUTCDate() === d
+}
+
 /**
- * Check a record against a lowered `fields` map. Returns a list of violations.
+ * A `format` the backend checks, by its own rules — `email`: one `@`, something before it,
+ * a dotted domain after it, no space; `url`: a scheme, `://`, something after it, no space.
+ * ⚠️ `currency` is checked there too, against ISO 4217's codes, and not here. Every other
+ * `format` marks what the text is and checks nothing.
+ */
+function matchesFormat(value, format) {
+  if (format === 'email') {
+    const parts = value.split('@')
+    return parts.length === 2 && parts[0] !== '' && parts[1].includes('.') && !parts[1].startsWith('.') && !parts[1].endsWith('.') && !/\s/.test(value)
+  }
+  if (format === 'url') {
+    const at = value.indexOf('://')
+    return at > 0 && /^[A-Za-z0-9+.-]+$/.test(value.slice(0, at)) && value.length > at + 3 && !/\s/.test(value)
+  }
+  return true
+}
+
+/**
+ * The checks on one text value — a field's own, or one language of a localized one —
+ * as the backend makes them: `max_length` in characters, then the `format`. `at` names
+ * the value: the field, or `field.lang`.
+ */
+function checkText(field, value, at) {
+  if (typeof value !== 'string') return { field: at, rule: 'type', detail: `item.data.${at} must be a string` }
+  if (Number.isInteger(field.max_length) && charCount(value) > field.max_length) {
+    return {
+      field: at,
+      rule: 'max_length',
+      detail: `item.data.${at} exceeds max_length=${field.max_length}`,
+      params: { max_length: field.max_length },
+    }
+  }
+  if (typeof field.format === 'string' && value !== '' && !matchesFormat(value, field.format)) {
+    return {
+      field: at,
+      rule: 'format',
+      detail: `item.data.${at} = ${JSON.stringify(value)} is not a valid ${field.format}`,
+      params: { format: field.format },
+    }
+  }
+  return null
+}
+
+/**
+ * Check a record against a lowered `fields` map. Returns a list of violations, each
+ * `{ field, rule, detail, params? }` — `rule` named as the backend names it, `params` the
+ * declaration's bound it carries beside it (`max_length`, `min`, `max`, `format`).
  *
  * ⛔ **A key the schema does not declare is NOT a violation.** We have no evidence
  * that the real store rejects extras, and inventing that rule here would refuse
@@ -239,15 +314,31 @@ export function checkFields(fields, data, path = '') {
   const record = data && typeof data === 'object' ? data : {}
 
   for (const [name, field] of Object.entries(fields)) {
+    // A nested section is a section of its own, with items of its own — not a field.
+    if (field?.type === 'section') continue
     const at = path ? `${path}.${name}` : name
     const value = record[name]
     const missing = value === undefined || value === null
 
     if (field.required && missing) {
-      problems.push({ field: at, rule: 'required', detail: `'${at}' is required` })
+      problems.push({ field: at, rule: 'required', detail: `item.data.${at} is required` })
       continue
     }
     if (missing) continue
+
+    // ⭐ A localized text field holds a string — its value in every language — or a
+    // per-language object, each language's value checked as the field's text is
+    // (MEASURED 2026-10-14). `@` is the object's metadata, not a language.
+    if (field.localized === true && TEXT_TYPES.has(field.type) && field.multiple !== true) {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        const found = Object.entries(value)
+          .filter(([lang]) => lang !== '@')
+          .map(([lang, v]) => checkText(field, v, `${at}.${lang}`))
+          .find(Boolean)
+        if (found) problems.push(found)
+        continue
+      }
+    }
 
     // A list, in either spelling. The VALUE must be an array; each entry is then
     // checked against the element shape, indexed the way `uniweb validate` names it
@@ -260,12 +351,26 @@ export function checkFields(fields, data, path = '') {
       }
       value.forEach((entry, i) => {
         const entryAt = `${at}[${i}]`
+        // A localized list's entry is a string or a per-language object, as a single value is.
+        if (field.localized === true && TEXT_TYPES.has(element.type) && entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          const found = Object.entries(entry)
+            .filter(([lang]) => lang !== '@')
+            .map(([lang, v]) => checkText(field, v, `${entryAt}.${lang}`))
+            .find(Boolean)
+          if (found) problems.push(found)
+          return
+        }
         if (satisfiesType(element.type, entry) === false) {
           problems.push({
             field: entryAt,
             rule: 'type',
-            detail: `'${entryAt}' expects ${element.type}, got ${Array.isArray(entry) ? 'array' : typeof entry}`,
+            detail: `item.data.${entryAt} expects ${element.type}, got ${Array.isArray(entry) ? 'array' : typeof entry}`,
           })
+          return
+        }
+        const bounded = boundOf({ ...field, type: element.type }, entry, entryAt)
+        if (bounded) {
+          problems.push(bounded)
           return
         }
         if (element.fields) problems.push(...checkFields(element.fields, entry, entryAt))
@@ -277,19 +382,47 @@ export function checkFields(fields, data, path = '') {
       problems.push({
         field: at,
         rule: 'type',
-        detail: `'${at}' expects ${field.type}, got ${Array.isArray(value) ? 'array' : typeof value}`,
+        detail: `item.data.${at} expects ${field.type}, got ${Array.isArray(value) ? 'array' : typeof value}`,
       })
       continue
     }
 
+    const bounded = boundOf(field, value, at)
+    if (bounded) {
+      problems.push(bounded)
+      continue
+    }
+
+    // An `enum` is the backend's `one_of` rule — refused under that name.
     if (Array.isArray(field.enum) && field.enum.length && !field.enum.includes(value)) {
-      problems.push({ field: at, rule: 'enum', detail: `'${at}' must be one of ${field.enum.join(', ')}` })
+      problems.push({ field: at, rule: 'one_of', detail: `item.${at} = ${JSON.stringify(value)} is not one of the allowed values` })
       continue
     }
 
     if (field.fields) problems.push(...checkFields(field.fields, value, at))
   }
   return problems
+}
+
+/**
+ * The bound a value of a field's type breaks, as the backend checks it — `max_length`
+ * on text, `min` and `max` on a number, the one form a `date` takes — or null.
+ * (MEASURED 2026-10-14, each with the bound beside the rule.)
+ */
+function boundOf(field, value, at) {
+  if (TEXT_TYPES.has(field.type) && typeof value === 'string') return checkText(field, value, at)
+  if (typeof value === 'number' && ['int', 'integer', 'decimal', 'number'].includes(field.type)) {
+    if (typeof field.min === 'number' && value < field.min) {
+      return { field: at, rule: 'min', detail: `item.data.${at}=${value} below min=${field.min}`, params: { min: field.min } }
+    }
+    if (typeof field.max === 'number' && value > field.max) {
+      return { field: at, rule: 'max', detail: `item.data.${at}=${value} above max=${field.max}`, params: { max: field.max } }
+    }
+  }
+  if (field.type === 'date' && typeof value === 'string' && !isDate(value)) {
+    return { field: at, rule: 'format', detail: `item.data.${at} is not a valid date (\`${value}\`)`, params: { format: 'date' } }
+  }
+  return null
 }
 
 /** Keys present in the write that the section does not declare. Diagnostic only — see checkFields. */

@@ -12,6 +12,9 @@
  * - **`UNIWEB_API_MODEL`** — a Model that account may create (`@scope/name`), with a
  *   brief section. Turns on the entities half: create, list, read, item writes, a
  *   conflict, and — when the Model has an insert-only section — its rule.
+ * - **`UNIWEB_API_CHOICES`** — `@scope/name:field`, a field of kind `item_ref` whose
+ *   list that account may read, with at least two choices. Turns on a field's choices:
+ *   the definition names its section, the section's items page by cursor.
  * - **`UNIWEB_API_REGISTER=1`** — also sign a throwaway account up, and check what
  *   the backend answers: `202`, and a sign-in refused until the address is verified.
  *   The verification link travels by email, so this cannot sign that account in.
@@ -30,6 +33,11 @@ const BASE = process.env.UNIWEB_API_BASE
 const LOGIN = process.env.UNIWEB_API_LOGIN ? JSON.parse(process.env.UNIWEB_API_LOGIN) : null
 const MODEL = process.env.UNIWEB_API_MODEL || null
 const REGISTER = process.env.UNIWEB_API_REGISTER === '1'
+const CHOICES = (() => {
+  const raw = process.env.UNIWEB_API_CHOICES || ''
+  const at = raw.lastIndexOf(':')
+  return at > 0 ? { schema: raw.slice(0, at), field: raw.slice(at + 1) } : null
+})()
 
 function cookieJar() {
   const jar = new Map()
@@ -309,6 +317,56 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
         }
       }
       await c.deleteEntity({ uuid: made.uuid, schema: MODEL })
+    })
+
+    it('reads the definition as a form — each field its declaration under `type.data`, an enum folded back in', async () => {
+      const raw = await c.request('GET', `/models/${MODEL}`)
+      const form = await c.readDefinition({ schema: MODEL })
+      expect(raw.sections.every((s) => !('uuid' in s))).toBe(true)
+      for (const section of raw.sections) {
+        const mine = form.sections.find((s) => s.id === section.id)
+        expect(mine.kind).toBe(section.kind)
+        for (const f of section.fields) {
+          expect(f.type).toMatchObject({ id: -1, name: f.type.kind, data: { key: f.key, kind: f.type.kind } })
+          expect(mine.fields.find((x) => x.key === f.key)).toMatchObject({ ...f.type.data, required: f.required, multi: f.multi })
+        }
+        for (const rule of section.constraints?.rules || []) {
+          if (rule.kind === 'one_of' && Array.isArray(rule.values)) expect(mine.fields.find((x) => x.key === rule.field)?.enum).toEqual(rule.values)
+        }
+      }
+    })
+
+    it('refuses `include_disabled` on a list — the backend lists a disabled entity like any other', async () => {
+      const err = await c.request('GET', '/entities', { query: { model: MODEL, include_disabled: true } }).catch((e) => e)
+      expect(err).toMatchObject({ kind: 'invalid', status: 400 })
+    })
+  })
+
+  describe.skipIf(!LOGIN || !CHOICES)("a field's choices", () => {
+    let c
+    beforeAll(async () => {
+      c = client()
+      await c.signIn(LOGIN)
+    })
+
+    it('names the section its choices are in, and pages them by cursor — each the uuid the field stores', async () => {
+      const { sections } = await c.readDefinition({ schema: CHOICES.schema })
+      const field = sections.flatMap((s) => s.fields).find((f) => f.key === CHOICES.field)
+      expect(field).toMatchObject({ kind: 'item_ref', section_uuid: expect.any(String) })
+
+      const first = await c.listChoices({ ...CHOICES, limit: 1 })
+      expect(first.items).toHaveLength(1)
+      expect(Object.keys(first.items[0])).toEqual(expect.arrayContaining(['uuid', 'entity', 'data']))
+      expect(first.hasMore).toBe(true)
+      const second = await c.listChoices({ ...CHOICES, limit: 1, cursor: first.nextCursor })
+      expect(second.items[0].uuid).not.toBe(first.items[0].uuid)
+
+      const stale = await c.listSectionItems({ section: field.section_uuid, cursor: 'zz' }).catch((e) => e)
+      expect(stale).toMatchObject({ kind: 'invalid', status: 400, detail: 'cursor expired, restart pagination' })
+      const nowhere = await c.listSectionItems({ section: '00000000-0000-4000-8000-000000000000' }).catch((e) => e)
+      expect(nowhere).toMatchObject({ kind: 'absent', status: 404 })
+      const loose = await c.listSectionItems({ section: field.section_uuid, q: 'a' }).catch((e) => e)
+      expect(loose).toMatchObject({ kind: 'invalid', status: 400, title: 'Validation' })
     })
   })
 })

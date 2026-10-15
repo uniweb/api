@@ -35,6 +35,9 @@ export {
   forgetMailedLink,
   readEntity,
   listEntities,
+  readDefinition,
+  listSectionItems,
+  listChoices,
   writeItems,
   createEntity,
   deleteEntity,
@@ -52,5 +55,7 @@ export { useMailedLink } from './hooks/useMailedLink.js'
 export { useInvitations } from './hooks/useInvitations.js'
 export { useEntity } from './hooks/useEntity.js'
 export { useRecords } from './hooks/useRecords.js'
+export { useDefinition } from './hooks/useDefinition.js'
+export { useChoices } from './hooks/useChoices.js'
 export { useEntityWriter } from './hooks/useEntityWriter.js'
 export { SignedIn, SignedOut } from './components/gates.js'

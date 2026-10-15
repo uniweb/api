@@ -89,15 +89,40 @@ describe('classifySection', () => {
 })
 
 describe('checkFields', () => {
-  it('catches required, type and enum', () => {
+  it('catches required, type and enum — an enum under the name the backend refuses it by, `one_of`', () => {
     const problems = checkFields(COURSE.sections.modules.fields, { summary: 7, level: 'Expert' })
-    expect(problems.map((p) => p.rule).sort()).toEqual(['enum', 'required', 'type'])
+    expect(problems.map((p) => p.rule).sort()).toEqual(['one_of', 'required', 'type'])
   })
 
   it('names a list entry by index, like uniweb validate', () => {
     const problems = checkFields(COURSE.sections.modules.fields, { title: 'M', lessons: ['a', 3] })
     expect(problems).toHaveLength(1)
     expect(problems[0].field).toBe('lessons[1]')
+  })
+
+  it('checks what the backend checks of a value — its length, bounds, a date\'s form and the email and url formats', () => {
+    // Each as the backend refuses it, MEASURED 2026-10-14.
+    const fields = {
+      name: { type: 'string', max_length: 3 },
+      label: { type: 'string', localized: true, max_length: 3 },
+      n: { type: 'int', min: 0, max: 9 },
+      on: { type: 'date' },
+      email: { type: 'string', format: 'email' },
+      site: { type: 'string', format: 'url' },
+      body: { type: 'text', format: 'markdown' },
+    }
+    const rule = (data) => checkFields(fields, data).map((p) => [p.field, p.rule, p.params])
+    expect(rule({ name: 'abcd' })).toEqual([['name', 'max_length', { max_length: 3 }]])
+    expect(rule({ label: { en: 'abc', fr: 'abcd' } })).toEqual([['label.fr', 'max_length', { max_length: 3 }]])
+    expect(rule({ label: 'abc' })).toEqual([])
+    expect(rule({ n: 10 })).toEqual([['n', 'max', { max: 9 }]])
+    expect(rule({ n: -1 })).toEqual([['n', 'min', { min: 0 }]])
+    expect(rule({ on: '2024-05' })).toEqual([['on', 'format', { format: 'date' }]])
+    expect(rule({ on: '2024-5-3' })).toEqual([])
+    expect(rule({ email: 'a@b' })).toEqual([['email', 'format', { format: 'email' }]])
+    expect(rule({ email: 'a@b.co', site: 'ftp://files.example.com/a.pdf', body: '# hi' })).toEqual([])
+    expect(rule({ site: '/about' })).toEqual([['site', 'format', { format: 'url' }]])
+    expect(checkFields(fields, { email: 'a@b' })[0].detail).toBe('item.data.email = "a@b" is not a valid email')
   })
 
   it('tolerates a type it does not know rather than failing the write', () => {

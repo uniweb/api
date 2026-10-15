@@ -1,4 +1,4 @@
-import { AUTH, ENTITIES, MODELS, OFFERS, INVITATIONS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL, ELEVATION } from '../wire.js'
+import { AUTH, ENTITIES, MODELS, SECTIONS, OFFERS, INVITATIONS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL, ELEVATION } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
 
@@ -16,6 +16,24 @@ export function printMail(message, url) {
  * comes here instead, to a page that says so. A path of the mock's, not the backend's.
  */
 const ADMIN_PAGE = '/admin'
+
+/**
+ * A page's cursor, opaque as the backend's is: hex of the JSON of where the page ended.
+ * Byte work by hand, so the mock stays free of Node's `Buffer`.
+ */
+const encodeCursor = (key) =>
+  [...new TextEncoder().encode(JSON.stringify(key))].map((b) => b.toString(16).padStart(2, '0')).join('')
+
+/** The key a cursor names, or null for one this mock did not hand out — "expired". */
+function decodeCursor(token) {
+  if (!/^(?:[0-9a-f]{2})+$/.test(token)) return null
+  try {
+    const key = JSON.parse(new TextDecoder().decode(Uint8Array.from(token.match(/../g).map((h) => parseInt(h, 16)))))
+    return Array.isArray(key) && key.length === 5 && key.every(Number.isFinite) ? key : null
+  } catch {
+    return null
+  }
+}
 
 const escapeHtml = (value) =>
   String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c])
@@ -53,7 +71,7 @@ function adminPage(account) {
  *
  * ## Where it answers
  *
- * Its routes are the API's own — `/auth/me`, `/entities` — under whatever the
+ * Its routes are the API's own — `/auth/me`, `/entities`, `/sections` — under whatever the
  * site's `backend` address is. It accepts a request with the site's `/_api` prefix
  * still on, and one with an extra `/api` after it (how clients before 0.4
  * composed URLs), so it answers the same whether or not the server mounting it
@@ -69,9 +87,11 @@ function adminPage(account) {
  * account the backend's administration admits, so its Admin link answers — with a
  * redirect to a page of the mock's own, since the administration itself is not
  * modelled. An offer, claimed or bound by confirming its address, leaves its
- * invitations waiting, each to answer once. It does not model entitlements behind
- * `via`, nested sections, second factors, password rules, an offer's grants, what
- * joining an organization gives, or an organization withdrawing an invitation.
+ * invitations waiting, each to answer once. A field that picks from a list stores an
+ * item's uuid, checked against its list, and the list's items are read a page at a time
+ * from `/sections/{uuid}/items`. It does not model entitlements behind `via`, second
+ * factors, password rules, an offer's grants, what joining an organization gives, or an
+ * organization withdrawing an invitation.
  *
  * ## The mail it sends
  *
@@ -352,18 +372,52 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       return model && store.maySeeSchema(model) ? json(200, store.schemaOf(model)) : notFound('model', name)
     }
 
+    // ── A Section's items ────────────────────────────────────────────────────
+    const listed = path.startsWith(`${SECTIONS}/`) ? path.slice(SECTIONS.length).match(/^\/([^/]+)\/items$/) : null
+    if (listed && method === 'GET') {
+      const bad = unexpected(q, [PARAM.entity, PARAM.parent, PARAM.field, PARAM.q, PARAM.locale, PARAM.cursor, PARAM.limit])
+      if (bad) return bad
+      const limit = int(q, PARAM.limit, PAGE.size)
+      if (limit === undefined) return badRequest('invalid parameter value')
+      if (!store.account) return unauthorized()
+      const sectionUuid = listed[1]
+      if (!isUuid(sectionUuid)) return badRequest(`invalid section uuid: ${sectionUuid}`)
+      const token = q.get(PARAM.cursor) || ''
+      const after = token ? decodeCursor(token) : null
+      if (token && !after) return badRequest('cursor expired, restart pagination')
+      for (const name of [PARAM.entity, PARAM.parent]) {
+        const value = q.get(name)
+        if (value && !isUuid(value)) return badRequest(`invalid ${name} uuid: ${value}`)
+      }
+      const found = store.sectionByUuid(sectionUuid)
+      if (!found) return notFound('section', sectionUuid)
+      const outcome = store.sectionItems(found.model, found.section, {
+        entity: q.get(PARAM.entity) || null,
+        parent: q.get(PARAM.parent) || null,
+        field: q.get(PARAM.field) || '',
+        q: q.get(PARAM.q) || '',
+        locales: locales(q),
+        after,
+        limit: Math.min(Math.max(limit, 1), PAGE.max),
+      })
+      if (outcome.problem) return answer(outcome)
+      const { next_cursor: next, ...rest } = outcome.body
+      return json(200, { ...rest, next_cursor: next ? encodeCursor(next) : null })
+    }
+
     // ── Entities ────────────────────────────────────────────────────────────
     if (path === ENTITIES || path.startsWith(`${ENTITIES}/`)) {
       const rest = path.slice(ENTITIES.length)
 
       if (rest === '' && method === 'GET') {
-        const bad = unexpected(q, [PARAM.model, PARAM.scope, PARAM.limit, PARAM.offset, PARAM.paginate, PARAM.locale, PARAM.includeDisabled])
+        // ⛔ No `include_disabled`: the backend refuses it, and lists a disabled entity like any other.
+        const bad = unexpected(q, [PARAM.model, PARAM.scope, PARAM.limit, PARAM.offset, PARAM.paginate, PARAM.locale])
         if (bad) return bad
         if (!q.get(PARAM.model)) return badRequest(`Missing required parameter: ${PARAM.model}`)
         const limit = int(q, PARAM.limit, PAGE.size)
         const offset = int(q, PARAM.offset, 0)
         const paginate = bool(q, PARAM.paginate, true)
-        if (limit === undefined || offset === undefined || paginate === undefined || bool(q, PARAM.includeDisabled, false) === undefined) {
+        if (limit === undefined || offset === undefined || paginate === undefined) {
           return badRequest('invalid parameter value')
         }
         const scope = q.get(PARAM.scope) || SCOPE.accessible

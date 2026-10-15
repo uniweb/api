@@ -40,6 +40,18 @@
  * | `acting_unit_id` was a membership signal | every signed-in member of a site acts in the same unit — it cannot tell an operator from a member; `roles` can |
  * | the viewer carried `actingUnitId` | it carries `workspace` — where the request landed: on a site's service, its home org (2026-09-23; `acting_unit_id` leaves the wire) |
  *
+ * ## ⭐ MEASURED 2026-10-14 — a Model's definition in full, and a Section's items
+ *
+ * Against a backend holding data schemas registered the way a site's are, and items
+ * written through `/entities`: what a definition carries for each field and section
+ * (`SCHEMA`), the route that lists a Section's items (`SECTION_ITEMS`), and the
+ * refusals a field's rules answer (`PROBLEM`). That pass corrected:
+ *
+ * | was | is |
+ * |---|---|
+ * | the mock's definition gave each field `{ key, kind }` and nothing else | a field's whole declaration is under `type.data`; an `enum` is a `one_of` rule in its section's `constraints`; a section's `label` and `description` are in `other_data`; a nested section is a row of its own naming its `parent_section_id` |
+ * | the list took `include_disabled` | the backend refuses it — `400 Unexpected parameters: include_disabled` — and lists a disabled entity like any other |
+ *
  * @module @uniweb/api/wire
  */
 
@@ -49,18 +61,21 @@
  * `/sites/*`. Those routes create sites, which is the app's job, not a
  * foundation's, and a site's own `backend` service has no site to address.
  *
- * Its routes are under `/entities`, `/models` and `/auth`, plus what a member does
- * with an invitation — claim an offer (`OFFERS`), answer an invitation
+ * Its routes are under `/entities`, `/models`, `/sections` and `/auth`, plus what a
+ * member does with an invitation — claim an offer (`OFFERS`), answer an invitation
  * (`INVITATIONS`) — the steps the backend's mail asks a member to finish on the site
  * (2026-10-11). ⛔ Never `/sites/*`, and nothing that administers: the backend's
  * administration is reached through the Admin link (`AUTH.memberHandoff`), never
  * wrapped. *(This said "no route that is not under `/entities`, `/models` or
- * `/auth`" until 2026-10-11.)*
+ * `/auth`" until 2026-10-11, and left out `/sections` until 2026-10-14.)*
  */
 export const ENTITIES = '/entities'
 
 /** The Models lane — read-only, one route: a Model's definition. MEASURED. */
 export const MODELS = '/models'
+
+/** The Sections lane — read-only, one route: a Section's items (`SECTION_ITEMS`). MEASURED. */
+export const SECTIONS = '/sections'
 
 /**
  * The base, and how a route joins it. **MEASURED.**
@@ -397,6 +412,8 @@ export const ROUTES = {
   removeBatch: () => `${ENTITIES}/delete`,
   /** `GET /models/@scope/name` — the Model's definition, its sections among it. */
   schema: (model) => `${MODELS}/${modelPath(model)}`,
+  /** `GET /sections/{uuid}/items` — one page of a Section's items (`SECTION_ITEMS`). */
+  sectionItems: (uuid) => `${SECTIONS}/${segment(uuid)}/items`,
 }
 
 /**
@@ -407,12 +424,17 @@ export const ROUTES = {
  *
  * | route | takes |
  * |---|---|
- * | list | `model` (required) · `scope` · `limit` · `offset` · `paginate` · `locale` · `include_disabled` |
+ * | list | `model` (required) · `scope` · `limit` · `offset` · `paginate` · `locale` |
  * | read | `model` (required) · `via` · `depth` · `max_depth` · `locale` |
  * | items | `model` (required) · `readback` |
  * | create | `model` (required) |
  * | remove | `rev_ref_policy` |
+ * | section items | `entity` · `parent` · `field` · `q` · `locale` · `cursor` · `limit` |
  * | verify (`AUTH.verify`) | `token` (required) |
+ *
+ * ⛔ **The list takes no `include_disabled`** — `400 Unexpected parameters:
+ * include_disabled` (MEASURED 2026-10-14). A disabled entity lists like any other,
+ * and its row says `disabled`; the flag only keeps it off a site's public reads.
  *
  * ✅ **`via` and `depth` compose** (an assumption retired 2026-09-18): both are
  * parameters of the same read and answer different questions — `via` *who may
@@ -431,6 +453,7 @@ export const PARAM = {
   offset: 'offset',
   locale: 'locale',
   paginate: 'paginate',
+  /** ⛔ Refused by the backend (see above) and never sent. Kept so an import of it does not break. */
   includeDisabled: 'include_disabled',
   via: 'via',
   depth: 'depth',
@@ -438,6 +461,16 @@ export const PARAM = {
   readback: 'readback',
   revRefPolicy: 'rev_ref_policy',
   token: 'token',
+  /** Section items: only the items this entity holds. */
+  entity: 'entity',
+  /** Section items: the items under this item — the level below it. */
+  parent: 'parent',
+  /** Section items: the field `q` searches. */
+  field: 'field',
+  /** Section items: the search term. */
+  q: 'q',
+  /** Section items: the previous page's `next_cursor`. */
+  cursor: 'cursor',
 }
 
 /**
@@ -608,11 +641,37 @@ export const READ = {
 }
 
 /**
- * A Model's definition — `GET /models/@scope/name`. **MEASURED.**
+ * A Model's definition — `GET /models/@scope/name`. **MEASURED** 2026-10-14, on data
+ * schemas registered the way a site's are.
  *
- * `{ model: {…}, sections: [{ id, name, kind, is_brief, parent_section_id,
- * fields, other_data, constraints }] }` — `kind` is `single` or `multi`;
- * `other_data.append_only` marks an insert-only section.
+ * `{ model, sections }`:
+ *
+ * - **`model`** — `{ id, uuid, name, data, version, owner_id, unit_id, owned,
+ *   owner_cardinality, unit_cardinality, role, created_at, updated_at }`. `data` holds
+ *   what the schema declares of the Model — `label`, `description`, `icon`, `plural`
+ *   among them — and `grantable`.
+ * - **each section** — `{ id, model_id, name, kind, is_brief, parent_section_id, fields,
+ *   other_data, constraints }`. `kind` is `single`, `multi`, or `binder`: a section that
+ *   holds only sections. A nested section is a row of its own, `parent_section_id`
+ *   naming its parent; top-level rows come first, and each group by name. ⛔ **A
+ *   section's uuid is not in the definition** — a field whose choices are a section's
+ *   items names that section's uuid itself (below).
+ * - **`other_data`** — what the schema declares of the section: `label`, `description`,
+ *   `append_only` (insert-only), `allow_self_nesting` (its items nest — `self_nesting:
+ *   true` in a schema), `date_field`.
+ * - **`constraints`** — `{ rules: [...] }`, or `{}` with none: the section's own rules
+ *   first, then `{ kind: 'one_of', field, values }` for each field that declares an
+ *   `enum`. ⛔ **An `enum` is not on its field** — it is that rule.
+ * - **each field** — `{ key, required, multi, type: { id: -1, name, kind, data } }`. ⭐
+ *   **`type.data` is the field's whole declaration**: `key`, `kind`, and what the field
+ *   declares — `required`, `multi`, `label`, `description`, `localized`, `format`,
+ *   `max_length`, `min`, `max` among them. `type` is a wrapper kept from an older
+ *   shape: its `id` is always `-1`, and its `name` is the kind.
+ * - **a field of kind `item_ref`** — a choice from a list — carries `section_uuid`, the
+ *   section whose items are its choices (a schema's `options:` path becomes it), and
+ *   `entity_uuid` when it pins the entry that holds them. Its choices are
+ *   `ROUTES.sectionItems(section_uuid)`. A field of kind `entity_ref` carries the
+ *   `model_uuid` it pins (read in the backend's source).
  *
  * ⭐ **Readable by every signed-in account, whatever it may create** — closing a
  * Model gates creating its entries, never reading its definition (ruled 2026-10-14;
@@ -628,6 +687,67 @@ export const SCHEMA = {
   name: 'name',
   kind: 'kind',
   parent: 'parent_section_id',
+  isBrief: 'is_brief',
+  fields: 'fields',
+  otherData: 'other_data',
+  constraints: 'constraints',
+  rules: 'rules',
+  /** A field's declaration is `field[fieldType][fieldDecl]` — `field.type.data`. */
+  fieldType: 'type',
+  fieldDecl: 'data',
+  /** The rule an `enum` becomes, and the keys it names its field and values by. */
+  oneOf: 'one_of',
+  ruleField: 'field',
+  ruleValues: 'values',
+  /** On an `item_ref` field: the section its choices are in, and the entry it pins. */
+  choicesSection: 'section_uuid',
+  choicesEntity: 'entity_uuid',
+}
+
+/**
+ * A Section's items — `GET /sections/{uuid}/items`. **MEASURED** 2026-10-14.
+ *
+ * The choices of an `item_ref` field: the field declares the section by uuid
+ * (`SCHEMA.choicesSection`), and that uuid is all the route needs — never the Model,
+ * which the section determines.
+ *
+ * `{ items: [{ uuid, entity, parent?, data, has_children? }], next_cursor }`:
+ *
+ * - **`uuid`** is what an `item_ref` field stores — its value is that string. `entity`
+ *   is the entry that holds the item; `parent`, the item it sits under (absent at a
+ *   root); `has_children`, whether items of the same section sit under it — only for a
+ *   section whose items nest. `data` is projected to `locale` as every read is.
+ * - **Whose items:** those of every entry of the section's Model the viewer may read —
+ *   the list's rule (`SCOPE`'s `accessible`) — or, with `entity`, that entry's alone:
+ *   `404` when the viewer may not read it, and when it is of another Model.
+ * - **One level at a time.** Without `parent`: the section's top level — every item of a
+ *   list that does not nest, the roots of one that does, and all the items of a section
+ *   nested in another. With `parent`: the items under that item — the next level of a
+ *   nesting list, or a **dependent list's** choices under the item chosen in the field
+ *   it depends on. A parent the viewer cannot read, or that does not exist, gives an
+ *   empty page.
+ * - **In the section's own order** — an author's arrangement, by entry.
+ * - **`field` + `q`** — the items whose `field` (a single `string` or `text` field of
+ *   the section) holds `q`, ignoring case, anywhere in it; a localized field is matched
+ *   in the `locale` asked for, and in any language without one. ⚠️ **Such a page may be
+ *   short while more follow**: only `next_cursor: null` ends the list.
+ * - **Paging** — `limit` 50 by default, at most 1000; `cursor` is the opaque
+ *   `next_cursor` of the page before, and `null` on the last page.
+ *
+ * Refused: signed out `401`; a section uuid that is not one `400 "invalid section
+ * uuid: …"`, an unknown one `404 { kind: 'section' }`; a stale cursor `400 "cursor
+ * expired, restart pagination"`; a `binder`, which holds no items, `400 Validation`; a
+ * `q` with no `field` `400 Validation`; a `field` the section does not declare, or that
+ * is not a single `string` or `text`, `400 Validation` naming it in `field`.
+ */
+export const SECTION_ITEMS = {
+  items: 'items',
+  next: 'next_cursor',
+  uuid: 'uuid',
+  entity: 'entity',
+  parent: 'parent',
+  data: 'data',
+  hasChildren: 'has_children',
 }
 
 /**
@@ -639,12 +759,26 @@ export const SCHEMA = {
  * | `409 Conflict` + `item_id`, `current_updated_at` | that item changed since this viewer's token — the ONLY stale-token answer. `item_id` since 2026-09-18; an older backend sends the token alone |
  * | `409 Conflict`, no token | an invitation that no longer waits — answered, or withdrawn (`INVITATIONS`, 2026-10-12) |
  * | `409 Append-Only Section` + `section` | an insert-only section: its items can be added and moved, not edited or deleted |
- * | `409 Schema Rule Violation` | a rule of the Model: a second item in a one-item section, a section of another Model, a reference that still points here |
+ * | `409 Schema Rule Violation` | a rule of the Model: a second item in a one-item section, a section of another Model, a reference that still points here, an item of a nested section without a parent of its parent section |
+ * | `409 Bad Reference` | a reference the field does not accept — for an `item_ref`, an item of another section than the one it pins (MEASURED 2026-10-14) |
  * | `403 Forbidden` + `op`, `target` | may read it, may not do this to it — `edit`, `delete`, `use_model` (create) |
  * | `403 Email Not Verified` | right password, unverified address |
  * | `403 CSRF Header Required` | a cookie-authenticated mutation without `X-Uniweb-Csrf` |
- * | `400 Validation` + `field` | content that does not fit the Model (`field: 'data.minutes'`) |
+ * | `400 Validation` + `field` | content that does not fit the Model (`field: 'data.minutes'`) — see below |
  * | `404 Not Found` + `kind`, `key` | nothing here for you — not found or not permitted |
+ *
+ * ⭐ **A field's rule, refused** — `400 Validation`, `reason: 'invalid_field'`, `rule`
+ * naming the declaration the value broke, and the declaration's bound beside it
+ * (MEASURED 2026-10-14):
+ *
+ * | rule | the problem's own keys |
+ * |---|---|
+ * | `required` | `field: 'data.title'` |
+ * | `max_length` — in characters, per language for a localized value | `field: 'data.title'` (`'data.label.en'`), `max_length` |
+ * | `min` · `max` | `field`, and `min` or `max` |
+ * | `format` — a `date` that is not `YYYY-MM-DD`, a calendar day; `2024-05` is refused | `field`, `format: 'date'` |
+ * | `type` | `field` |
+ * | `one_of` — a value outside a field's `enum` | ⚠️ **no `field`**: the field is named only in `detail` (`item.level = "x" is not one of the allowed values …`) |
  */
 export const PROBLEM = {
   csrf: 'CSRF Header Required',

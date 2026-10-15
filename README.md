@@ -244,6 +244,54 @@ the item.
 Its `absent` covers both not-found and not-permitted, on purpose: render your paywall
 or sign-in prompt on it and never say "deleted".
 
+### A Model's definition — what a form is built from
+
+```jsx
+import { useDefinition } from '@uniweb/api'
+
+const { status, definition } = useDefinition('@acme/cv')
+const brief = definition?.sections.find((s) => s.brief)
+// brief.fields → [{ key: 'title', kind: 'string', required: true, label: 'Title', max_length: 250 }, …]
+```
+
+Each field is its declaration as the backend stores it — `key`, `kind`, `required`,
+`multi`, and what the schema declares: `label`, `description`, `localized`, `format`,
+`max_length`, `min`, `max`, and `enum`. Each section is `{ name, path, kind, brief,
+fields, rules }`, plus its `label` and `description`; `path` is the name a write takes,
+`parent/child` for a nested section. ⭐ **These are the rules every write is checked
+against**, so a form that reads them checks what the backend will. `readDefinition({
+schema })` is the same outside React.
+
+### A field's choices
+
+A field that picks from a list — in a schema, `type: item_ref` with `options:` naming a
+section of a lists type — stores the uuid of the item chosen. Its choices are that
+section's items:
+
+```jsx
+import { useChoices } from '@uniweb/api'
+
+const { items, hasMore } = useChoices({ schema: '@acme/cv', field: 'country', q, searchIn: 'label' })
+// items[i].uuid — the value to store; items[i].data — the choice, in the site's language
+
+// a dependent list: the provinces of the country chosen above
+const provinces = useChoices(country ? { schema: '@acme/cv', field: 'province', parent: country } : null)
+```
+
+- **A page at a time** — `limit`, 50 by default and at most 1000; pass `nextCursor` back as
+  `cursor`. ⚠️ A searched page can be short while more follow: `hasMore` is the end, never
+  the page's length.
+- **A search** — `q` anywhere in the choices' field `searchIn`, ignoring case; a
+  localized field in the site's language.
+- **One level at a time** — `parent` reads the items under one item: the next level of a
+  list whose items nest (each says `has_children`), or a dependent field's choices under
+  the item chosen in the field it depends on.
+- **Whose lists** — the items of every entry of the lists type the viewer may read.
+- **Read back**, the field answers `{ item, brief }`: the chosen item's uuid and its data.
+
+`listChoices` is the same outside React, and `listSectionItems({ section })` reads a
+section by its uuid.
+
 ## Writing
 
 An entity's content is **items, each in a section** of its Model. A section that holds
@@ -297,6 +345,80 @@ Every failure is an `ApiError` with a `kind`: `auth` (sign in), `unverified`, `a
 (`error.extensions.field` names a field the Model refused), `conflict`, `rule`,
 `rate-limited`, `unavailable`, `disabled`. Branch on `kind`; `detail` is prose.
 
+## Rules, lists, and what stays in your foundation
+
+The backend checks every write against the Model's declaration, and refuses to register
+a schema with a declaration it does not take. So where a rule is written decides who
+keeps it.
+
+### On a field — checked on every write
+
+| declare | the backend |
+|---|---|
+| `required: true` | refuses a write without the field |
+| `max_length` on `string`, `text` | counts characters — each language of a localized value on its own |
+| `min`, `max` on `int`, `decimal` | refuses a value outside them |
+| `format` — `email`, `url` on `string` and `text`; `currency` on `string`; `markdown`, `html` on `text` | checks `email`, `url` and `currency` (an ISO 4217 code); `markdown` and `html` mark what the text is |
+| `localized: true` on text | holds one string for every language, or one per language |
+| `enum: [...]` | keeps the field to those values — in the definition, as its section's `one_of` rule |
+| `type: item_ref`, `options: '@acme/lists/countries'` | keeps the value to an item of that section — an item of another is `409`, `kind: 'rule'` |
+
+A refused value is `kind: 'invalid'`, its `extensions` naming the field (`data.title`,
+`data.label.fr` for one language), the `rule` it broke and the bound
+(`{ rule: 'max_length', max_length: 250 }`). ⚠️ An `enum`'s refusal, `rule: 'one_of'`,
+names its field only in `detail`.
+
+⛔ **A declaration the backend does not take refuses the whole schema** when it reaches
+the backend, naming the field and the key: a `format` its kind does not have
+(`year-month` on a `date`, `year` on an `int`), a key it does not know (`help`), or one it
+does not check yet (`pattern`, `min_length`).
+
+⚠️ **A `date` is a calendar day**, `YYYY-MM-DD`: `2024-05` is refused. A year alone is an
+`int`, with `min` and `max`.
+
+### On a section — rules across fields, and across items
+
+A section's `constraints` — a list of rules, in its definition as `rules`:
+
+| rule | keeps |
+|---|---|
+| `{ kind: 'exclusive', fields: [...] }` | at most one of the fields set — "another organization" beside a picked one |
+| `{ kind: 'required_one_of', fields: [...] }` | at least one of them set |
+| `{ kind: 'required_when', field, when: { field, equals } }` | the field set whenever another field equals a value |
+| `{ kind: 'field_order', before, after }` | one date no later than another |
+| `{ kind: 'unique_field', field }`, `{ kind: 'unique_combination', fields }` | a value — or values together — once among an entry's items in the section |
+| `{ kind: 'max_items', value }`, `{ kind: 'min_items', value }` | how many items the section holds — `min_items` refuses a delete below it, and does not make anyone add one |
+| `{ kind: 'show_when', field, when: { field, equals } }` | nothing: when a form shows a field — read it from the definition |
+
+### Shared lists
+
+Put the lists your fields pick from in **one lists type, a section per list** — not a
+type per list — and its entries where the people who should see them can read them.
+Then:
+
+- **A field that picks from one** is `type: item_ref` with `options:` naming its section
+  (`'@acme/lists/countries'`, a nested one by its path), and `useChoices` offers it.
+- **A list too long for a dropdown** is searched: `q` with `searchIn`, a page at a time.
+- **A dependent list** — a country, then one of its provinces — is a section nested in
+  the other: `countries` holding `subdivisions`, a field picking from each. The second
+  field's choices are `useChoices({ …, parent: country })`, and it holds only a province.
+- **A list in levels** — a discipline, then its branches — is a section whose items nest
+  (`self_nesting: true`): read it a level at a time with `parent`.
+- **A list people may add to** is one they may edit: who may write an entry's items is
+  who may edit the entry. They add a choice with `useEntityWriter` on the lists entry,
+  and `refresh()` reads the choices again.
+
+### What stays in your foundation
+
+The backend keeps content and checks it. How a field is edited is your foundation's — the
+toolbar of a rich text field, a default for a new entry, a field shown read-only, an
+autocomplete, a value computed from others (a currency converted, shares summed to 100
+before an entry is complete). None of these is a declaration the backend keeps.
+
+⭐ **Who may change a field is who may edit its entry** — the backend decides access per
+entry, never per field. A field only some people may change belongs on an entry only they
+edit.
+
 ## The service on your machine
 
 Building against a live service is slow and puts a shared database behind your
@@ -343,8 +465,10 @@ production, and nothing in your site's configuration changes between the two.
 
 ⭐ **The mock answers what the backend answers** — the same statuses, bodies and
 refusals, for every route this package uses. It enforces what your schemas declare —
-which sections are insert-only, the fields a section takes — and it is as strict as
-the backend about requests, so a mistake fails here rather than in front of a user.
+which sections are insert-only, the fields a section takes and their rules (`required`,
+`max_length`, `min` and `max`, a date's form, an `enum`, the `email` and `url` formats, a
+choice from a list) — and it is as strict as the backend about requests, so a mistake
+fails here rather than in front of a user.
 Everyone signed in reads and writes their own entities, and a member nothing of anyone
 else's (`memberFloor: 'read'` in the seed models a service set up to let members read
 each other's — or per Model, `memberFloor: { '@acme/course': 'read' }`, so the
@@ -360,6 +484,20 @@ invitation waiting. An offer to an address a seeded account holds waits for that
 from the start.
 The operator's Admin link answers too, landing on a page of the mock's own — the backend's
 administration is not part of it. State is in memory: restart to reset.
+
+Write a seed's schemas as you write them for a backend — `type: 'int'`, `multiple: true`,
+`options:` — and the mock's definition answers what a backend keeps of them, so a key no
+backend takes is left out of it (a backend refuses it when you register). Seed a list's
+choices as items of a lists entry, each item holding the items that sit under it:
+
+```js
+{ section: 'countries', data: { code: 'CA', label: { en: 'Canada' } }, items: [
+  { section: 'countries/subdivisions', data: { name: { en: 'Ontario' } } },
+] }
+```
+
+A field whose `options:` names no section of a seeded Model is reported when the mock
+starts, and offers no choices — a backend refuses to register it.
 
 There is also a standalone server, for a frontend that is not a Uniweb site — `--site`
 names that frontend's origin, where the mail's links land:

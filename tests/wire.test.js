@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, CREATE, LIST, READ, LINK, OFFERS, INVITATIONS, ELEVATION, VIEWER } from '../src/wire.js'
+import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, SECTIONS, CREATE, LIST, READ, LINK, OFFERS, INVITATIONS, ELEVATION, VIEWER } from '../src/wire.js'
 import { composeUrl } from '../src/http.js'
 
 /**
@@ -31,18 +31,21 @@ describe('wire — the assumptions are a reviewable set', () => {
 })
 
 describe('wire — the lane', () => {
-  it('addresses entities and one Models read, and nothing under /sites', () => {
+  it('addresses entities, a Models read and a Sections read, and nothing under /sites', () => {
     // ⛔ RULED: this package touches nothing under /sites/*. Those routes create
     // sites, which is the app's job, and a site's own api service has no site to
-    // address. The one route outside /entities is a Model's definition — read-only,
-    // for the section ids an item create needs.
+    // address. Two read-only routes sit outside /entities: a Model's definition — the
+    // form, and the section ids an item create needs — and a Section's items, the
+    // choices of a field that picks from a list (2026-10-14).
+    const outside = { schema: /^\/models\//, sectionItems: /^\/sections\/[^/]+\/items$/ }
     for (const [name, build] of Object.entries(ROUTES)) {
       const path = build('u-1')
-      expect(path, name).toMatch(name === 'schema' ? /^\/models\// : /^\/entities(\/|$)/)
+      expect(path, name).toMatch(outside[name] ?? /^\/entities(\/|$)/)
       expect(path, name).not.toContain('/sites/')
     }
     expect(ENTITIES).toBe('/entities')
     expect(MODELS).toBe('/models')
+    expect(SECTIONS).toBe('/sections')
   })
 
   it('keeps every auth route under /auth', () => {

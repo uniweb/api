@@ -42,7 +42,8 @@ tree-shaken per import, and inert on a site that declares no backend.
   `UNIWEB_API_BASE=http://localhost:8080/api UNIWEB_API_LOGIN='{"username":"…","password":"…"}' UNIWEB_API_MODEL=@scope/name pnpm test`.
   A hosted site's `https://<site>/_api` is a valid base too, and the one that exercises the forward.
 - **Lists read `GET /entities?model=`** (ruled 2026-09-01), one entity `GET /entities/{uuid}` —
-  `via` a container when the viewer's access comes through one.
+  `via` a container when the viewer's access comes through one. A field's choices read
+  `GET /sections/{uuid}/items`, by the section uuid its declaration names (2026-10-14).
 - **`@uniweb/core` is `workspace:~`** in `dependencies` — the framework's cascade rule; never
   `workspace:*` or `workspace:^` in a published section. *(This said `workspace:^` until
   2026-10-11, when every sibling range became a tilde.)*

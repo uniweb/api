@@ -1,5 +1,6 @@
 import { CLAIM, FIELD, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
 import { checkItemWrite, OUTCOME } from './schema-shape.js'
+import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 
 /**
  * The mock's state — accounts, one session, Models with their sections, and
@@ -38,11 +39,20 @@ import { checkItemWrite, OUTCOME } from './schema-shape.js'
  * A mock that grows a schema and migrations becomes a second implementation that
  * drifts and is believed anyway.
  *
+ * - **A choice from a list** — a field of kind `item_ref`, `options:` in a schema —
+ *   stores an item's uuid, checked against the section the field names, and that
+ *   section's items are listed by `GET /sections/{uuid}/items` as the backend lists
+ *   them. A nested section is a section of its own, and its items sit under an item of
+ *   its parent section. *(Both since 2026-10-14; nested sections were not modelled
+ *   before.)*
+ *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
- * same read), a Model whose creation is closed, nested sections, second factors —
+ * same read), a Model whose creation is closed, second factors —
  * at a sign-in or an elevation, where a `code` is accepted and not checked —
  * sign-in providers, and so no elevation through one, roles other than the operator's,
- * step-up, reference fields, password rules,
+ * step-up, a reference to an entity (an `entity_ref` value is stored unchecked), a
+ * section's own rules — `exclusive`, `unique_field`, `min_items` and the rest are answered
+ * in the definition and not applied; a field's `enum` is — password rules,
  * an offer's grants (a count, sharing nothing), what joining an organization
  * gives — accepting an invitation answers, and opens nothing to read — and an
  * organization withdrawing an invitation.
@@ -112,6 +122,32 @@ function canonical(value) {
 
 const isMulti = (section) => section?.multiple === true || section?.kind === 'multi'
 const shortName = (model) => String(model).split('/').pop() || String(model)
+
+/** A nested section, declared as a field of its parent. */
+const isSectionNode = (field) => field?.type === 'section'
+
+/** A section's own fields, by key — its nested sections left out. */
+function leavesOf(section) {
+  const fields = section?.fields
+  if (!fields || typeof fields !== 'object') return null
+  return Object.fromEntries(Object.entries(fields).filter(([, f]) => !isSectionNode(f)))
+}
+
+/** A section's nested sections, as `[name, declaration]`. */
+function subSectionsOf(section) {
+  const fields = section?.fields
+  return fields && typeof fields === 'object' ? Object.entries(fields).filter(([, f]) => isSectionNode(f)) : []
+}
+
+/**
+ * A section's kind, derived from its shape as the backend derives it: `multi` when it
+ * holds many items, `binder` when it holds only sections, `single` otherwise.
+ */
+function sectionKind(section) {
+  if (isMulti(section)) return 'multi'
+  const fields = section?.fields && typeof section.fields === 'object' ? Object.values(section.fields) : []
+  return fields.length && fields.every(isSectionNode) ? 'binder' : 'single'
+}
 
 /**
  * A `{ locale: value }` map — a plain object, never an array (a localized list's
@@ -190,6 +226,22 @@ export class MockStore {
     }
     for (const name of new Set([...Object.keys(this.schemas), ...itemSections.keys()])) {
       this.defineModel(name, this.schemas[name], itemSections.get(name))
+    }
+    // A choice from a list names its list, and a backend refuses to register a schema
+    // whose list it cannot find. The mock says so when it starts, and the field offers no
+    // choices: refusing to start would stop a site whose seed spells its lists another way.
+    /** Fields whose `options:` names no seeded section — `{ model, section, field, options }`. */
+    this.unlisted = []
+    for (const model of this.models.values()) {
+      for (const section of model.sections) {
+        for (const [key, field] of Object.entries(section.fields || {})) {
+          if (kindOf(field) !== 'item_ref' || field?.options == null || this.choicesSection(field)) continue
+          this.unlisted.push({ model: model.name, section: section.path, field: key, options: field.options })
+          console.warn(
+            `[uniweb/api mock] ${model.name}: field '${key}' of '${section.path}' takes its choices from ${JSON.stringify(field.options)}, which names no section the seed declares — so it offers none. A backend refuses to register it: options is '@scope/name/section', a nested section by its path.`,
+          )
+        }
+      }
     }
 
     /**
@@ -457,29 +509,50 @@ export class MockStore {
       section?.append_only === true ||
       decl?.append_only === true ||
       (Array.isArray(decl?.append_only) && decl.append_only.includes(sectionName))
+    const at = this.clock()
     const model = {
       id: (this.ids.model += 1),
       uuid: newUuid(),
       name,
       decl: decl || {},
       sections: [],
+      created_at: at,
+      updated_at: at,
     }
-    const add = (sectionName, { kind, brief = false, section = null, debt = false }) =>
-      model.sections.push({
+    const add = (sectionName, { kind, brief = false, section = null, debt = false, parent = null }) => {
+      const row = {
         id: (this.ids.section += 1),
+        // Never in the definition (`SCHEMA`): a field whose choices are this section's
+        // items names it, and `GET /sections/{uuid}/items` is addressed by it.
+        uuid: newUuid(),
         name: sectionName,
+        // The name a write takes: `parent/child` for a nested section.
+        path: parent ? `${parent.path}/${sectionName}` : sectionName,
+        parent: parent?.id ?? null,
         kind,
         is_brief: brief,
         append_only: appendOnly(sectionName, section),
-        fields: section?.fields || null,
+        // Its items nest under items of the same section (`self_nesting: true`).
+        nests: section?.self_nesting === true || section?.allow_self_nesting === true,
+        // Its own fields, by key — a nested section is a section of its own, not a field.
+        fields: leavesOf(section),
+        decl: section,
         debt,
-      })
+      }
+      model.sections.push(row)
+      return row
+    }
 
     const declared = decl?.sections && typeof decl.sections === 'object' ? decl.sections : null
     if (declared) {
-      for (const [sectionName, section] of Object.entries(declared)) {
-        add(sectionName, { kind: isMulti(section) ? 'multi' : 'single', brief: !!section?.brief, section })
+      // Parents first, so a nested section's parent row exists when it is added.
+      const walk = (entries, parent) => {
+        for (const [sectionName, section] of entries) {
+          const row = add(sectionName, { kind: sectionKind(section), brief: !!section?.brief, section, parent })
+          walk(subSectionsOf(section), row)
+        }
       }
+      walk(Object.entries(declared), null)
       // Sections the site KNOWS diverge from the declaration, kept writable while
       // they are unwound — and only the ones it named.
       for (const sectionName of decl.migration_debt || []) {
@@ -516,20 +589,28 @@ export class MockStore {
     return !!this.account
   }
 
-  /** `GET /models/@scope/name`, in the backend's shape. */
+  /**
+   * `GET /models/@scope/name`, as the backend answers it (`SCHEMA` in `../wire.js`): each
+   * field its stored declaration under `type.data` (`./definition.js`), an `enum` as its
+   * section's `one_of` rule, a section's `label` and `description` in `other_data`, a
+   * nested section as a row naming its parent — top-level rows first, each group by name.
+   */
   schemaOf(model) {
-    const field = ([key, f]) => ({
-      key,
-      required: !!f?.required,
-      multi: f?.multiple === true || f?.type === 'array',
-      type: { id: -1, name: f?.type ?? 'json', kind: f?.type ?? 'json', data: { key, kind: f?.type ?? 'json' } },
+    const data = { grantable: true }
+    for (const k of ['label', 'description', 'icon', 'plural']) {
+      if (typeof model.decl?.[k] === 'string') data[k] = model.decl[k]
+    }
+    const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+    const rows = [...model.sections].sort((a, b) => {
+      if ((a.parent == null) !== (b.parent == null)) return a.parent == null ? -1 : 1
+      return (a.parent ?? 0) - (b.parent ?? 0) || byName(a, b)
     })
     return {
       model: {
         id: model.id,
         uuid: model.uuid,
         name: model.name,
-        data: { label: model.decl?.label ?? shortName(model.name), grantable: true },
+        data,
         version: 1,
         owner_id: this.operator()?.id ?? null,
         unit_id: null,
@@ -537,19 +618,235 @@ export class MockStore {
         owner_cardinality: 'unbounded',
         unit_cardinality: 'unbounded',
         role: 'content',
+        created_at: model.created_at,
+        updated_at: model.updated_at,
       },
-      sections: model.sections.map((s) => ({
-        id: s.id,
-        model_id: model.id,
-        name: s.name,
-        kind: s.kind,
-        is_brief: s.is_brief,
-        parent_section_id: null,
-        fields: Object.entries(s.fields || {}).map(field),
-        other_data: s.append_only ? { append_only: true } : {},
-        constraints: {},
-      })),
+      sections: rows.map((s) => {
+        const rules = rulesOf(s.decl, s.fields)
+        return {
+          id: s.id,
+          model_id: model.id,
+          name: s.name,
+          kind: s.kind,
+          is_brief: s.is_brief,
+          parent_section_id: s.parent,
+          fields: Object.entries(s.fields || {}).map(([key, f]) =>
+            fieldRow(key, f, {
+              section: kindOf(f) === 'item_ref' ? this.choicesSection(f)?.uuid : null,
+              model: kindOf(f) === 'entity_ref' ? this.model(f?.model)?.uuid : null,
+            }),
+          ),
+          other_data: otherDataOf(s.decl, { appendOnly: s.append_only, nests: s.nests }),
+          constraints: rules.length ? { rules } : {},
+        }
+      }),
     }
+  }
+
+  /**
+   * A section of a Model by the name a write takes — its `parent/child` path, or its
+   * own name when no other section shares it — or null.
+   */
+  sectionNamed(model, name) {
+    const byPath = model.sections.find((s) => s.path === name)
+    if (byPath) return byPath
+    const byName = model.sections.filter((s) => s.name === name)
+    return byName.length === 1 ? byName[0] : null
+  }
+
+  /** `{ model, section }` for a section uuid, or null. */
+  sectionByUuid(uuid) {
+    for (const model of this.models.values()) {
+      const section = model.sections.find((s) => s.uuid === uuid)
+      if (section) return { model, section }
+    }
+    return null
+  }
+
+  /** The section an `item_ref` field's `options: '@scope/name/section'` names, or null. */
+  choicesSection(field) {
+    const named = parseOptions(field?.options)
+    const model = named && this.model(named.model)
+    return model ? this.sectionNamed(model, named.path) : null
+  }
+
+  /** The nearest section above this one that holds items — past any binder — or null. */
+  holdingAncestor(model, section) {
+    for (let at = section.parent; at != null; ) {
+      const above = model.sections.find((s) => s.id === at)
+      if (!above) return null
+      if (above.kind !== 'binder') return above
+      at = above.parent
+    }
+    return null
+  }
+
+  /**
+   * Where an item of this section may sit, as the backend checks it: under an item of its
+   * nearest item-holding parent section — which an item of a nested section must name —
+   * or, in a section whose items nest, under one of its own. `null` when it may sit there.
+   */
+  parentRefusal(entity, model, section, parentId) {
+    const ancestor = this.holdingAncestor(model, section)
+    if (parentId == null) {
+      return ancestor
+        ? refuse(
+            409,
+            PROBLEM.schemaRule,
+            `section ${section.id} (\`${section.name}\`) nests under section ${ancestor.id}; its items need a parent_item_id naming an item of that section`,
+          )
+        : null
+    }
+    const parent = entity.items.find((i) => i.id === parentId)
+    if (!parent) return refuse(409, PROBLEM.schemaRule, `parent item ${parentId} is not an item of this entity`)
+    if (section.nests && parent.section_id === section.id) return null
+    if (ancestor && parent.section_id === ancestor.id) return null
+    return refuse(
+      409,
+      PROBLEM.schemaRule,
+      `parent_item_id ${parentId} lives in section ${parent.section_id}, but section ${section.id}'s items sit under ${ancestor ? `section ${ancestor.id}'s` : 'no item'}`,
+    )
+  }
+
+  /**
+   * `GET /sections/{uuid}/items` — one page of a section's items, as the backend answers
+   * it (`SECTION_ITEMS` in `../wire.js`), its refusals in the backend's order: a term with
+   * no field, the entry, a binder, the field. `{ body }` or `{ problem }`.
+   *
+   * ⚖️ The backend may answer a short page while more follow (a localized search);
+   * the mock filters before it pages, so its pages are full. Both end only where
+   * `next_cursor` is `null`.
+   *
+   * @param {object} model
+   * @param {object} section
+   * @param {{ entity?: string, parent?: string, field?: string, q?: string, locales?: string[]|null, after?: number[]|null, limit: number }} ask
+   */
+  sectionItems(model, section, { entity, parent, field, q, locales, after, limit }) {
+    const term = (q || '').trim()
+    const named = (field || '').trim()
+    if (term && !named) return refuse(400, 'Validation', "`q` searches one field of the Section's items: name it with `field`")
+
+    let entries
+    if (entity) {
+      const found = this.entities.get(entity)
+      // Read as a single read is: not found, not permitted and another Model are one answer.
+      if (!found || found.model !== model.name || !this.mayRead(found)) {
+        return refuse(404, 'Not Found', `entity ${entity} not found`, { kind: 'entity', key: entity })
+      }
+      entries = [found]
+    } else {
+      entries = [...this.entities.values()].filter((e) => e.model === model.name && this.mayRead(e))
+    }
+    if (section.kind === 'binder') {
+      return refuse(400, 'Validation', `section \`${section.name}\` is a binder: it holds sections, never items`)
+    }
+    let searched = null
+    if (term) {
+      searched = section.fields?.[named]
+      if (!searched) return refuse(400, 'Validation', `section \`${section.name}\` declares no field \`${named}\``, { field: named })
+      const kind = kindOf(searched)
+      if (isList(searched) || !['string', 'text'].includes(kind)) {
+        return refuse(400, 'Validation', `\`${named}\` is ${isList(searched) ? 'a multiple ' : 'a '}${kind}: a search reads one \`string\` or \`text\` value`, {
+          field: named,
+        })
+      }
+    }
+
+    const needle = term.toLowerCase()
+    const holds = (value) => {
+      if (typeof value === 'string') return value.toLowerCase().includes(needle)
+      if (!isLocaleMap(searched, value)) return false
+      // A localized value in the read's language, as the read shows it — any language without one.
+      if (locales?.length) {
+        const hit = locales.find((l) => value[l] != null)
+        return hit != null && holds(value[hit])
+      }
+      return Object.entries(value).some(([lang, v]) => lang !== '@' && typeof v === 'string' && v.toLowerCase().includes(needle))
+    }
+
+    const rows = []
+    for (const e of [...entries].sort((a, b) => a.id - b.id)) {
+      const byId = new Map(e.items.map((i) => [i.id, i]))
+      for (const i of e.items) {
+        if (i.section_id !== section.id) continue
+        const up = i.parent_item_id != null ? byId.get(i.parent_item_id) ?? null : null
+        // One level: the items under `parent`, or the section's top level — its items whose
+        // parent is not an item of the same section.
+        if (parent ? up?.uuid !== parent : up?.section_id === section.id) continue
+        if (searched && !holds(i.data?.[named])) continue
+        rows.push({ e, i, up, key: [e.id, up?.order_number ?? 0, up?.id ?? 0, i.order_number ?? Number.MAX_SAFE_INTEGER, i.id] })
+      }
+    }
+    const before = (a, b) => {
+      for (let n = 0; n < a.length; n += 1) if (a[n] !== b[n]) return a[n] < b[n]
+      return false
+    }
+    rows.sort((a, b) => (before(a.key, b.key) ? -1 : before(b.key, a.key) ? 1 : 0))
+    const rest = after ? rows.filter((r) => before(after, r.key)) : rows
+    const page = rest.slice(0, limit)
+    const children = (e, i) => e.items.some((c) => c.parent_item_id === i.id && c.section_id === section.id)
+    return {
+      body: {
+        items: page.map(({ e, i, up }) => ({
+          uuid: i.uuid,
+          entity: e.uuid,
+          ...(up ? { parent: up.uuid } : {}),
+          data: this.project(i.data, section, locales),
+          ...(section.nests ? { has_children: children(e, i) } : {}),
+        })),
+        next_cursor: rest.length > page.length ? page[page.length - 1].key : null,
+      },
+    }
+  }
+
+  /** `{ entity, item }` for an item uuid, or null. */
+  itemByUuid(uuid) {
+    for (const entity of this.entities.values()) {
+      const item = entity.items.find((i) => i.uuid === uuid)
+      if (item) return { entity, item }
+    }
+    return null
+  }
+
+  /**
+   * An `item_ref` value the backend would refuse — not a uuid string, an item that does not
+   * exist, or an item of another section than the field's list (MEASURED 2026-10-14) — or
+   * null. A list of them is checked one by one.
+   */
+  refRefusal(section, data) {
+    for (const [key, field] of Object.entries(section.fields || {})) {
+      if (kindOf(field) !== 'item_ref' || data?.[key] == null) continue
+      const values = isList(field) && Array.isArray(data[key]) ? data[key] : [data[key]]
+      const pinned = this.choicesSection(field)
+      for (const value of values) {
+        if (typeof value !== 'string') {
+          return refuse(400, 'Validation', `item.data.${key} must be a uuid string (item_ref value is the target item's uuid)`, {
+            reason: 'invalid_field',
+            field: `data.${key}`,
+            rule: 'type',
+          })
+        }
+        if (!isUuid(value)) {
+          return refuse(400, 'Validation', `item.data.${key}=\`${value}\` is not a valid uuid`, {
+            reason: 'invalid_field',
+            field: `data.${key}`,
+            rule: 'format',
+            format: 'uuid',
+          })
+        }
+        const target = this.itemByUuid(value)
+        if (!target) return refuse(409, 'Bad Reference', `item.data.${key} → item ${value}, but no item with that uuid exists`)
+        if (pinned && target.item.section_id !== pinned.id) {
+          const actual = this.model(target.entity.model)?.sections.find((s) => s.id === target.item.section_id)
+          return refuse(
+            409,
+            'Bad Reference',
+            `item.data.${key} → item ${value} is in section ${actual?.uuid ?? target.item.section_id}, but the type pins section ${pinned.uuid}`,
+          )
+        }
+      }
+    }
+    return null
   }
 
   operator() {
@@ -570,11 +867,17 @@ export class MockStore {
     if (uuid) entity.uuid = uuid
     const brief = model.sections.find((s) => s.is_brief)
     if (data && brief && Object.keys(data).length) this.addItem(entity, brief, { data })
-    for (const item of items) {
-      const section = model.sections.find((s) => s.name === item.section)
-      if (!section) throw new Error(`[uniweb/api mock] seed: ${modelName} has no section '${item.section}'`)
-      this.addItem(entity, section, { data: item.data ?? {}, parent: item.parent ?? null })
+    // An item may carry the items that sit under it — a nested section's, or its own
+    // section's when its items nest — as `items`, so a seed never needs an item id.
+    const place = (list, parent) => {
+      for (const item of list) {
+        const section = this.sectionNamed(model, item.section)
+        if (!section) throw new Error(`[uniweb/api mock] seed: ${modelName} has no section '${item.section}'`)
+        const made = this.addItem(entity, section, { data: item.data ?? {}, parent: parent ?? item.parent ?? null })
+        if (Array.isArray(item.items)) place(item.items, made.id)
+      }
     }
+    place(items, null)
     this.entities.set(entity.uuid, entity)
     return entity
   }
@@ -678,7 +981,7 @@ export class MockStore {
     const model = this.model(entity.model)
     const section = model?.sections.find((s) => s.is_brief)
     const item = section && entity.items.find((i) => i.section_id === section.id)
-    return item ? this.project(item.data, section, locales) : {}
+    return item ? this.present(item.data, section, locales) : {}
   }
 
   /**
@@ -703,6 +1006,29 @@ export class MockStore {
       else delete out[key]
     }
     return out
+  }
+
+  /**
+   * An item's data as a read shows it — each `item_ref` value resolved one hop to
+   * `{ item, brief }`, the item it names and that item's data, as the backend reads one
+   * (MEASURED 2026-10-14: a brief's `country` comes back `{ item, brief: { code, label } }`)
+   * — then projected to the read's locale. A value that names no item stays as stored.
+   */
+  present(data, section, locales) {
+    if (!data || typeof data !== 'object' || !section?.fields) return this.project(data, section, locales)
+    let out = data
+    for (const [key, field] of Object.entries(section.fields)) {
+      if (kindOf(field) !== 'item_ref' || data[key] == null) continue
+      const resolve = (value) => {
+        const target = typeof value === 'string' ? this.itemByUuid(value) : null
+        if (!target) return value
+        const own = this.model(target.entity.model)?.sections.find((s) => s.id === target.item.section_id)
+        return { item: value, brief: this.project(target.item.data, own, locales) }
+      }
+      if (out === data) out = { ...data }
+      out[key] = Array.isArray(data[key]) ? data[key].map(resolve) : resolve(data[key])
+    }
+    return this.project(out, section, locales)
   }
 
   /** The entity row without its Model's identity — as it sits inside a write's answer. */
@@ -751,7 +1077,7 @@ export class MockStore {
             id: i.id,
             section_id: i.section_id,
             parent_item_id: i.parent_item_id,
-            data: this.project(i.data, sectionOf(i.section_id), locales),
+            data: this.present(i.data, sectionOf(i.section_id), locales),
             item_date: null,
             order_number: i.order_number,
             updated_at: i.updated_at,
@@ -779,11 +1105,12 @@ export class MockStore {
     const entity = this.newEntity(model, this.account)
     const staged = { ...entity, items: [] }
     for (const item of items) {
-      const section = model.sections.find((s) => s.name === item.section)
+      const section = this.sectionNamed(model, item.section)
       if (!section) return refuse(404, 'Not Found', `section ${model.id}:${item.section} not found`, { kind: 'section', key: `${model.id}:${item.section}` })
-      const refusal = this.admit(staged, model, section, item.data, null)
+      const parent = item.parent_item_id ?? null
+      const refusal = this.parentRefusal(staged, model, section, parent) ?? this.admit(staged, model, section, item.data, null)
       if (refusal) return refusal
-      this.addItem(staged, section, { data: item.data, parent: item.parent_item_id ?? null })
+      this.addItem(staged, section, { data: item.data, parent })
     }
     Object.assign(entity, { items: staged.items, updated_at: staged.updated_at })
     this.entities.set(entity.uuid, entity)
@@ -819,15 +1146,23 @@ export class MockStore {
    */
   shapeGuard(model, section, data, itemId) {
     if (!model.decl?.sections) return null
-    const check = checkItemWrite({ decl: model.decl, section: section.name, data })
+    const check = checkItemWrite({ decl: model.decl, section: section.path ?? section.name, data })
     if (check.outcome === OUTCOME.VIOLATES) {
       const first = check.problems[0]
-      return refuse(400, 'Validation', `item.data.${first.field}: ${first.detail}`, { field: `data.${first.field}` })
+      // As the backend refuses it (MEASURED 2026-10-14): `reason`, `rule`, the bound beside
+      // it — and the field, except for a `one_of`, which names it only in `detail`.
+      if (first.rule === 'undeclared-section') return refuse(400, 'Validation', first.detail, { field: first.field })
+      return refuse(400, 'Validation', first.detail, {
+        reason: 'invalid_field',
+        ...(first.rule === 'one_of' ? {} : { field: `data.${first.field}` }),
+        rule: first.rule,
+        ...(first.params || {}),
+      })
     }
     if (check.outcome === OUTCOME.DIAGNOSED) {
       this.diagnose(model.name, { op: itemId == null ? 'create-item' : 'update-item', section: section.name }, check)
     }
-    return null
+    return this.refRefusal(section, data)
   }
 
   /** Record a write the mock let through on the seed's say-so (`migration_debt`), deduped with a count. */
@@ -865,9 +1200,8 @@ export class MockStore {
           : refuse(404, 'Not Found', `section ${op[FIELD.section]} not found`, { kind: 'section', key: String(op[FIELD.section]) })
       }
       const parent = op[FIELD.parent] ?? null
-      if (parent != null && !entity.items.some((i) => i.id === parent)) {
-        return refuse(409, PROBLEM.schemaRule, `parent item ${parent} is not an item of this entity`)
-      }
+      const misplaced = this.parentRefusal(entity, model, section, parent)
+      if (misplaced) return misplaced
       const refusal = this.admit(entity, model, section, op.data, null)
       if (refusal) return refusal
       if (op.position != null && this.orderFor(entity, section.id, parent, op.position, null) == null) {
