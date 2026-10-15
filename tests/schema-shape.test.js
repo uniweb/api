@@ -126,9 +126,36 @@ describe('checkFields', () => {
     expect(rule({ month: '2024-13' })).toEqual([['month', 'format', { format: 'year-month' }]])
     expect(rule({ year: '24' })).toEqual([['year', 'format', { format: 'year' }]])
     expect(rule({ email: 'a@b' })).toEqual([['email', 'format', { format: 'email' }]])
-    expect(rule({ email: 'a@b.co', site: 'ftp://files.example.com/a.pdf', body: '# hi' })).toEqual([])
+    expect(rule({ email: 'a@b.co', site: 'https://files.example.com/a.pdf', body: '# hi' })).toEqual([])
     expect(rule({ site: '/about' })).toEqual([['site', 'format', { format: 'url' }]])
     expect(checkFields(fields, { email: 'a@b' })[0].detail).toBe('item.data.email = "a@b" is not a valid email')
+  })
+
+  // MEASURED by the backend, 2026-10-15: `http://` or `https://`, or an address that starts with a
+  // host name, which it stores with `https://`. `ftp://…` and `javascript://…` passed until that day.
+  it('a url is http or https, or starts with a host name', () => {
+    const fields = { site: { type: 'string', format: 'url' } }
+    const rule = (site) => checkFields(fields, { site }).map((p) => p.rule)
+    for (const site of ['https://example.com', 'HTTPS://Example.com', 'example.com', 'www.example.com/cv', 'example.com:8080/a', '//example.com/x']) {
+      expect(rule(site), site).toEqual([])
+    }
+    for (const site of ['ftp://example.com/a', 'javascript://example.com/%0A', 'mailto:a@example.com', 'tel:+1555', '/about', 'localhost:3000', 'a@example.com']) {
+      expect(rule(site), site).toEqual(['format'])
+    }
+  })
+
+  // Stated by the backend, 2026-10-15: the whole value, as JavaScript matches it with `v`.
+  it("a string's pattern, matched whole — a url as stored", () => {
+    const fields = {
+      code: { type: 'string', pattern: '[A-Z]{2}\\d{4}' },
+      tags: { type: 'array', items: { type: 'string', pattern: '[a-z]+' } },
+      orcid: { type: 'string', format: 'url', pattern: 'https://orcid\\.org/.+' },
+    }
+    const rule = (data) => checkFields(fields, data).map((p) => [p.field, p.rule, p.params])
+    expect(rule({ code: 'AB1234', tags: ['a', 'b'], orcid: 'orcid.org/0000-0002-1825-0097' })).toEqual([])
+    expect(rule({ code: 'xAB1234' })).toEqual([['code', 'pattern', { pattern: '[A-Z]{2}\\d{4}' }]])
+    expect(rule({ tags: ['ok', 'No'] })).toEqual([['tags[1]', 'pattern', { pattern: '[a-z]+' }]])
+    expect(rule({ code: '' })).toEqual([])
   })
 
   it('tolerates a type it does not know rather than failing the write', () => {
@@ -165,6 +192,69 @@ describe('enforcement — declared sections', () => {
     const { entity, model } = entityOf(store, '@/course', [{ section: 'modules', data: { title: 'ok' } }])
     const res = store.applyOp(entity, model, { kind: OP.update, [FIELD.item]: entity.items[0].id, data: { title: 42 } })
     expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
+  })
+})
+
+// MEASURED by the backend, 2026-10-15: a day is stored in full and a url with `https://`, however
+// either was written — and an update writing the same value short changes nothing.
+describe('a write is kept as the backend stores it', () => {
+  const PROFILE = {
+    sections: {
+      jobs: {
+        kind: 'multi',
+        fields: {
+          started: { type: 'date' },
+          month: { type: 'date', format: 'year-month' },
+          site: { type: 'string', format: 'url' },
+          links: { type: 'array', items: { type: 'string', format: 'url' } },
+          home: { type: 'string', format: 'url', localized: true },
+          code: { type: 'string', pattern: '[A-Z]{2}\\d{4}' },
+        },
+      },
+    },
+  }
+
+  it('a day in full, a url with https:// and its scheme in small letters', () => {
+    const store = storeWith({ '@/profile': PROFILE })
+    const { entity, model, id } = entityOf(store, '@/profile')
+    const res = store.applyOp(entity, model, {
+      kind: OP.create,
+      [FIELD.section]: id('jobs'),
+      data: { started: '2024-5-3', month: '2024-05', site: 'example.com/cv', links: ['HTTPS://A.example.com', '//b.example.com'], home: { en: 'example.com', fr: 'https://exemple.fr' } },
+    })
+    expect(res.result[FIELD.item]).toBeTruthy()
+    expect(entity.items.at(-1).data).toEqual({
+      started: '2024-05-03',
+      month: '2024-05',
+      site: 'https://example.com/cv',
+      links: ['https://A.example.com', 'https://b.example.com'],
+      home: { en: 'https://example.com', fr: 'https://exemple.fr' },
+    })
+  })
+
+  it('an update writing the same day or address short is no change — the token holds', () => {
+    const store = storeWith({ '@/profile': PROFILE })
+    const { entity, model } = entityOf(store, '@/profile', [{ section: 'jobs', data: { started: '2024-05-03', site: 'https://example.com' } }])
+    const item = entity.items[0]
+    const before = item.updated_at
+    const res = store.applyOp(entity, model, { kind: OP.update, [FIELD.item]: item.id, data: { started: '2024-5-3', site: 'example.com' } })
+    expect(res.result[FIELD.token]).toBe(before)
+    expect(item.data).toEqual({ started: '2024-05-03', site: 'https://example.com' })
+  })
+
+  it('a pattern the value does not match is refused, naming the field and the pattern', () => {
+    const store = storeWith({ '@/profile': PROFILE })
+    const { entity, model, id } = entityOf(store, '@/profile')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('jobs'), data: { code: 'ab12' } })
+    expect(res.problem).toMatchObject({ status: 400, title: 'Validation', field: 'data.code', rule: 'pattern', pattern: '[A-Z]{2}\\d{4}' })
+  })
+
+  it('CONTROL — a url a backend refuses is refused, and nothing is kept', () => {
+    const store = storeWith({ '@/profile': PROFILE })
+    const { entity, model, id } = entityOf(store, '@/profile')
+    const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('jobs'), data: { site: 'ftp://example.com/cv' } })
+    expect(res.problem).toMatchObject({ status: 400, field: 'data.site', rule: 'format', format: 'url' })
+    expect(entity.items).toHaveLength(0)
   })
 })
 

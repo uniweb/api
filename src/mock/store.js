@@ -1,5 +1,5 @@
 import { CLAIM, FIELD, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
-import { checkItemWrite, OUTCOME } from './schema-shape.js'
+import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 
 /**
@@ -1110,7 +1110,7 @@ export class MockStore {
       const parent = item.parent_item_id ?? null
       const refusal = this.parentRefusal(staged, model, section, parent) ?? this.admit(staged, model, section, item.data, null)
       if (refusal) return refusal
-      this.addItem(staged, section, { data: item.data, parent })
+      this.addItem(staged, section, { data: this.stored(model, section, item.data), parent })
     }
     Object.assign(entity, { items: staged.items, updated_at: staged.updated_at })
     this.entities.set(entity.uuid, entity)
@@ -1165,6 +1165,12 @@ export class MockStore {
     return this.refRefusal(section, data)
   }
 
+  /** The data to keep, as the backend stores it — where the seed declared the section's fields. */
+  stored(model, section, data) {
+    if (!model.decl?.sections) return data
+    return storedItemData({ decl: model.decl, section: section.path ?? section.name, data })
+  }
+
   /** Record a write the mock let through on the seed's say-so (`migration_debt`), deduped with a count. */
   diagnose(model, where, result) {
     const key = `${model}|${where.op}|${where.section ?? ''}|${result.reason}`
@@ -1207,7 +1213,7 @@ export class MockStore {
       if (op.position != null && this.orderFor(entity, section.id, parent, op.position, null) == null) {
         return refuse(404, 'Not Found', `item ${op.position.after} not found`, { kind: 'item', key: String(op.position.after) })
       }
-      const made = this.addItem(entity, section, { data: op.data, parent, position: op.position })
+      const made = this.addItem(entity, section, { data: this.stored(model, section, op.data), parent, position: op.position })
       return { result: { [FIELD.item]: made.id, [FIELD.itemUuid]: made.uuid, [FIELD.token]: made.updated_at } }
     }
 
@@ -1243,9 +1249,11 @@ export class MockStore {
       const refusal = this.shapeGuard(model, section, op.data, item.id)
       if (refusal) return refusal
       // Whole-data replace, like the backend: round-trip what you do not edit. And
-      // like the backend, an update that changes nothing is a no-op — the token stays.
-      if (canonical(item.data) !== canonical(op.data)) {
-        item.data = op.data
+      // like the backend, an update that changes nothing is a no-op — the token stays,
+      // a day or an address written short included.
+      const data = this.stored(model, section, op.data)
+      if (canonical(item.data) !== canonical(data)) {
+        item.data = data
         item.updated_at = this.clock()
         entity.updated_at = item.updated_at
       }

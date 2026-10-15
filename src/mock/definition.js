@@ -12,7 +12,8 @@
  *
  * | kind | its own keys |
  * |---|---|
- * | `string` · `text` | `max_length`, `format` |
+ * | `string` | `max_length`, `format`, `pattern` |
+ * | `text` | `max_length`, `format` |
  * | `int` · `decimal` | `min`, `max` |
  * | `date` | `format` — `year-month` or `year` |
  * | `item_ref` | `options` (a schema's) → `section_uuid`; `entity_uuid` |
@@ -31,7 +32,7 @@
 
 /** The keys a kind declares beyond the ones every field may (see the table above). */
 const KIND_KEYS = {
-  string: ['max_length', 'format'],
+  string: ['max_length', 'format', 'pattern'],
   text: ['max_length', 'format'],
   int: ['min', 'max'],
   decimal: ['min', 'max'],

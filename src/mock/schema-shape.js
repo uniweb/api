@@ -143,8 +143,14 @@ function isMultiSection(section) {
 
 /** The element shape of a list field, in either spelling, or null if it is not a list. */
 function listElement(field) {
-  if (field?.multiple === true) return { type: field.type, fields: field.fields }
-  if (field?.type === 'array') return { type: field.items?.type, fields: field.items?.fields }
+  if (field?.multiple === true) {
+    const { multiple: _list, required: _required, ...element } = field
+    return element
+  }
+  // The normalizer's spelling keeps a value's rules on `items` — its `format`, `max_length`,
+  // `pattern` — and `localized` on the list. ⛔ Until 2026-10-15 an entry was checked against
+  // the list's own declaration, so none of its rules were.
+  if (field?.type === 'array') return { ...(field.items ?? {}), ...(field.localized !== undefined ? { localized: field.localized } : {}) }
   return null
 }
 
@@ -267,26 +273,67 @@ function isDate(value) {
 
 /**
  * A `format` the backend checks, by its own rules — `email`: one `@`, something before it,
- * a dotted domain after it, no space; `url`: a scheme, `://`, something after it, no space.
- * ⚠️ `currency` is checked there too, against ISO 4217's codes, and not here. Every other
- * `format` marks what the text is and checks nothing.
+ * a dotted domain after it, no space; `url`: one `storedUrl` stores. ⚠️ `currency` is checked
+ * there too, against ISO 4217's codes, and not here. Every other `format` marks what the text
+ * is and checks nothing.
  */
 function matchesFormat(value, format) {
   if (format === 'email') {
     const parts = value.split('@')
     return parts.length === 2 && parts[0] !== '' && parts[1].includes('.') && !parts[1].startsWith('.') && !parts[1].endsWith('.') && !/\s/.test(value)
   }
-  if (format === 'url') {
-    const at = value.indexOf('://')
-    return at > 0 && /^[A-Za-z0-9+.-]+$/.test(value.slice(0, at)) && value.length > at + 3 && !/\s/.test(value)
-  }
+  if (format === 'url') return storedUrl(value) !== null
   return true
 }
 
 /**
+ * ⭐ A `url` as the backend stores it, or null when it refuses it (MEASURED by the backend,
+ * 2026-10-15): `http://` or `https://`, the scheme in any case and stored in small letters
+ * (`HTTPS://Example.com` → `https://Example.com`), then anything without a space; or an
+ * address written without a scheme that starts with a host name — `example.com`,
+ * `www.example.com/cv`, `example.com:8080/a`, `//example.com/x` — stored with `https://` in
+ * front. Refused: any other scheme (`ftp://…`, `javascript://…`, `mailto:…`, `tel:…`), a path
+ * (`/about`), and what starts with no host name (`localhost:3000`, `a@example.com`).
+ * ⚠️ Where a host name ends is this package's reading, not a measurement: dotted, ASCII, its
+ * last label starting with a letter. ⛔ Until 2026-10-15 any `scheme://…` passed, as it did there.
+ */
+const HOST_START = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?::\d+)?(?:[/?#]|$)/
+function storedUrl(value) {
+  if (typeof value !== 'string' || value === '' || /\s/.test(value)) return null
+  const scheme = /^(https?):\/\/./i.exec(value)
+  if (scheme) return scheme[1].toLowerCase() + value.slice(scheme[1].length)
+  const bare = value.startsWith('//') ? value.slice(2) : value
+  return HOST_START.test(bare) ? `https://${bare}` : null
+}
+
+/** A day as the backend stores it: in full, however it was written — `2024-5-3` → `2024-05-03` (MEASURED by the backend, 2026-10-15). */
+function storedDay(value) {
+  const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(value)
+  return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : value
+}
+
+/**
+ * A field's `pattern`, matched as the backend matches it: the WHOLE value, as JavaScript's
+ * `new RegExp('^(?:' + pattern + ')$', 'v')` does — or with `u` (stated by the backend,
+ * 2026-10-15, with the corpus its engine's answers are checked against). A url is matched as
+ * stored. The syntax was checked when the schema was registered, so the pattern compiles.
+ */
+const PATTERN_FLAG = (() => {
+  try {
+    new RegExp('', 'v')
+    return 'v'
+  } catch {
+    return 'u'
+  }
+})()
+function matchesPattern(pattern, value) {
+  return new RegExp(`^(?:${pattern})$`, PATTERN_FLAG).test(value)
+}
+
+/**
  * The checks on one text value — a field's own, or one language of a localized one —
- * as the backend makes them: `max_length` in characters, then the `format`. `at` names
- * the value: the field, or `field.lang`.
+ * as the backend makes them: `max_length` in characters, then the `format`, then the
+ * `pattern`. `at` names the value: the field, or `field.lang`.
  */
 function checkText(field, value, at) {
   if (typeof value !== 'string') return { field: at, rule: 'type', detail: `item.data.${at} must be a string` }
@@ -304,6 +351,19 @@ function checkText(field, value, at) {
       rule: 'format',
       detail: `item.data.${at} = ${JSON.stringify(value)} is not a valid ${field.format}`,
       params: { format: field.format },
+    }
+  }
+  // ⚠️ The `detail` is this package's wording; the backend's `field`, `rule` and `pattern` are
+  // what it states (2026-10-15).
+  if (typeof field.pattern === 'string' && value !== '') {
+    const stored = field.format === 'url' ? storedUrl(value) : value
+    if (!matchesPattern(field.pattern, stored)) {
+      return {
+        field: at,
+        rule: 'pattern',
+        detail: `item.data.${at} = ${JSON.stringify(value)} does not match the pattern ${field.pattern}`,
+        params: { pattern: field.pattern },
+      }
     }
   }
   return null
@@ -363,10 +423,10 @@ export function checkFields(fields, data, path = '') {
       value.forEach((entry, i) => {
         const entryAt = `${at}[${i}]`
         // A localized list's entry is a string or a per-language object, as a single value is.
-        if (field.localized === true && TEXT_TYPES.has(element.type) && entry && typeof entry === 'object' && !Array.isArray(entry)) {
+        if (element.localized === true && TEXT_TYPES.has(element.type) && entry && typeof entry === 'object' && !Array.isArray(entry)) {
           const found = Object.entries(entry)
             .filter(([lang]) => lang !== '@')
-            .map(([lang, v]) => checkText(field, v, `${entryAt}.${lang}`))
+            .map(([lang, v]) => checkText(element, v, `${entryAt}.${lang}`))
             .find(Boolean)
           if (found) problems.push(found)
           return
@@ -379,7 +439,7 @@ export function checkFields(fields, data, path = '') {
           })
           return
         }
-        const bounded = boundOf({ ...field, type: element.type }, entry, entryAt)
+        const bounded = boundOf(element, entry, entryAt)
         if (bounded) {
           problems.push(bounded)
           return
@@ -504,6 +564,62 @@ export function checkItemWrite({ decl, section, data }) {
     problems,
     undeclared,
   }
+}
+
+/**
+ * An item's data as the backend stores it, once the write is admitted: a day in full and a
+ * `url` with its scheme in small letters, or `https://` in front of an address written without
+ * one (MEASURED by the backend, 2026-10-15). Everything else as written, and the same object when
+ * nothing changes — so an update that writes a day or an address short is no change.
+ *
+ * @param {{ decl: object, section: string, data: object }} write
+ * @returns {object} the data to keep
+ */
+export function storedItemData({ decl, section, data }) {
+  const fields = decl?.sections ? classifySection(decl, section)?.section?.fields : null
+  return fields ? storedData(fields, data) : data
+}
+
+function storedData(fields, data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data
+  let out = null
+  for (const [name, field] of Object.entries(fields)) {
+    if (field?.type === 'section' || data[name] === undefined || data[name] === null) continue
+    const element = listElement(field)
+    const value = data[name]
+    const stored = element ? (Array.isArray(value) ? mapChanged(value, (entry) => storedValue(element, entry)) : value) : storedValue(field, value)
+    if (stored !== value) (out ??= { ...data })[name] = stored
+  }
+  return out ?? data
+}
+
+function storedValue(field, value) {
+  if (field.fields && value && typeof value === 'object' && !Array.isArray(value)) return storedData(field.fields, value)
+  const leaf = (v) => {
+    if (typeof v !== 'string' || v === '') return v
+    if (field.type === 'date' && !field.format) return storedDay(v)
+    if (TEXT_TYPES.has(field.type) && field.format === 'url') return storedUrl(v) ?? v
+    return v
+  }
+  // A localized value's languages, each on its own; `@` is the object's metadata.
+  if (field.localized === true && value && typeof value === 'object' && !Array.isArray(value)) {
+    let out = null
+    for (const [lang, v] of Object.entries(value)) {
+      const stored = lang === '@' ? v : leaf(v)
+      if (stored !== v) (out ??= { ...value })[lang] = stored
+    }
+    return out ?? value
+  }
+  return leaf(value)
+}
+
+function mapChanged(list, fn) {
+  let out = null
+  list.forEach((entry, i) => {
+    const stored = fn(entry)
+    if (stored !== entry) (out ??= [...list])[i] = stored
+  })
+  return out ?? list
 }
 
 /**

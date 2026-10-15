@@ -359,24 +359,28 @@ keeps it.
 | `required: true` | refuses a write without the field |
 | `max_length` on `string`, `text` | counts characters — each language of a localized value on its own |
 | `min`, `max` on `int`, `decimal` | refuses a value outside them |
-| `format` — `email`, `url` on `string` and `text`; `currency` on `string`; `markdown` on `text` | checks `email`, `url` and `currency` (an ISO 4217 code); `markdown` marks what the text is |
+| `format` — `email`, `url` on `string` and `text`; `currency` on `string`; `markdown` on `text` | checks `email`, `url` and `currency` (an ISO 4217 code); `markdown` marks what the text is. A `url` is `http://` or `https://`: one written without a scheme that starts with a host name, `example.com/cv`, is stored as `https://example.com/cv`, and another scheme (`ftp:`, `mailto:`) or a path (`/about`) is refused — a backend from before 2026-10-15 takes any `scheme://…` and refuses `example.com` |
+| `pattern` on `string` | refuses a value the regular expression does not match whole — `'[A-Z]{2}[0-9]{4}'` is a code like `AB1234`, not one somewhere in the value; a `url` is matched as stored. A backend from before 2026-10-15 refuses the declaration |
 | `string` and `text` — translatable unless `translatable: false` | holds one string for every language, or one per language (`localized` in the definition) |
-| `format: year-month` or `format: year` on `date` | holds a month, `'2024-05'`, or a year, `'2024'` — ISO 8601's reduced precision, stored as written, and always text: a year written as the number `2024` is refused (a backend from before 2026-10-14 refuses the declaration). With no `format`, a `date` holds a day, `2024-05-14` |
+| `format: year-month` or `format: year` on `date` | holds a month, `'2024-05'`, or a year, `'2024'` — ISO 8601's reduced precision, stored as written, and always text: a year written as the number `2024` is refused (a backend from before 2026-10-14 refuses the declaration). With no `format`, a `date` holds a day, `2024-05-14` — written short, `2024-5-3`, it is stored in full |
 | `mime_types`, `max_size` on `file` | keeps an upload to those types (`'image/*'`) and that many bytes |
 | `enum: [...]` | keeps the field to those values — in the definition, as its section's `one_of` rule |
 | `options: '@/lists/countries'` | keeps the value to an item of that section — an item of another is `409`, `kind: 'rule'` |
 
 A refused value is `kind: 'invalid'`, its `extensions` naming the field (`data.title`,
 `data.label.fr` for one language), the `rule` it broke and the bound
-(`{ rule: 'max_length', max_length: 250 }`, `{ rule: 'format', format: 'year-month' }`). An
+(`{ rule: 'max_length', max_length: 250 }`, `{ rule: 'format', format: 'year-month' }`,
+`{ rule: 'pattern', pattern: '[A-Z]{2}[0-9]{4}' }`). An
 `enum`'s refusal, `rule: 'one_of'`, names its field too — a backend from before 2026-10-14
 names it only in `detail`.
 
 ⛔ **A declaration the backend does not take stops your build first**, naming the field and
 the key — a `format` its kind does not take (`month-day` on a `date`, `year` on an `int`), a
 key a data schema does not have (`maxLength` — it is `max_length`), one the backend does not
-check yet (`pattern`, `min_length`), or a field's `help` (write it as its `description`).
-`uniweb validate` reports the same. A backend refuses the whole schema for any of them.
+check yet (`min_length`), a field's `help` (write it as its `description`), or a `pattern` in
+syntax a backend reads differently from JavaScript — look-around, a back-reference, a named
+group, a flag such as `(?i)`, a `\p{…}` class. `uniweb validate` reports the same. A backend
+refuses the whole schema for any of them.
 
 ### On a section — rules across fields, and across items
 
@@ -473,8 +477,9 @@ production, and nothing in your site's configuration changes between the two.
 refusals, for every route this package uses. It enforces what your schemas declare —
 which sections are insert-only, the fields a section takes and their rules (`required`,
 `max_length`, `min` and `max`, a date's form, an `enum`, the `email` and `url` formats, a
-choice from a list) — and it is as strict as the backend about requests, so a mistake
-fails here rather than in front of a user.
+`pattern`, a choice from a list), keeps a day and a `url` as the backend stores them, and it
+is as strict as the backend about requests, so a mistake fails here rather than in front of a
+user.
 Everyone signed in reads and writes their own entities, and a member nothing of anyone
 else's (`memberFloor: 'read'` in the seed models a service set up to let members read
 each other's — or per Model, `memberFloor: { '@acme/course': 'read' }`, so the
