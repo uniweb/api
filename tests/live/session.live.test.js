@@ -15,6 +15,10 @@
  * - **`UNIWEB_API_CHOICES`** — `@scope/name:field`, a field of kind `item_ref` whose
  *   list that account may read, with at least two choices. Turns on a field's choices:
  *   the definition names its section, the section's items page by cursor.
+ * - **`UNIWEB_API_GRANTEE`** — the handle of another account, a member of the same
+ *   organization. With the two above, turns on access to an entry: the account gives
+ *   that one access to an entry of `UNIWEB_API_MODEL` it makes, changes it, lists it,
+ *   and takes it back.
  * - **`UNIWEB_API_REGISTER=1`** — also sign a throwaway account up, and check what
  *   the backend answers: `202`, and a sign-in refused until the address is verified.
  *   The verification link travels by email, so this cannot sign that account in.
@@ -33,6 +37,7 @@ const BASE = process.env.UNIWEB_API_BASE
 const LOGIN = process.env.UNIWEB_API_LOGIN ? JSON.parse(process.env.UNIWEB_API_LOGIN) : null
 const MODEL = process.env.UNIWEB_API_MODEL || null
 const REGISTER = process.env.UNIWEB_API_REGISTER === '1'
+const GRANTEE = process.env.UNIWEB_API_GRANTEE || null
 const CHOICES = (() => {
   const raw = process.env.UNIWEB_API_CHOICES || ''
   const at = raw.lastIndexOf(':')
@@ -340,6 +345,79 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
     it('refuses `include_disabled` on a list — the backend lists a disabled entity like any other', async () => {
       const err = await c.request('GET', '/entities', { query: { model: MODEL, include_disabled: true } }).catch((e) => e)
       expect(err).toMatchObject({ kind: 'invalid', status: 400 })
+    })
+  })
+
+  describe.skipIf(!LOGIN)('units', () => {
+    it('lists the units the account is placed in — each its uuid, its id, its depth, and whether it is primary', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const units = await c.listUnits()
+      expect(units.length).toBeGreaterThan(0)
+      for (const unit of units) {
+        expect(unit).toMatchObject({ unit: expect.any(String), id: expect.any(Number), depth: expect.any(Number), primary: expect.any(Boolean) })
+      }
+      expect(units.map((u) => u.depth)).toEqual([...units.map((u) => u.depth)].sort((a, b) => a - b))
+    })
+
+    it.skipIf(!MODEL)('lands a create in a unit it names — and answers one nobody has `absent`', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const nowhere = await c.createEntity({ schema: MODEL, unit: '00000000-0000-4000-8000-000000000000' }).catch((e) => e)
+      expect(nowhere).toMatchObject({ kind: 'absent', status: 404 })
+      const below = (await c.listUnits()).find((u) => u.depth > 1)
+      if (!below) return
+      const made = await c.createEntity({ schema: MODEL, unit: below.unit })
+      expect(made.unit_id).toBe(below.id)
+      await c.deleteEntity({ uuid: made.uuid, schema: MODEL })
+    })
+  })
+
+  describe.skipIf(!LOGIN || !MODEL || !GRANTEE)('access to an entry', () => {
+    it('gives another account access, changes it, lists it, and takes it back', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const definition = await c.request('GET', `/models/${MODEL}`)
+      const brief = definition.sections.find((s) => s.is_brief)
+      const data = Object.fromEntries(
+        (brief.fields || []).filter((f) => f.required && f.type?.kind === 'string').map((f) => [f.key, `live-${f.key}`]),
+      )
+      const made = await c.createEntity({ schema: MODEL, items: [{ section: brief.name, data }] })
+      const entry = { schema: MODEL, uuid: made.uuid }
+      try {
+        const before = await c.listAccess(entry)
+        expect(before).toMatchObject({ owner: { uuid: c.session.viewer.uuid, account_id: made.owner_id }, grants: [], pending: [] })
+
+        const given = await c.grantAccess({ ...entry, to: { handle: GRANTEE }, permission: 'read' })
+        expect(given).toMatchObject({ outcome: 'grant', permission: 'read', team_id: null, account_id: expect.any(Number) })
+        const changed = await c.grantAccess({ ...entry, to: given.account_id, permission: 'edit' })
+        expect(changed).toMatchObject({ outcome: 'grant', permission: 'edit', account_id: given.account_id })
+
+        const { grants } = await c.listAccess(entry)
+        expect(grants.map((g) => [g.account.handle, g.permission])).toEqual([[GRANTEE, 'edit']])
+        expect(grants[0].granted_by_account).toMatchObject({ uuid: c.session.viewer.uuid })
+
+        // An organization's entry is offered to its members; an entry of nobody's organization to nobody.
+        const candidates = await c.listAccessCandidates(entry)
+        if (made.unit_id != null) expect(candidates.map((p) => p.handle)).toContain(GRANTEE)
+        else expect(candidates).toEqual([])
+
+        const batch = await c.grantAccess({ ...entry, to: [given.account_id], permission: 'read' })
+        expect(batch.results).toEqual([{ model: MODEL, uuid: made.uuid, account: given.account_id, ok: true }])
+
+        const unknown = await c.grantAccess({ ...entry, to: given.account_id, permission: 'owner' }).catch((e) => e)
+        expect(unknown).toMatchObject({ kind: 'invalid', status: 400 })
+        const nobody = await c.grantAccess({ ...entry, to: { handle: `nobody-${Date.now()}` }, permission: 'read' }).catch((e) => e)
+        expect(nobody).toMatchObject({ kind: 'absent', status: 404, extensions: { kind: 'account' } })
+        const own = await c.leaveAccess(entry).catch((e) => e)
+        expect(own).toMatchObject({ kind: 'rule', status: 409 })
+
+        await expect(c.revokeAccess({ ...entry, from: grants[0] })).resolves.toBeNull()
+        await expect(c.revokeAccess({ ...entry, from: grants[0] })).resolves.toBeNull()
+        expect((await c.listAccess(entry)).grants).toEqual([])
+      } finally {
+        await c.deleteEntity({ uuid: made.uuid, schema: MODEL })
+      }
     })
   })
 

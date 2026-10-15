@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest'
-import { ASSUMPTIONS, ROUTES, AUTH, FIELD, OP, GUARDED_OPS, ENTITIES, MODELS, SECTIONS, CREATE, LIST, READ, LINK, OFFERS, INVITATIONS, ELEVATION, VIEWER } from '../src/wire.js'
+import {
+  ASSUMPTIONS,
+  ROUTES,
+  AUTH,
+  FIELD,
+  OP,
+  GUARDED_OPS,
+  ENTITIES,
+  MODELS,
+  SECTIONS,
+  CREATE,
+  LIST,
+  READ,
+  LINK,
+  OFFERS,
+  INVITATIONS,
+  ELEVATION,
+  VIEWER,
+  GRANTS,
+  GRANT,
+  UNITS,
+} from '../src/wire.js'
 import { composeUrl } from '../src/http.js'
 
 /**
@@ -55,7 +76,8 @@ describe('wire — the lane', () => {
   })
 
   it('claims an offer and answers an invitation — the routes a member needs outside /auth and /entities', () => {
-    expect(OFFERS).toEqual({ claim: '/offers/claim' })
+    expect(OFFERS.claim).toBe('/offers/claim')
+    expect(OFFERS.withdraw(9)).toBe('/offers/9')
     expect(INVITATIONS.mine).toBe('/invitations/me')
     expect(INVITATIONS.accept(76)).toBe('/unit/invitations/76/accept')
     expect(INVITATIONS.decline(76)).toBe('/unit/invitations/76/decline')
@@ -63,6 +85,29 @@ describe('wire — the lane', () => {
     for (const path of [OFFERS.claim, INVITATIONS.mine, INVITATIONS.accept(1), INVITATIONS.decline(1)]) {
       expect(path).not.toContain('/sites/')
     }
+  })
+
+  it('gives access to one entry under /grants — the entry in the path, never a site', () => {
+    // MEASURED 2026-10-15. The entry is its uuid in the path, and its Model rides the
+    // query, as on /entities; a person is an integer account id in the path.
+    const uuid = '01a140cf-7262-7372-935a-8244122b8f54'
+    expect(GRANTS.access(uuid)).toBe(`/grants/${uuid}/access`)
+    expect(GRANTS.candidates(uuid)).toBe(`/grants/${uuid}/candidates`)
+    expect(GRANTS.one(uuid, 4)).toBe(`/grants/${uuid}/4`)
+    expect(GRANTS.share(uuid)).toBe(`/grants/${uuid}/share`)
+    expect(GRANTS.leave(uuid)).toBe(`/grants/me/${uuid}`)
+    expect(GRANTS.batch).toBe('/grants/batch')
+    expect(GRANTS.one('a/b', 'c/d')).toBe('/grants/a%2Fb/c%2Fd')
+    expect(GRANT.batchMax).toBe(500)
+    for (const path of [GRANTS.access(uuid), GRANTS.one(uuid, 4), GRANTS.share(uuid), GRANTS.leave(uuid), GRANTS.batch]) {
+      expect(path).not.toContain('/sites/')
+    }
+  })
+
+  it('lists the units the viewer is placed in — and a create names one by `unit`', () => {
+    // Stated by the backend 2026-10-15 (api-package contract §3.12).
+    expect(UNITS.mine).toBe('/unit/mine')
+    expect(CREATE.unit).toBe('unit')
   })
 
   it('elevates under /auth — and through a provider by a navigation that names it', () => {

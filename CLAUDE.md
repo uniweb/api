@@ -37,13 +37,17 @@ tree-shaken per import, and inert on a site that declares no backend.
   `tests/mock.test.js` drives the client against the mock with nothing between them; and what the
   backend itself answers is asserted in `tests/live/`, skipped unless `UNIWEB_API_BASE` names a
   base. The signed-in half takes `UNIWEB_API_LOGIN` (a sign-in body for a verified account), the
-  entities half also `UNIWEB_API_MODEL` (a Model that account may create). Every backend runs the
+  entities half also `UNIWEB_API_MODEL` (a Model that account may create), and access to an entry
+  also `UNIWEB_API_GRANTEE` (another account's handle, in the same organization). Every backend runs the
   same routes, so a local one is a valid target:
   `UNIWEB_API_BASE=http://localhost:8080/api UNIWEB_API_LOGIN='{"username":"…","password":"…"}' UNIWEB_API_MODEL=@scope/name pnpm test`.
   A hosted site's `https://<site>/_api` is a valid base too, and the one that exercises the forward.
 - **Lists read `GET /entities?model=`** (ruled 2026-09-01), one entity `GET /entities/{uuid}` —
   `via` a container when the viewer's access comes through one. A field's choices read
-  `GET /sections/{uuid}/items`, by the section uuid its declaration names (2026-10-14).
+  `GET /sections/{uuid}/items`, by the section uuid its declaration names (2026-10-14). Access
+  to one entry is given and taken back under `/grants/*` by whoever administers it, and a
+  create lands in a unit from `GET /unit/mine` (both 2026-10-15) — never the backend's own
+  administration, which is the Admin link's.
 - **`@uniweb/core` is `workspace:~`** in `dependencies` — the framework's cascade rule; never
   `workspace:*` or `workspace:^` in a published section. *(This said `workspace:^` until
   2026-10-11, when every sibling range became a tilde.)*

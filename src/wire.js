@@ -64,10 +64,13 @@
  * Its routes are under `/entities`, `/models`, `/sections` and `/auth`, plus what a
  * member does with an invitation — claim an offer (`OFFERS`), answer an invitation
  * (`INVITATIONS`) — the steps the backend's mail asks a member to finish on the site
- * (2026-10-11). ⛔ Never `/sites/*`, and nothing that administers: the backend's
+ * (2026-10-11); access to one entry, given and taken back by whoever administers it
+ * (`GRANTS`); and the units the viewer is placed in, where a create may land (`UNITS`)
+ * (both 2026-10-15). ⛔ Never `/sites/*`, and nothing that administers the backend: its
  * administration is reached through the Admin link (`AUTH.memberHandoff`), never
  * wrapped. *(This said "no route that is not under `/entities`, `/models` or
- * `/auth`" until 2026-10-11, and left out `/sections` until 2026-10-14.)*
+ * `/auth`" until 2026-10-11, left out `/sections` until 2026-10-14, and `/grants` and
+ * `/unit/mine` until 2026-10-15.)*
  */
 export const ENTITIES = '/entities'
 
@@ -280,6 +283,12 @@ export const LINK = {
  */
 export const OFFERS = {
   claim: '/offers/claim',
+  /**
+   * `DELETE /offers/{id}` → `204` — withdraw an offer that waits, as whoever sent it: an
+   * entry's `pending` row (`GRANTS`). MEASURED 2026-10-15. A caller who may not withdraw
+   * it is `404`, as for an id that does not exist (stated by the backend, 2026-09-15).
+   */
+  withdraw: (id) => `/offers/${segment(id)}`,
 }
 
 /** The claim's body and answer. MEASURED. */
@@ -431,6 +440,7 @@ export const ROUTES = {
  * | remove | `rev_ref_policy` |
  * | section items | `entity` · `parent` · `field` · `q` · `locale` · `cursor` · `limit` |
  * | verify (`AUTH.verify`) | `token` (required) |
+ * | every grant route but the batch (`GRANTS`) | `model` (required — `400 Missing required parameter: model`) |
  *
  * ⛔ **The list takes no `include_disabled`** — `400 Unexpected parameters:
  * include_disabled` (MEASURED 2026-10-14). A disabled entity lists like any other,
@@ -575,15 +585,19 @@ export const FIELD = {
  * is `201` with the entity's row (the list's row shape, below). An unknown section
  * name is `404 { kind: 'section' }`; an empty body makes an empty entity.
  *
+ * `unit` — a unit's uuid — lands the entity in that unit rather than where a create
+ * lands by default (`UNITS`; stated by the backend 2026-10-15, not yet measured here).
+ *
  * ⛔ **There is no entity-level data.** An entity's content is always items in its
  * sections; its `brief` is maintained by the backend from the brief section's
- * item. ⛔ And the body's other keys are the backend's own — `uuid`, `owner_id` —
- * so content spread at the top level is at best ignored and at worst read as one
- * of them (`{ uuid: 't-1' }` is a `400`).
+ * item. ⛔ And the body's other keys are the backend's own — `uuid`, `owner_id`,
+ * `unit` — so content spread at the top level is at best ignored and at worst read
+ * as one of them (`{ uuid: 't-1' }` is a `400`).
  */
 export const CREATE = {
   items: 'items',
   sectionName: 'section',
+  unit: 'unit',
 }
 
 /**
@@ -599,15 +613,19 @@ export const CREATE = {
  * paging; a page that came back full is the only sign there may be more.
  *
  * `via` names why the viewer can read the row — `owner`, `grant`, `rbac`,
- * `unit_member`, `entitlement`; treat an unknown value as "no opinion". A session's
- * own rows are `owner` — the operator's too — and the rest the operator's session reads
- * are `rbac`, through its role, elevated or not. *(From 2026-10-10 to 2026-10-14 the
- * operator's session on a site read nothing of a member's.)* `rbac` is any
- * administrative path — a role, and since 2026-10-14 a reader held at a unit over its
- * people's content, and a reference whose field declares `readable_with` and whose
- * target the viewer holds at that level *[backend, 2026-10-14; not measured here]* —
- * while `grant` stays "shared with you". ⚠️ An empty list means empty: a lapsed session
- * is a `401`, never `200 []`.
+ * `unit_member`, `entitlement`, the first that answers in that order; treat an unknown
+ * value as "no opinion". A session's own rows are `owner` — the operator's too — and
+ * the rest the operator's session reads are `rbac`, through its role, elevated or not.
+ * *(From 2026-10-10 to 2026-10-14 the operator's session on a site read nothing of a
+ * member's.)* `grant` is access given to this viewer on that entry (`GRANTS`), and it
+ * wins over the organization's own reach — MEASURED 2026-10-15: an entry its owner's
+ * organization lets every member read lists as `grant` to a member it was given to.
+ * `rbac` is any administrative path — a role, and since 2026-10-14 a reader held at a
+ * unit over its people's content, an entry grant (a role narrowed to one type), and a
+ * reference whose field declares `readable_with` and whose target the viewer holds at
+ * that level; `unit_member` the organization's own reach, an entry grant held by a
+ * unit's members among it *[backend, 2026-10-14; not measured here]*. ⚠️ An empty list
+ * means empty: a lapsed session is a `401`, never `200 []`.
  */
 export const LIST = {
   records: 'entities',
@@ -752,6 +770,120 @@ export const SECTION_ITEMS = {
   parent: 'parent',
   data: 'data',
   hasChildren: 'has_children',
+}
+
+/**
+ * Access to one entry — given to a person, and taken back. **MEASURED 2026-10-15**,
+ * against a backend through `/api/…`, which a site reaches as `/_api/…`: two members of
+ * one organization, on an entry one of them made there, and on one of her own.
+ *
+ * The backend calls each a grant: `read`, `edit` or `admin` on one entry, held by one
+ * account. What a solution calls it — "shared with you", "enrolled", "course staff" — is
+ * the solution's. An entry the viewer reaches this way lists with `via: 'grant'` (`LIST`).
+ *
+ * | route | body | answer |
+ * |---|---|---|
+ * | `GET /grants/{uuid}/access?model=` | — | `{ owner, grants, pending }` — `owner` a person, or `null`; each grant `{ entity_id, account_id, team_id, permission, granted_by, granted_at, account, granted_by_account }`, `account` the person who holds it (`null` for a team's); each `pending` an offer to an address no account holds: `{ id, email, offered_by, kind: 'entity_grant', entity_id, permission, created_at }` |
+ * | `GET /grants/{uuid}/candidates?model=` | — | the people it may be given to, an array of persons — every member of the entry's organization, those of the units below it too; `[]` for an entry that is no organization's |
+ * | `PUT /grants/{uuid}/{account_id}?model=` | `{ permission }` | `200` the grant: `{ entity_id, account_id, team_id, permission, granted_by, granted_at }`. It replaces what the account held — `read` after `edit` lowers it. `account_id` is an integer: an account's uuid there is `400 Invalid integer: account` |
+ * | `POST /grants/{uuid}/share?model=` | `{ handle \| account_uuid \| email, permission }` | `200 { outcome: 'grant', …the grant }` — or, for an address no verified account holds, `{ outcome: 'offer', offer }`, mailed and listed as `pending` until it is claimed (`OFFERS`). An unknown handle is `404 { kind: 'account', key }` |
+ * | `DELETE /grants/{uuid}/{account_id}?model=` | — | `204`, held or not |
+ * | `POST /grants/batch` | `{ ops: [{ model, uuid, account, permission } \| { model, uuid, account, revoke: true }] }` | `200 { results: [{ model, uuid, account, ok, error? }] }`, one per op and in order — each op on its own, never all or nothing: `error` names what refused it (`not_found`, `denied`, `not_grantable`, `validation`). At most 500 ops — `400 too many ops: 501 (max 500)`; none, `400` |
+ * | `DELETE /grants/me/{uuid}?model=` | — | the viewer gives up access given to them: `204` — or `409` with a `reason` when nothing is theirs to give up: `owner_cannot_leave`, `access_through_team`, `not_shared_with_you` (they reach it through their organization) |
+ *
+ * A person is `{ account_id, uuid, handle, brief }`, `brief` possibly `null`.
+ *
+ * - **Who may give it:** whoever administers the entry — its owner, an account given
+ *   `admin`, or a role that reaches it (on a site, only while the session is elevated —
+ *   `ELEVATION`). Someone who may read the entry and not administer it is refused `403`
+ *   `{ op: 'grant' }` on every route here but the last — the list and the candidates
+ *   included; someone who may not read it, `404`, as on any read.
+ * - **Only to a member of the entry's organization**, when the entry is one's: an
+ *   account outside it is `403`, and so is an address — *"org content can only be shared
+ *   with a member — invite them to the organization first"*. On a site's backend every
+ *   account is a member of the home organization, where everything a member creates lands.
+ * - **On a type that allows it.** A type made from a data schema does, unless the schema
+ *   says `grantable: false`; one that does not is refused `403`, `reason:
+ *   'model_not_grantable'`, `model_name` *(stated by the backend for this route,
+ *   2026-09-02; not measured here)*.
+ * - `permission` is `read`, `edit` or `admin` — anything else is `400`, *"unknown
+ *   permission"*. `admin` lets its holder give access in turn.
+ *
+ * Re-checked by `tests/live/`, given `UNIWEB_API_GRANTEE` — another account's handle.
+ */
+export const GRANTS = {
+  access: (uuid) => `/grants/${segment(uuid)}/access`,
+  candidates: (uuid) => `/grants/${segment(uuid)}/candidates`,
+  one: (uuid, account) => `/grants/${segment(uuid)}/${segment(account)}`,
+  share: (uuid) => `/grants/${segment(uuid)}/share`,
+  batch: '/grants/batch',
+  leave: (uuid) => `/grants/me/${segment(uuid)}`,
+}
+
+/** The grant routes' bodies and answers (`GRANTS`). MEASURED 2026-10-15. */
+export const GRANT = {
+  permission: 'permission',
+  /** The levels on 2026-10-15. ⛔ Not checked before sending — a level the backend adds works at once. */
+  levels: Object.freeze(['read', 'edit', 'admin']),
+  /** A person, as a grant names its holder: an integer. */
+  account: 'account_id',
+  /** The share route's three ways to name a person. */
+  handle: 'handle',
+  accountUuid: 'account_uuid',
+  email: 'email',
+  /** The share route's answer: `grant`, or `offer` with the offer under `offer`. */
+  outcome: 'outcome',
+  granted: 'grant',
+  offered: 'offer',
+  /** The access list's three keys. */
+  owner: 'owner',
+  grants: 'grants',
+  pending: 'pending',
+  /** The batch. */
+  ops: 'ops',
+  opAccount: 'account',
+  revoke: 'revoke',
+  results: 'results',
+  batchMax: 500,
+}
+
+/**
+ * The units the viewer is placed in, and where a create lands. **Stated by the backend,
+ * 2026-10-15, and measured by its own end-to-end test; not yet measured here** — the
+ * backend this package was measured against that day predates it (`/unit/mine` answered
+ * `404`).
+ *
+ * On a site's backend everything a member creates lands at the home organization's root,
+ * unless the create names a unit — a course, a department — with `unit` (`CREATE`).
+ *
+ * | route | answer |
+ * |---|---|
+ * | `GET /unit/mine` | `{ units: [{ unit, id, handle?, name?, parent?, depth, primary }] }` — `unit` the unit's uuid, `id` what an entry's `unit_id` carries, `parent` the uuid of the unit above it, `depth` 1 at the root. Ordered by depth |
+ * | `POST /entities?model=` `{ unit, items? }` | `201`, the entry's `unit_id` that unit's `id`. Without `unit`, it lands where it always did |
+ *
+ * - **Where a create may land:** a unit the viewer is placed in, or one where a role of
+ *   theirs edits — which, on a site, needs the session elevated (`ELEVATION`).
+ * - **Refused:** `404` for a unit the viewer has no standing in — the same answer as for
+ *   one that does not exist, so nothing is confirmed. *(`409 Wrong Workspace`, for one
+ *   outside the request's workspace, does not arise on a site's backend.)*
+ * - **Nothing else changes:** what the viewer may open, and what a list holds.
+ * - ⚠️ **A backend from before it ignores `unit`** — MEASURED 2026-10-15: `/unit/mine`
+ *   answered `404`, and a create naming a unit nobody has answered `201`, the entry landed
+ *   where a create always lands. No error says so; the answer's `unit_id` is the only
+ *   tell, and `tests/live/` fails on such a backend.
+ */
+export const UNITS = {
+  mine: '/unit/mine',
+}
+
+/** `GET /unit/mine`'s key, and a unit's. Stated by the backend, 2026-10-15. */
+export const UNIT = {
+  list: 'units',
+  uuid: 'unit',
+  id: 'id',
+  parent: 'parent',
+  depth: 'depth',
+  primary: 'primary',
 }
 
 /**

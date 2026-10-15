@@ -31,6 +31,12 @@ export {
   listInvitations,
   acceptInvitation,
   declineInvitation,
+  listUnits,
+  listAccess,
+  listAccessCandidates,
+  grantAccess,
+  revokeAccess,
+  leaveAccess,
   mailedLink,
   forgetMailedLink,
   readEntity,
@@ -53,6 +59,8 @@ export { useSignUp } from './hooks/useSignUp.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'
 export { useMailedLink } from './hooks/useMailedLink.js'
 export { useInvitations } from './hooks/useInvitations.js'
+export { useUnits } from './hooks/useUnits.js'
+export { useAccess } from './hooks/useAccess.js'
 export { useEntity } from './hooks/useEntity.js'
 export { useRecords } from './hooks/useRecords.js'
 export { useDefinition } from './hooks/useDefinition.js'

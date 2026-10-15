@@ -1,4 +1,24 @@
-import { AUTH, ENTITIES, MODELS, SECTIONS, OFFERS, INVITATIONS, PARAM, OP, FIELD, CREATE, PAGE, SCOPE, PROBLEM, GUARDED_OPS, HANDOFF_REFUSAL, ELEVATION } from '../wire.js'
+import {
+  AUTH,
+  ENTITIES,
+  MODELS,
+  SECTIONS,
+  OFFERS,
+  INVITATIONS,
+  GRANTS,
+  GRANT,
+  UNITS,
+  PARAM,
+  OP,
+  FIELD,
+  CREATE,
+  PAGE,
+  SCOPE,
+  PROBLEM,
+  GUARDED_OPS,
+  HANDOFF_REFUSAL,
+  ELEVATION,
+} from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
 
@@ -89,9 +109,11 @@ function adminPage(account) {
  * modelled. An offer, claimed or bound by confirming its address, leaves its
  * invitations waiting, each to answer once. A field that picks from a list stores an
  * item's uuid, checked against its list, and the list's items are read a page at a time
- * from `/sections/{uuid}/items`. It does not model entitlements behind `via`, second
- * factors, password rules, an offer's grants, what joining an organization gives, or an
- * organization withdrawing an invitation.
+ * from `/sections/{uuid}/items`. Whoever administers an entry gives people access to it
+ * and takes it back (`/grants/*`), and a seed's `units` are where a create may land
+ * (`/unit/mine`). It does not model entitlements behind `via`, second factors, password
+ * rules, roles other than the operator's, an offer's grants, what joining an
+ * organization gives, or an organization withdrawing an invitation.
  *
  * ## The mail it sends
  *
@@ -405,6 +427,82 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       return json(200, { ...rest, next_cursor: next ? encodeCursor(next) : null })
     }
 
+    // ── The units the viewer is placed in ───────────────────────────────────
+    if (path === UNITS.mine && method === 'GET') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return json(200, store.unitsOf(store.account))
+    }
+
+    // ── An offer, withdrawn ─────────────────────────────────────────────────
+    // The mock makes no offer of access — every entry is the organization's — so there is
+    // never one to withdraw; an id is `404`, as for one the caller may not withdraw.
+    const offer = path.startsWith('/offers/') && path !== OFFERS.claim ? path.slice('/offers/'.length) : null
+    if (offer != null && !offer.includes('/') && method === 'DELETE') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return problem({ status: 404, title: 'Not Found', detail: `offer ${offer} not found` })
+    }
+
+    // ── Access to one entry ─────────────────────────────────────────────────
+    if (path.startsWith('/grants/')) {
+      if (path === GRANTS.batch && method === 'POST') {
+        const bad = unexpected(q, [])
+        if (bad) return bad
+        if (!store.account) return unauthorized()
+        const b = await body(request)
+        const ops = b?.[GRANT.ops]
+        if (!Array.isArray(ops) || ops.length === 0) return badRequest('`ops` must be non-empty')
+        if (ops.length > GRANT.batchMax) return badRequest(`too many ops: ${ops.length} (max ${GRANT.batchMax})`)
+        for (const op of ops) {
+          if (!op || typeof op !== 'object' || typeof op.model !== 'string' || typeof op.uuid !== 'string' || !Number.isInteger(op[GRANT.opAccount])) {
+            return badRequest('invalid batch body: an op is `{ model, uuid, account, permission }` or `{ model, uuid, account, revoke: true }`')
+          }
+          if (op[GRANT.revoke] !== true && typeof op[GRANT.permission] !== 'string') {
+            return badRequest(`op for ${op.model}/${op.uuid} needs \`permission\` or \`revoke: true\``)
+          }
+        }
+        return answer(store.grantBatch(ops))
+      }
+
+      // `/grants/me/{uuid}`, `/grants/{uuid}/{access | candidates | share | account_id}`.
+      const leave = path.match(/^\/grants\/me\/([^/]+)$/)
+      const onEntity = leave ? null : path.match(/^\/grants\/([^/]+)\/([^/]+)$/)
+      if (leave || onEntity) {
+        const bad = unexpected(q, [PARAM.model])
+        if (bad) return bad
+        if (!q.get(PARAM.model)) return badRequest(`Missing required parameter: ${PARAM.model}`)
+        if (!store.account) return unauthorized()
+        const uuid = leave ? leave[1] : onEntity[1]
+        const rest = leave ? null : onEntity[2]
+        const isAccount = rest != null && !['access', 'candidates', 'share'].includes(rest)
+        if (isAccount && !/^\d+$/.test(rest)) return badRequest('Invalid integer: account')
+        let b = null
+        if ((isAccount && method === 'PUT') || (rest === 'share' && method === 'POST')) {
+          b = await body(request)
+          if (b == null) return badRequest('Missing JSON body')
+          if (typeof b !== 'object' || Array.isArray(b)) return badRequest('invalid body: expected an object')
+        }
+        const found = target(uuid, q.get(PARAM.model))
+        if (found.response) return found.response
+        const { entity, model } = found
+        // Who may not read it gets the read's own answer.
+        if (!store.mayRead(entity)) return notFound('entity', uuid)
+
+        if (leave && method === 'DELETE') return answer(store.leave(entity))
+        if (rest === 'access' && method === 'GET') return answer(store.access(entity))
+        if (rest === 'candidates' && method === 'GET') return answer(store.candidates(entity))
+        if (rest === 'share' && method === 'POST') return answer(store.share(entity, model, b))
+        if (isAccount && method === 'PUT') {
+          if (typeof b[GRANT.permission] !== 'string') return badRequest('invalid body: missing field `permission`')
+          return answer(store.grant(entity, model, Number(rest), b[GRANT.permission]))
+        }
+        if (isAccount && method === 'DELETE') return answer(store.revokeGrant(entity, Number(rest)))
+      }
+    }
+
     // ── Entities ────────────────────────────────────────────────────────────
     if (path === ENTITIES || path.startsWith(`${ENTITIES}/`)) {
       const rest = path.slice(ENTITIES.length)
@@ -449,15 +547,22 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         if (!Array.isArray(items) || items.some((i) => !i || typeof i[CREATE.sectionName] !== 'string')) {
           return badRequest('invalid create body: missing field `section`')
         }
+        // A unit is a uuid, as the body's `uuid` is (a `uuid` that is not one is MEASURED;
+        // `unit` is assumed to be refused the same way).
+        const named = b?.[CREATE.unit]
+        if (named != null && !isUuid(named)) return badRequest(`invalid create body: UUID parsing failed: ${named}`)
         const model = store.model(q.get(PARAM.model))
         if (!model) return notFound('model', q.get(PARAM.model))
+        // A unit the viewer may not land in is one answer with a unit that does not exist.
+        const unit = named != null ? store.landing(named) : null
+        if (named != null && !unit) return problem({ status: 404, title: 'Not Found', detail: `unit ${named} not found` })
         // ⭐ No creation gate: the mock models no closing, so anyone signed in may create
         // entries of any Model — as on the backend for an open one. A backend can close a
         // Model's creation since 2026-10-10, and then a create is `403` for anyone but its
         // owner, its `use` grantees and the holders of a role over it. Until 2026-09-23
         // `creatable_by: unit_members` answered `403 use_model` here for a member.
         // Any other top-level key is ignored, exactly as the backend ignores it.
-        return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} }))))
+        return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} })), unit))
       }
 
       if (rest === '/delete' && method === 'POST') {
@@ -469,7 +574,8 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         const invalid = b.uuids.find((u) => !isUuid(u))
         if (invalid) return badRequest(`invalid uuid: ${invalid}`)
         const found = b.uuids.map((u) => store.entities.get(u)).filter(Boolean)
-        const refused = found.find((e) => !store.mayEdit(e))
+        // Deleting takes `admin` on the entry — the owner's, or what was given or a role holds.
+        const refused = found.find((e) => !store.mayAdminister(e))
         if (refused) {
           return problem({ status: 403, title: 'Forbidden', detail: `delete on entity ${refused.uuid} not permitted`, op: 'delete', target: `entity ${refused.uuid}` })
         }
@@ -549,8 +655,10 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         if (!store.account) return unauthorized()
         if (!isUuid(one[1])) return badRequest(`invalid uuid: ${one[1]}`)
         const entity = store.entities.get(one[1])
-        if (!entity) return notFound('entity', one[1])
-        if (!store.mayEdit(entity)) {
+        // Not found and not permitted are one answer, as on a read.
+        if (!entity || !store.mayRead(entity)) return notFound('entity', one[1])
+        // Deleting takes `admin` on the entry — the owner's, or what was given or a role holds.
+        if (!store.mayAdminister(entity)) {
           return problem({ status: 403, title: 'Forbidden', detail: `delete on entity ${entity.uuid} not permitted`, op: 'delete', target: `entity ${entity.uuid}` })
         }
         store.remove(entity)

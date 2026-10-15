@@ -1,4 +1,4 @@
-import { CLAIM, FIELD, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
+import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 
@@ -34,6 +34,19 @@ import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './
  *   it binds: its invitations, each waiting for the account's answer, to an
  *   organization of its own with no handle and no name. A seeded offer to an address a
  *   seeded account holds is bound to that account from the start, and is not mailed.
+ * - **Access to one entry is given to a person, and taken back** (`GRANTS` in
+ *   `../wire.js`, measured 2026-10-15): `read`, `edit` or `admin`, by whoever
+ *   administers the entry — its owner, an `admin` holder, the operator while elevated.
+ *   Every account is a member of the home organization, so anyone may be given it; an
+ *   address may not, since every entry here is the organization's. Deleting an entry
+ *   takes `admin` too, as on the backend. A seeded entity may carry `grants`.
+ * - **Units** — the home organization is the root, and every account is placed there;
+ *   a seed's `units` adds units inside it, with the accounts placed in each and, for
+ *   each, a floor of its own. A create may name a unit the viewer is placed in — or,
+ *   while elevated, any unit, as the operator — and lands there (`UNITS`, stated by the
+ *   backend 2026-10-15). The seed's `memberFloor` is the root's: it covers what lands at
+ *   the root, and a unit's own `floor` what lands in that unit, for the accounts placed
+ *   in it or below it.
  *
  * ⛔ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
  * A mock that grows a schema and migrations becomes a second implementation that
@@ -49,13 +62,15 @@ import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
  * same read), a Model whose creation is closed, second factors —
  * at a sign-in or an elevation, where a `code` is accepted and not checked —
- * sign-in providers, and so no elevation through one, roles other than the operator's,
- * step-up, a reference to an entity (an `entity_ref` value is stored unchecked), a
- * section's own rules — `exclusive`, `unique_field`, `min_items` and the rest are answered
- * in the definition and not applied; a field's `enum` is — password rules,
- * an offer's grants (a count, sharing nothing), what joining an organization
- * gives — accepting an invitation answers, and opens nothing to read — and an
- * organization withdrawing an invitation.
+ * sign-in providers, and so no elevation through one, roles other than the operator's
+ * — so no reader or editor held at a unit, no entry grants, and no by person —
+ * teams, step-up, a reference to an entity (an `entity_ref` value is stored unchecked,
+ * and its `readable_with` opens nothing), a section's own rules — `exclusive`,
+ * `unique_field`, `min_items` and the rest are answered in the definition and not
+ * applied; a field's `enum` is — password rules, an offer's grants (a count, sharing
+ * nothing), an offer of access to an address (every entry is the organization's, so
+ * one is refused), what joining an organization gives — accepting an invitation
+ * answers, and opens nothing to read — and an organization withdrawing an invitation.
  */
 
 /** A mailed link — the site's root, the step's parameter, the token. */
@@ -83,6 +98,28 @@ export const ELEVATION_WINDOW = 15 * 60 * 1000
 
 /** The operator's role, as `/auth/me` names it — MEASURED 2026-09-18. */
 const OPERATOR_ROLE = Object.freeze({ role: 'system_admin', scope_unit_id: null })
+
+/** How deep an organization's units go, its root the first level — the backend's limit. */
+const MAX_DEPTH = 3
+
+/**
+ * A grant's `permission` the backend does not know — `400`, worded as each route words it
+ * (MEASURED 2026-10-15): `Validation` on the grant route, `Bad Request` and a `validation:`
+ * prefix on the share route.
+ */
+function unknownPermission(permission, { title = 'Validation', prefix = '' } = {}) {
+  return refuse(400, title, `${prefix}unknown permission \`${permission}\` (must be ${GRANT.levels.join('|')})`)
+}
+
+/** A floor is `read` or `edit`, for every Model or per Model — or none. */
+function checkFloor(floor, where) {
+  const floors = floor != null && typeof floor === 'object' ? Object.values(floor) : [floor]
+  for (const f of floors) {
+    if (f != null && !['read', 'edit'].includes(f)) {
+      throw new Error(`[uniweb/api mock] ${where} is 'read' or 'edit', or absent — per Model or for all — got ${JSON.stringify(floor)}`)
+    }
+  }
+}
 
 /** The gap between neighbouring items' order numbers, as the backend spaces them. */
 const GAP = 1_000_000
@@ -178,13 +215,21 @@ export class MockStore {
    *   (`./schema-shape.js`). Without it the sections are inferred: a one-item brief
    *   section named for the Model, and a many-item section for every section name the
    *   seed's items and `append_only` use.
-   * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, items?: [{ section, data, parent? }] }`.
+   * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, unit?, grants?, items?: [{ section, data, parent? }] }`.
    *   `uuid` must be a UUID. (`data`, the older spelling, becomes the brief section's item.)
+   *   `unit` — a seeded unit's handle — is where it lands, the root by default; `grants`
+   *   — `{ username: 'read' | 'edit' | 'admin' }` — is the access its owner gave.
    * @param {'read'|'edit'|Object<string,'read'|'edit'>} [seed.memberFloor] - what membership
    *   lets one member do to ANOTHER member's entities. Absent — the default — nothing: each
    *   member's are private. A string applies to every Model; a map `{ '@scope/name': 'read' }`
    *   applies per Model, so a service can open the operator's content (courses, lessons) to
-   *   its members while their own records (progress, submissions) stay theirs alone.
+   *   its members while their own records (progress, submissions) stay theirs alone. It is
+   *   the root's floor: it covers what lands at the root, not what lands in a unit.
+   * @param {object[]} [seed.units] - `{ handle, name?, parent?, uuid?, members?, floor? }`: a
+   *   unit inside the home organization — under the root, or under `parent`, a unit declared
+   *   before it; three levels at most, the root among them. `members` are the usernames
+   *   placed in it; `floor` — as `memberFloor` — covers what lands in it, for them and for
+   *   those placed in the units below it.
    * @param {object[]} [seed.offers] - `{ email, invitations?, grants? }`: an invitation sent
    *   to an address with no account, mailed when the mock starts. Claiming it answers the
    *   counts given (default `0`), once, and leaves that many invitations waiting. One to
@@ -206,17 +251,21 @@ export class MockStore {
         )
       }
     }
-    const floors = seed.memberFloor != null && typeof seed.memberFloor === 'object' ? Object.values(seed.memberFloor) : [seed.memberFloor]
-    for (const floor of floors) {
-      if (floor != null && !['read', 'edit'].includes(floor)) {
-        throw new Error(`[uniweb/api mock] memberFloor is 'read' or 'edit', or absent — per Model or for all — got ${JSON.stringify(seed.memberFloor)}`)
-      }
-    }
+    checkFloor(seed.memberFloor, 'memberFloor')
     /**
      * What membership lets one member do to another's entities: `null` (nothing), `read`
-     * or `edit` — for every Model, or a map of it per Model.
+     * or `edit` — for every Model, or a map of it per Model. The root's floor.
      */
     this.memberFloor = seed.memberFloor ?? null
+    /**
+     * The units — the home organization's root, where every account is placed (`members`
+     * null), then the seed's: `{ id, uuid, handle, name, parent, depth, members, floor }`,
+     * `parent` the id of the unit above, `members` the ids of the accounts placed there.
+     */
+    this.units = [
+      { id: SITE_UNIT, uuid: HOME_ORG.unit_uuid, handle: HOME_ORG.handle, name: null, parent: null, depth: 1, members: null, floor: null },
+    ]
+    for (const unit of seed.units || []) this.addUnit(unit)
     this.models = new Map()
     const itemSections = new Map()
     for (const e of seed.entities || []) {
@@ -409,6 +458,100 @@ export class MockStore {
     return { body: { reset: true } }
   }
 
+  // ── Units ───────────────────────────────────────────────────────────────────
+
+  /** A seeded unit, under the root or under a unit declared before it. */
+  addUnit({ handle, name = null, parent = null, uuid = null, members = [], floor = null } = {}) {
+    const shape = '{ handle, name?, parent?, uuid?, members?, floor? }'
+    if (typeof handle !== 'string' || !handle) throw new Error(`[uniweb/api mock] a unit is ${shape}, with a handle — got ${JSON.stringify(handle)}`)
+    if (this.units.some((u) => u.handle === handle)) throw new Error(`[uniweb/api mock] unit '${handle}' is declared twice`)
+    if (uuid != null && !isUuid(uuid)) throw new Error(`[uniweb/api mock] unit '${handle}': uuid '${uuid}' is not a UUID`)
+    const above = parent == null ? this.units[0] : this.units.find((u) => u.handle === parent)
+    if (!above) throw new Error(`[uniweb/api mock] unit '${handle}' is under '${parent}', which no unit declared before it is`)
+    if (above.depth >= MAX_DEPTH) {
+      throw new Error(`[uniweb/api mock] unit '${handle}' would be level ${above.depth + 1}: an organization's units go ${MAX_DEPTH} levels deep, its root the first`)
+    }
+    if (!Array.isArray(members)) throw new Error(`[uniweb/api mock] unit '${handle}': members is a list of usernames`)
+    checkFloor(floor, `unit '${handle}': floor`)
+    const placed = members.map((username) => {
+      const account = this.accounts.find((a) => a.username === username)
+      if (!account) throw new Error(`[uniweb/api mock] unit '${handle}': '${username}' is not a seeded account`)
+      return account.id
+    })
+    const unit = {
+      id: (this.ids.unit += 1),
+      uuid: uuid || newUuid(),
+      handle,
+      name,
+      parent: above.id,
+      depth: above.depth + 1,
+      members: new Set(placed),
+      floor,
+    }
+    this.units.push(unit)
+    return unit
+  }
+
+  unitById(id) {
+    return this.units.find((u) => u.id === id) ?? null
+  }
+
+  unitByUuid(uuid) {
+    return this.units.find((u) => u.uuid === uuid) ?? null
+  }
+
+  /** Placed in this unit — every account is, at the root. */
+  placedIn(account, unit) {
+    return !!account && (unit.members == null || unit.members.has(account.id))
+  }
+
+  /** Whether `unit` is `ancestor` or below it. */
+  isWithin(unit, ancestor) {
+    const seen = new Set()
+    for (let at = unit; at && !seen.has(at.id); at = this.unitById(at.parent)) {
+      if (at.id === ancestor.id) return true
+      seen.add(at.id)
+    }
+    return false
+  }
+
+  /** Belongs to this unit — placed in it, or in a unit below it, as membership belongs upward. */
+  belongsTo(account, unit) {
+    return this.units.some((u) => this.placedIn(account, u) && this.isWithin(u, unit))
+  }
+
+  /**
+   * `GET /unit/mine` — the units the account is placed in, ordered by depth: `{ unit, id,
+   * handle?, name?, parent?, depth, primary }`, as the backend states it (2026-10-15). The
+   * root is every account's primary unit.
+   */
+  unitsOf(account) {
+    const placed = this.units.filter((u) => this.placedIn(account, u)).sort((a, b) => a.depth - b.depth || a.id - b.id)
+    return {
+      units: placed.map((u) => ({
+        unit: u.uuid,
+        id: u.id,
+        ...(u.handle ? { handle: u.handle } : {}),
+        ...(u.name ? { name: u.name } : {}),
+        ...(u.parent != null ? { parent: this.unitById(u.parent).uuid } : {}),
+        depth: u.depth,
+        primary: u.id === SITE_UNIT,
+      })),
+    }
+  }
+
+  /**
+   * The unit a create names, when the viewer may land there — placed in it, or, as the
+   * operator, while the session is elevated, since its role edits everywhere. `null`
+   * otherwise: the backend's `404`, one answer for a unit unknown and one not theirs.
+   */
+  landing(uuid) {
+    const unit = this.unitByUuid(uuid)
+    const me = this.account
+    if (!unit || !me) return null
+    return this.placedIn(me, unit) || (me.operator === true && this.elevated) ? unit : null
+  }
+
   // ── Offers ──────────────────────────────────────────────────────────────────
 
   /**
@@ -515,6 +658,8 @@ export class MockStore {
       uuid: newUuid(),
       name,
       decl: decl || {},
+      // An entry may be given to people unless the schema says `grantable: false`.
+      grantable: decl?.grantable !== false,
       sections: [],
       created_at: at,
       updated_at: at,
@@ -596,7 +741,7 @@ export class MockStore {
    * nested section as a row naming its parent — top-level rows first, each group by name.
    */
   schemaOf(model) {
-    const data = { grantable: true }
+    const data = { grantable: model.grantable }
     for (const k of ['label', 'description', 'icon', 'plural']) {
       if (typeof model.decl?.[k] === 'string') data[k] = model.decl[k]
     }
@@ -855,7 +1000,7 @@ export class MockStore {
 
   // ── Entities ────────────────────────────────────────────────────────────────
 
-  seedEntity({ uuid, model: modelName, owner = null, items = [], data }) {
+  seedEntity({ uuid, model: modelName, owner = null, unit = null, grants = null, items = [], data }) {
     if (uuid != null && !isUuid(uuid)) {
       throw new Error(
         `[uniweb/api mock] seed entity uuid '${uuid}' is not a UUID — the backend addresses entities by UUID, so an id like this one would be a 400 there`,
@@ -863,8 +1008,18 @@ export class MockStore {
     }
     const model = this.model(modelName) ?? this.defineModel(modelName)
     const who = (owner && this.accounts.find((a) => a.username === owner)) || this.operator() || this.accounts[0] || null
-    const entity = this.newEntity(model, who)
+    const landed = unit == null ? this.units[0] : this.units.find((u) => u.handle === unit)
+    if (!landed) throw new Error(`[uniweb/api mock] seed: a ${modelName} lands in unit '${unit}', which the seed does not declare`)
+    const entity = this.newEntity(model, who, landed.id)
     if (uuid) entity.uuid = uuid
+    for (const [username, permission] of Object.entries(grants || {})) {
+      const holder = this.accounts.find((a) => a.username === username)
+      if (!holder) throw new Error(`[uniweb/api mock] seed: a ${modelName} is given to '${username}', who is not a seeded account`)
+      if (!GRANT.levels.includes(permission)) {
+        throw new Error(`[uniweb/api mock] seed: a ${modelName} gives '${username}' ${JSON.stringify(permission)} — a grant is ${GRANT.levels.join(', ')}`)
+      }
+      entity.grants.set(holder.id, { permission, granted_by: who?.id ?? null, granted_at: entity.created_at })
+    }
     const brief = model.sections.find((s) => s.is_brief)
     if (data && brief && Object.keys(data).length) this.addItem(entity, brief, { data })
     // An item may carry the items that sit under it — a nested section's, or its own
@@ -882,17 +1037,20 @@ export class MockStore {
     return entity
   }
 
-  newEntity(model, owner) {
+  newEntity(model, owner, unitId = SITE_UNIT) {
     const at = this.clock()
     return {
       id: (this.ids.entity += 1),
       uuid: newUuid(),
       model: model.name,
       owner_id: owner?.id ?? null,
+      unit_id: unitId,
       created_by: owner?.id ?? null,
       created_at: at,
       updated_at: at,
       items: [],
+      /** Access given to people: account id → `{ permission, granted_by, granted_at }`. */
+      grants: new Map(),
     }
   }
 
@@ -936,44 +1094,224 @@ export class MockStore {
     return siblings[siblings.length - 1].order_number + GAP
   }
 
-  /** The floor that applies to this entity's Model: `null`, `'read'` or `'edit'`. */
+  /**
+   * The floor that covers this entity for the viewer: `null`, `'read'` or `'edit'` — the
+   * floor of the unit it landed in, for an account that belongs to that unit (every
+   * account belongs to the root), per Model when the floor is a map.
+   */
   floorFor(entity) {
-    const floor = this.memberFloor
-    if (floor == null || typeof floor === 'string') return floor
+    const unit = this.unitById(entity.unit_id ?? SITE_UNIT)
+    if (!unit) return null
+    const floor = unit.id === SITE_UNIT ? this.memberFloor : unit.floor
+    if (floor == null || !this.belongsTo(this.account, unit)) return null
+    if (typeof floor === 'string') return floor
     return floor[entity.model] ?? null
   }
 
-  /**
-   * The owner — or the operator, whose role reads everything, elevated or not — or any
-   * member, when the service lets members read each other's.
-   */
-  mayRead(entity) {
+  /** What the viewer was given on this entity — `read`, `edit`, `admin` — or null. */
+  grantOf(entity) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || me.operator === true || this.floorFor(entity) != null)
+    return (me && entity.grants?.get(me.id)?.permission) ?? null
   }
 
   /**
-   * The owner — or the operator while its session is elevated — or any member, when the
-   * service lets members edit each other's.
+   * The owner — or the operator, whose role reads everything, elevated or not — or
+   * whoever it was given to, or any member the floor covers.
+   */
+  mayRead(entity) {
+    const me = this.account
+    return !!me && (entity.owner_id === me.id || me.operator === true || this.grantOf(entity) != null || this.floorFor(entity) != null)
+  }
+
+  /**
+   * The owner — or the operator while its session is elevated — or whoever was given
+   * `edit` or `admin`, or any member the floor lets edit.
    */
   mayEdit(entity) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || (me.operator === true && this.elevated) || this.floorFor(entity) === 'edit')
+    const given = this.grantOf(entity)
+    return (
+      !!me &&
+      (entity.owner_id === me.id ||
+        (me.operator === true && this.elevated) ||
+        given === 'edit' ||
+        given === 'admin' ||
+        this.floorFor(entity) === 'edit')
+    )
+  }
+
+  /**
+   * Administers it — deletes it, gives access to it: the owner, whoever was given `admin`,
+   * or the operator while its session is elevated. A floor never does, as on the backend,
+   * where a floor is `read` or `edit` and deleting takes `admin`.
+   */
+  mayAdminister(entity) {
+    const me = this.account
+    return !!me && (entity.owner_id === me.id || this.grantOf(entity) === 'admin' || (me.operator === true && this.elevated))
   }
 
   /**
    * Which branch lets the viewer read a row, as the backend names it — the first to
    * answer in its order: `owner`, `grant`, `rbac`, `unit_member`. A session's own rows
-   * are `owner`, the operator's too; the rest the operator reads through its role,
-   * `rbac`; a member reads the rest by the service's floor. *(From 2026-10-10 to
-   * 2026-10-14 the operator's session read nothing of a member's, and before that the
-   * rest as `rbac`, through `system_admin`.)*
+   * are `owner`, the operator's too; what was given to the viewer, `grant`, even where
+   * its role or the floor reaches it as well (MEASURED 2026-10-15); the rest the operator
+   * reads through its role, `rbac`; a member reads the rest by the floor. *(From
+   * 2026-10-10 to 2026-10-14 the operator's session read nothing of a member's, and
+   * before that the rest as `rbac`, through `system_admin`.)*
    */
   via(entity) {
     const me = this.account
     if (entity.owner_id === me?.id) return 'owner'
+    if (this.grantOf(entity) != null) return 'grant'
     if (me?.operator === true) return 'rbac'
     return 'unit_member'
+  }
+
+  // ── Access to an entry ──────────────────────────────────────────────────────
+
+  /** A person, as the grant routes name one. */
+  person(account) {
+    return { account_id: account.id, uuid: account.uuid, handle: account.handle, brief: null }
+  }
+
+  /** Someone who may read the entry and not administer it — `403`, `op: 'grant'` (MEASURED). */
+  grantRefusal(entity) {
+    return refuse(403, 'Forbidden', `grant on entity ${entity.uuid} not permitted`, { op: 'grant', target: `entity ${entity.uuid}` })
+  }
+
+  /** A grant, as the routes answer one — with its two people on the access list. */
+  grantRow(entity, accountId, given, { people = false } = {}) {
+    const row = {
+      entity_id: entity.id,
+      account_id: accountId,
+      team_id: null,
+      permission: given.permission,
+      granted_by: given.granted_by,
+      granted_at: given.granted_at,
+    }
+    if (!people) return row
+    const holder = this.accounts.find((a) => a.id === accountId)
+    const by = this.accounts.find((a) => a.id === given.granted_by)
+    return { ...row, account: holder ? this.person(holder) : null, granted_by_account: by ? this.person(by) : null }
+  }
+
+  /** `GET /grants/{uuid}/access` — `{ owner, grants, pending }`, for whoever administers it. */
+  access(entity) {
+    if (!this.mayAdminister(entity)) return this.grantRefusal(entity)
+    const owner = this.accounts.find((a) => a.id === entity.owner_id)
+    return {
+      body: {
+        owner: owner ? this.person(owner) : null,
+        grants: [...entity.grants].map(([id, given]) => this.grantRow(entity, id, given, { people: true })),
+        // An offer to an address is refused here — every entry is the organization's.
+        pending: [],
+      },
+    }
+  }
+
+  /** `GET /grants/{uuid}/candidates` — the members of the entry's organization: every account. */
+  candidates(entity) {
+    if (!this.mayAdminister(entity)) return this.grantRefusal(entity)
+    return { body: this.accounts.map((a) => this.person(a)) }
+  }
+
+  /**
+   * Give an account `permission` on the entry — `PUT /grants/{uuid}/{account_id}`. It
+   * replaces what the account held. Every account is a member of the home organization,
+   * so an id the mock does not know is answered as one outside it (MEASURED).
+   */
+  grant(entity, model, accountId, permission, wording) {
+    if (!GRANT.levels.includes(permission)) return unknownPermission(permission, wording)
+    if (!this.mayAdminister(entity)) return this.grantRefusal(entity)
+    if (!model.grantable) {
+      return refuse(403, 'Forbidden', `Model "${model.name}" is not grantable`, { reason: 'model_not_grantable', model_name: model.name })
+    }
+    if (!this.accounts.some((a) => a.id === accountId)) {
+      const outside = `account ${accountId} is not a member of the org of unit ${entity.unit_id} (entity ${entity.uuid})`
+      return refuse(403, 'Forbidden', `grant on ${outside} not permitted`, { op: 'grant', target: outside })
+    }
+    const given = { permission, granted_by: this.account.id, granted_at: this.clock() }
+    entity.grants.set(accountId, given)
+    return { body: this.grantRow(entity, accountId, given) }
+  }
+
+  /**
+   * `POST /grants/{uuid}/share` — a person named by `handle`, `account_uuid` or `email`.
+   * An address a verified account holds is that account; any other is refused, as an
+   * address is for an organization's entry (MEASURED). An account uuid nobody holds is
+   * answered as a handle nobody holds is — assumed, by analogy.
+   */
+  share(entity, model, { handle, account_uuid: accountUuid, email, permission } = {}) {
+    // The share route words an unknown permission its own way (MEASURED).
+    const asShare = { title: 'Bad Request', prefix: 'validation: ' }
+    if (!GRANT.levels.includes(permission)) return unknownPermission(permission, asShare)
+    if (!this.mayAdminister(entity)) return this.grantRefusal(entity)
+    let holder = null
+    if (typeof handle === 'string') {
+      holder = this.accounts.find((a) => a.handle === handle)
+      if (!holder) return refuse(404, 'Not Found', `account ${handle} not found`, { kind: 'account', key: handle })
+    } else if (typeof accountUuid === 'string') {
+      holder = this.accounts.find((a) => a.uuid === accountUuid)
+      if (!holder) return refuse(404, 'Not Found', `account ${accountUuid} not found`, { kind: 'account', key: accountUuid })
+    } else if (typeof email === 'string') {
+      holder = this.accounts.find((a) => a.email === email && a.verified)
+      if (!holder) {
+        const why = `entity ${entity.uuid} belongs to unit ${entity.unit_id}, and org content can only be shared with a member — invite them to the organization first, then share`
+        return refuse(403, 'Forbidden', `grant on ${why} not permitted`, { op: 'grant', target: why })
+      }
+    } else {
+      return refuse(400, 'Bad Request', 'share needs one of `handle`, `account_uuid` or `email`')
+    }
+    const out = this.grant(entity, model, holder.id, permission, asShare)
+    return out.problem ? out : { body: { outcome: GRANT.granted, ...out.body } }
+  }
+
+  /** `DELETE /grants/{uuid}/{account_id}` — `204`, held or not. */
+  revokeGrant(entity, accountId) {
+    if (!this.mayAdminister(entity)) return this.grantRefusal(entity)
+    entity.grants.delete(accountId)
+    return { status: 204 }
+  }
+
+  /**
+   * `DELETE /grants/me/{uuid}` — the viewer gives up what was given to them: `204`, or
+   * `409` with the `reason` nothing is theirs to give up (stated by the backend
+   * 2026-09-22; `not_shared_with_you` MEASURED 2026-10-15).
+   */
+  leave(entity) {
+    const me = this.account
+    if (entity.owner_id === me.id) {
+      return refuse(409, 'Conflict', 'this is yours — you own it, so there is nothing to leave', { reason: 'owner_cannot_leave' })
+    }
+    if (!entity.grants.has(me.id)) {
+      return refuse(409, 'Conflict', 'this was not shared with you — you reach it through your organization or a purchase', {
+        reason: 'not_shared_with_you',
+      })
+    }
+    entity.grants.delete(me.id)
+    return { status: 204 }
+  }
+
+  /**
+   * `POST /grants/batch` — each op on its own: `{ model, uuid, account, ok, error? }`, the
+   * error naming what refused it (MEASURED: `not_found`; the rest as the backend names them).
+   */
+  grantBatch(ops) {
+    return {
+      body: {
+        results: ops.map((op) => {
+          const head = { model: op.model, uuid: op.uuid, account: op.account }
+          const model = this.model(op.model)
+          const entity = model && isUuid(op.uuid) ? this.entities.get(op.uuid) : null
+          if (!entity || entity.model !== model.name || !this.mayRead(entity)) return { ...head, ok: false, error: 'not_found' }
+          const out = op.revoke === true ? this.revokeGrant(entity, op.account) : this.grant(entity, model, op.account, op.permission)
+          if (!out.problem) return { ...head, ok: true }
+          const { status, reason } = out.problem
+          const error = reason === 'model_not_grantable' ? 'not_grantable' : status === 400 ? 'validation' : status === 404 ? 'not_found' : 'denied'
+          return { ...head, ok: false, error }
+        }),
+      },
+    }
   }
 
   /** The entity's summary: its brief section's item, projected like any read. */
@@ -1039,7 +1377,7 @@ export class MockStore {
       uuid: entity.uuid,
       model_id: model.id,
       owner_id: entity.owner_id,
-      unit_id: SITE_UNIT,
+      unit_id: entity.unit_id ?? SITE_UNIT,
       sort_date: null,
       brief: this.brief(entity, locales),
       disabled: false,
@@ -1101,8 +1439,9 @@ export class MockStore {
     return { entities: page.map((e) => this.row(e, { via: true, locales })), matched: page.length }
   }
 
-  create(model, items) {
-    const entity = this.newEntity(model, this.account)
+  /** A create, landing in `unit` — a unit `landing` let through — or at the root. */
+  create(model, items, unit = null) {
+    const entity = this.newEntity(model, this.account, unit?.id ?? SITE_UNIT)
     const staged = { ...entity, items: [] }
     for (const item of items) {
       const section = this.sectionNamed(model, item.section)

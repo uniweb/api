@@ -20,6 +20,14 @@ import { Ledger } from './ledger.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
 import { listInvitationsWith, acceptInvitationWith, declineInvitationWith } from './invitations.js'
 import { viewerElevation, watchLapse, elevateWith, lowerWith, elevateWithProviderOf } from './elevation.js'
+import {
+  listAccessWith,
+  listAccessCandidatesWith,
+  grantAccessWith,
+  revokeAccessWith,
+  leaveAccessWith,
+} from './access.js'
+import { listUnitsWith } from './units.js'
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -605,6 +613,44 @@ export class ApiClient {
     return declineInvitationWith(this, id)
   }
 
+  /**
+   * The units the signed-in account is placed in — `{ unit, id, handle?, name?, parent?,
+   * depth, primary }` each — where a create may land (`createEntity`'s `unit`).
+   *
+   * @param {{ signal?: AbortSignal }} [options]
+   * @returns {Promise<object[]>}
+   */
+  listUnits(options) {
+    return listUnitsWith(this, options)
+  }
+
+  // ── Access to an entry ────────────────────────────────────────────────────
+
+  /** Who has access to an entry — `{ owner, grants, pending }` (`./access.js`). */
+  listAccess(args) {
+    return listAccessWith(this, args)
+  }
+
+  /** The people an entry may be given to (`./access.js`). */
+  listAccessCandidates(args) {
+    return listAccessCandidatesWith(this, args)
+  }
+
+  /** Give a person — or a list of people — access to an entry (`./access.js`). */
+  grantAccess(args) {
+    return grantAccessWith(this, args)
+  }
+
+  /** Take back what a person — or a list of people — was given (`./access.js`). */
+  revokeAccess(args) {
+    return revokeAccessWith(this, args)
+  }
+
+  /** Give up access that was given to the viewer (`./access.js`). */
+  leaveAccess(args) {
+    return leaveAccessWith(this, args)
+  }
+
   // ── The cache ─────────────────────────────────────────────────────────────
 
   /**
@@ -1144,13 +1190,21 @@ export class ApiClient {
    * A successful create drops this Model's cached reads, so a list on the page
    * shows it.
    *
+   * **Where it lands.** On a site's backend everything a member creates lands at the
+   * organization's root. `unit` — a unit's uuid, from `listUnits` — lands it there
+   * instead: a course's lessons in the course, a department's records in the
+   * department. A unit the viewer is placed in takes it; so does one where a role of
+   * theirs edits, while the session is elevated. Any other is `absent`, as one that
+   * does not exist.
+   *
    * @param {object} args
    * @param {string} args.schema
    * @param {Array<{ section: string, data?: object, parent?: number }>} [args.items]
+   * @param {string} [args.unit] - the uuid of the unit it lands in
    * @param {AbortSignal} [args.signal]
-   * @returns {Promise<object>} the new entity's row — `{ uuid, brief, … }`
+   * @returns {Promise<object>} the new entity's row — `{ uuid, brief, unit_id, … }`
    */
-  async createEntity({ schema, items, data, signal } = {}) {
+  async createEntity({ schema, items, data, unit, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'createEntity needs a schema')
     if (data !== undefined) {
       throw ApiError.invalid(
@@ -1162,15 +1216,22 @@ export class ApiClient {
     if (!Array.isArray(list) || list.some((item) => !item || !item[CREATE.sectionName])) {
       throw ApiError.invalid('No Section', 'every item of createEntity needs a section')
     }
-    const body = list.length
-      ? {
-          [CREATE.items]: list.map((item) => ({
-            [CREATE.sectionName]: item[CREATE.sectionName],
-            data: item.data ?? {},
-            ...(item.parent != null ? { [FIELD.parent]: item.parent } : {}),
-          })),
-        }
-      : undefined
+    if (unit != null && (typeof unit !== 'string' || !unit)) {
+      throw ApiError.invalid('No Unit', "createEntity's unit is a unit's uuid — `unit` on a row of listUnits")
+    }
+    const fields = {
+      ...(unit != null ? { [CREATE.unit]: unit } : {}),
+      ...(list.length
+        ? {
+            [CREATE.items]: list.map((item) => ({
+              [CREATE.sectionName]: item[CREATE.sectionName],
+              data: item.data ?? {},
+              ...(item.parent != null ? { [FIELD.parent]: item.parent } : {}),
+            })),
+          }
+        : {}),
+    }
+    const body = Object.keys(fields).length ? fields : undefined
     const created = await this.request('POST', ROUTES.create(), {
       query: { [PARAM.model]: schema },
       body,
@@ -1299,6 +1360,18 @@ export const listInvitations = (options) => listInvitationsWith(required(), opti
 export const acceptInvitation = (id) => acceptInvitationWith(required(), id)
 /** @see ApiClient#declineInvitation — on any instance, an older copy's too */
 export const declineInvitation = (id) => declineInvitationWith(required(), id)
+/** @see ApiClient#listUnits — on any instance, an older copy's too */
+export const listUnits = (options) => listUnitsWith(required(), options)
+/** @see ApiClient#listAccess — on any instance, an older copy's too */
+export const listAccess = (args) => listAccessWith(required(), args)
+/** @see ApiClient#listAccessCandidates — on any instance, an older copy's too */
+export const listAccessCandidates = (args) => listAccessCandidatesWith(required(), args)
+/** @see ApiClient#grantAccess — on any instance, an older copy's too */
+export const grantAccess = (args) => grantAccessWith(required(), args)
+/** @see ApiClient#revokeAccess — on any instance, an older copy's too */
+export const revokeAccess = (args) => revokeAccessWith(required(), args)
+/** @see ApiClient#leaveAccess — on any instance, an older copy's too */
+export const leaveAccess = (args) => leaveAccessWith(required(), args)
 /** @see ApiClient#readEntity */
 export const readEntity = (args) => required().readEntity(args)
 /** @see ApiClient#listEntities */

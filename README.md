@@ -218,9 +218,10 @@ Showing "nothing yet" for the first case tells a visitor their content is missin
 when it is simply not being asked for.
 
 **Whose records.** Everyone signed in on the site reads their own entities, what was
-shared with them, and what a role of theirs reaches — the operator's reaches every
-member's; other members' are private unless the site's service was set up to let members
-read each other's. `scope: 'mine'` lists only the viewer's own.
+given to them (`via: 'grant'` — see *Access to an entry*), and what a role of theirs
+reaches — the operator's reaches every member's; other members' are private unless the
+site's service was set up to let members read each other's. `scope: 'mine'` lists only
+the viewer's own.
 
 A record is a summary: `record.brief` holds the fields of the Model's brief section. It
 carries no items — read the entity for those. `hasMore` is true when a page came back
@@ -339,12 +340,86 @@ import { createEntity } from '@uniweb/api/client'
 await createEntity({ schema: '@acme/course', items: [{ section: 'course', data: { title: 'Intro' } }] })
 ```
 
+**Where it lands.** Everything a member creates lands at the root of the organization the
+site's backend is founded with. A solution that uses units — a department, a program, a
+course — lands an entity in one by naming it:
+
+```jsx
+import { useUnits, createEntity } from '@uniweb/api'
+
+const { units } = useUnits()                       // the units the viewer is placed in
+const course = units.find((u) => u.handle === 'intro-101')
+await createEntity({ schema: '@acme/submission', unit: course.unit, items: [...] })
+```
+
+- A unit is `{ unit, id, handle?, name?, parent?, depth, primary }`: `unit` is the uuid a
+  create names, `id` is what an entity's `unit_id` carries, `depth` is 1 at the root.
+- A create may land in a unit the viewer is placed in, or — while their session is
+  elevated — one where a role of theirs edits. Any other is `absent`, the same answer as
+  a unit that does not exist.
+- Landing changes where the entity is, not who may open it: that is still the
+  organization's rules — what its units' members may read, and the roles it gives.
+
 ### Errors
 
 Every failure is an `ApiError` with a `kind`: `auth` (sign in), `unverified`, `absent`,
 `forbidden` (`error.extensions.op` names what was refused), `invalid`
 (`error.extensions.field` names a field the Model refused), `conflict`, `rule`,
 `rate-limited`, `unavailable`, `disabled`. Branch on `kind`; `detail` is prose.
+
+## Access to an entry
+
+Whoever administers an entry — its owner, someone given `admin` on it, or a role that
+reaches it while the session is elevated — can give other people access to it: `read`,
+`edit` or `admin`. An instructor enrols students in a course this way, or adds a
+co-instructor; what you call it — "enrolled", "course staff", "shared with you" — is yours.
+An entry someone was given lists for them with `via: 'grant'`.
+
+```jsx
+import { useAccess } from '@uniweb/api'
+
+function Roster({ course }) {
+  const { status, grants, grant, revoke, working } = useAccess({ schema: '@acme/course', uuid: course.uuid })
+  if (status !== 'ready') return null              // 'forbidden': not this viewer's to give
+  return (
+    <>
+      {grants.map((g) => (
+        <p key={g.account_id}>
+          {g.account?.handle} — {g.permission}
+          <button disabled={working} onClick={() => revoke(g)}>Remove</button>
+        </p>
+      ))}
+      <EnrolByHandle onSubmit={(handle) => grant({ handle }, 'read')} />
+    </>
+  )
+}
+```
+
+- **`status`** — `ready` for whoever administers the entry: `owner`, `grants` (each with
+  `account`, the person, and `permission`) and `pending`. `forbidden` for everyone else who
+  can read it — the ordinary answer, so draw nothing. `absent` for no backend, nobody
+  signed in, or an entry the viewer cannot read.
+- **Naming a person.** By account id — a number, or anything carrying `account_id`: a
+  candidate, a grant's `account`, an entity's `owner_id` — or by `{ handle }`, `{ uuid }`
+  (an account's, as `viewer.uuid`) or `{ email }`. An address nobody holds gets an offer by
+  mail, which waits in `pending` — but an organization's entry is given only to its
+  members, so on a site's backend an address with no account is refused.
+- **Many at once.** `grant([id, id, …], 'read')` gives a list of people, by account id, in
+  one call, and answers `{ results: [{ account, ok, error? }] }` — each person on their
+  own, so one refused leaves the rest given. `revoke([…])` takes a list back.
+- **Giving again replaces.** `read` after `edit` lowers what the person had. Taking back
+  what was never given answers the same as taking it back.
+- `listAccessCandidates({ schema, uuid })` lists the people an entry may be given to: the
+  members of its organization.
+- **Giving it up.** Someone given access can give it up: `leaveAccess({ schema, uuid })`.
+  When nothing is theirs to give up — they own it, or reach it through their
+  organization — it is refused with `kind: 'rule'`, and `error.extensions.reason` says
+  which.
+- A type made from a data schema can be given unless its schema says `grantable: false`;
+  one that cannot is refused `forbidden`, `error.extensions.reason: 'model_not_grantable'`.
+
+Outside React: `grantAccess`, `revokeAccess`, `listAccess`, `listAccessCandidates` and
+`leaveAccess` from `@uniweb/api/client`, each taking `{ schema, uuid, … }`.
 
 ## Rules, lists, and what stays in your foundation
 
@@ -496,6 +571,23 @@ from the start.
 The operator's Admin link answers too, landing on a page of the mock's own — the backend's
 administration is not part of it. State is in memory: restart to reset.
 
+Whoever administers an entry gives people access to it and takes it back, as on the
+backend, and deleting an entry takes `admin` on it. A seeded entity can start with access
+given — `grants: { member: 'read' }` — and with units in the seed, a create can land in one:
+
+```js
+units: [
+  { handle: 'science', name: 'Science' },
+  { handle: 'intro-101', name: 'Intro', parent: 'science', members: ['me', 'member'], floor: { '@acme/lesson': 'read' } },
+],
+entities: [{ model: '@acme/lesson', owner: 'me', unit: 'intro-101', items: [...] }],
+```
+
+`members` are placed in the unit, and its `floor` — as `memberFloor`, which is the root's —
+covers what lands in it, for them and for those placed in the units below it. The mock
+models no roles but the operator's: no reader or editor held at a unit, and nothing a
+reference opens.
+
 Write a seed's schemas as you write them for a backend — `type: 'int'`, `multiple: true`,
 `options:` — and the mock's definition answers what a backend keeps of them, so a key no
 backend takes is left out of it (a backend refuses it when you register). Seed a list's
@@ -523,8 +615,10 @@ npx uniweb-api-mock --port 8787 --site http://localhost:3000
 React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
 `createEntity`, `deleteEntity`, `adminHref`, for elevation, `elevate`, `lower`,
 `elevateWithProvider`, `isElevated` and `rolesInFull`, for the links the backend mails,
-`mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`, and for invitations,
-`listInvitations`, `acceptInvitation` and `declineInvitation`.
+`mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`, for invitations,
+`listInvitations`, `acceptInvitation` and `declineInvitation`, for units, `listUnits`, and for
+access to an entry, `listAccess`, `listAccessCandidates`, `grantAccess`, `revokeAccess` and
+`leaveAccess`.
 
 ## License
 
