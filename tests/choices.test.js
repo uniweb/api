@@ -425,3 +425,35 @@ describe('the hooks', () => {
     expect(result.current.hasMore).toBe(false)
   })
 })
+
+// A definition shows what a data schema can declare, and nothing else (2026-10-15): `languages`,
+// `precision`, `scale` and `compact` are what the store can hold, and a registry refuses a schema
+// declaring them — so a seed's are left out, as a stored declaration never has them.
+describe('a definition shows only what a data schema declares', () => {
+  it('leaves out the store-only keys, and refuses a year written as a number', async () => {
+    const probe = {
+      sections: {
+        head: {
+          brief: true,
+          fields: {
+            note: { type: 'string', localized: true, languages: ['en', 'fr'], compact: true, max_length: 5 },
+            ratio: { type: 'decimal', precision: 4, scale: 2, min: 0 },
+            year: { type: 'date', format: 'year' },
+          },
+        },
+      },
+    }
+    const { client, get } = stack({ seed: seed({ schemas: { ...SCHEMAS, '@acme/probe': probe } }) })
+    await signIn(client, 'attendee')
+    const head = (await get('/models/@acme/probe')).body.sections.find((s) => s.name === 'head')
+    const data = (key) => head.fields.find((f) => f.key === key).type.data
+    expect(data('note')).toEqual({ key: 'note', kind: 'string', localized: true, max_length: 5 })
+    expect(data('ratio')).toEqual({ key: 'ratio', kind: 'decimal', min: 0 })
+    expect(data('year')).toEqual({ key: 'year', kind: 'date', format: 'year' })
+
+    const err = await client.createEntity({ schema: '@acme/probe', items: [{ section: 'head', data: { year: 2024 } }] }).catch((e) => e)
+    expect(err.extensions).toMatchObject({ field: 'data.year', rule: 'type' })
+    expect(err.detail).toBe('item.data.year must be a string (date expected)')
+    expect((await client.createEntity({ schema: '@acme/probe', items: [{ section: 'head', data: { year: '2024' } }] })).uuid).toBeTruthy()
+  })
+})

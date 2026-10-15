@@ -6,44 +6,47 @@
  * ⭐ **A field keeps what the backend keeps, and nothing else.** A key the backend's
  * catalog does not hold for the field's kind never reaches a stored declaration — a
  * schema carrying one is refused when it is registered — so the mock's definition
- * leaves it out rather than show a form a rule no backend applies. The catalog, per
- * kind, beside what every field may declare (`label`, `description`, `required`,
- * `multiple`, `localized`, `compact`):
+ * leaves it out rather than show a form a rule no backend applies. The catalog — what a data
+ * schema's field may declare, per kind (2026-10-15) — beside what every field may declare
+ * (`label`, `description`, `required`, `multiple`, `localized`):
  *
  * | kind | its own keys |
  * |---|---|
- * | `string` · `text` | `max_length`, `languages`, `format` |
- * | `int` | `min`, `max` |
- * | `decimal` | `precision`, `scale`, `min`, `max` |
+ * | `string` · `text` | `max_length`, `format` |
+ * | `int` · `decimal` | `min`, `max` |
  * | `date` | `format` — `year-month` or `year` |
  * | `item_ref` | `options` (a schema's) → `section_uuid`; `entity_uuid` |
  * | `entity_ref` | `model` (a schema's) → `model_uuid`; `model_uuids`, `contains`, `readable_with` |
  * | `file` | `mime_types`, `max_size` |
- * | `json` | `languages`, `format` |
+ * | `json` | `format` |
  * | `bool` · `datetime` · `secret` | none |
  *
  * And what moves: an `enum` becomes its section's `one_of` rule; `multiple: true` is
  * `multi`; a nested section is a section of its own.
+ *
+ * ⛔ Until 2026-10-15 this kept `languages` (on text and json), `precision` and `scale` (on
+ * decimal) and `compact` from a seed. The store can hold them, but a data schema cannot
+ * declare them: a registry refuses a schema that does.
  */
 
 /** The keys a kind declares beyond the ones every field may (see the table above). */
 const KIND_KEYS = {
-  string: ['max_length', 'languages', 'format'],
-  text: ['max_length', 'languages', 'format'],
+  string: ['max_length', 'format'],
+  text: ['max_length', 'format'],
   int: ['min', 'max'],
-  decimal: ['precision', 'scale', 'min', 'max'],
+  decimal: ['min', 'max'],
   date: ['format'],
   item_ref: ['entity_uuid'],
   entity_ref: ['model_uuids', 'contains', 'readable_with'],
   file: ['mime_types', 'max_size'],
-  json: ['languages', 'format'],
+  json: ['format'],
 }
 
 /** Prose about a field — a plain string. */
 const DOC_KEYS = ['label', 'description']
 
 /** Modifiers any kind that supports them declares. */
-const MODIFIER_KEYS = ['localized', 'compact']
+const MODIFIER_KEYS = ['localized']
 
 /** A field's kind: its `type`, or a list's element type in the normalizer's `array` spelling. */
 export function kindOf(field) {

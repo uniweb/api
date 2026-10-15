@@ -393,7 +393,12 @@ export function checkFields(fields, data, path = '') {
       problems.push({
         field: at,
         rule: 'type',
-        detail: `item.data.${at} expects ${field.type}, got ${Array.isArray(value) ? 'array' : typeof value}`,
+        // A date is a string at every precision — `2024` is refused for a `year` field as for
+        // any other (MEASURED by backend, 2026-10-15).
+        detail:
+          field.type === 'date' || field.type === 'datetime'
+            ? `item.data.${at} must be a string (date expected)`
+            : `item.data.${at} expects ${field.type}, got ${Array.isArray(value) ? 'array' : typeof value}`,
       })
       continue
     }
