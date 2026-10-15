@@ -288,16 +288,21 @@ function matchesFormat(value, format) {
 
 /**
  * ⭐ A `url` as the backend stores it, or null when it refuses it (MEASURED by the backend,
- * 2026-10-15): `http://` or `https://`, the scheme in any case and stored in small letters
- * (`HTTPS://Example.com` → `https://Example.com`), then anything without a space; or an
- * address written without a scheme that starts with a host name — `example.com`,
- * `www.example.com/cv`, `example.com:8080/a`, `//example.com/x` — stored with `https://` in
- * front. Refused: any other scheme (`ftp://…`, `javascript://…`, `mailto:…`, `tel:…`), a path
- * (`/about`), and what starts with no host name (`localhost:3000`, `a@example.com`).
- * ⚠️ Where a host name ends is this package's reading, not a measurement: dotted, ASCII, its
- * last label starting with a letter. ⛔ Until 2026-10-15 any `scheme://…` passed, as it did there.
+ * 2026-10-15, through its own writes over a corpus of addresses): `http://` or `https://`, the
+ * scheme in any case and stored in small letters (`HTTPS://Example.com` →
+ * `https://Example.com`), then anything without a space; or an address written without a scheme
+ * that starts with a host name — `example.com`, `www.example.com/cv`, `bücher.de`,
+ * `example.com:8080/a`, `//example.com/x` — stored with `https://` in front and the host as
+ * written. A host name is two or more labels between dots, each of letters, digits and `-` in any
+ * script but starting and ending with no `-`, the last holding a letter; then optionally `:` and a
+ * port; then the end, `/`, `?` or `#`. Refused: any other scheme (`ftp://…`, `javascript://…`,
+ * `mailto:…`, `tel:…`), a path (`/about`), and what starts with no host name (`localhost:3000`,
+ * `192.168.0.1/x`, `a@example.com`). ⚠️ Past that corpus, "letters and digits" is this
+ * package's reading: Unicode's Alphabetic and Numeric. ⛔ Until 2026-10-15 any `scheme://…`
+ * passed, as it did there.
  */
-const HOST_START = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*\.[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?::\d+)?(?:[/?#]|$)/
+const LABEL = String.raw`[\p{Alphabetic}\p{N}](?:[\p{Alphabetic}\p{N}-]*[\p{Alphabetic}\p{N}])?`
+const HOST_START = new RegExp(String.raw`^(?:${LABEL}\.)+(?=[\p{Alphabetic}\p{N}-]*\p{Alphabetic})${LABEL}(?::\d+)?(?:[/?#]|$)`, 'u')
 function storedUrl(value) {
   if (typeof value !== 'string' || value === '' || /\s/.test(value)) return null
   const scheme = /^(https?):\/\/./i.exec(value)

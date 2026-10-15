@@ -136,10 +136,10 @@ describe('checkFields', () => {
   it('a url is http or https, or starts with a host name', () => {
     const fields = { site: { type: 'string', format: 'url' } }
     const rule = (site) => checkFields(fields, { site }).map((p) => p.rule)
-    for (const site of ['https://example.com', 'HTTPS://Example.com', 'example.com', 'www.example.com/cv', 'example.com:8080/a', '//example.com/x']) {
+    for (const site of ['https://example.com', 'HTTPS://Example.com', 'example.com', 'www.example.com/cv', 'example.com:8080/a', '//example.com/x', 'bücher.de', 'example.1a', '']) {
       expect(rule(site), site).toEqual([])
     }
-    for (const site of ['ftp://example.com/a', 'javascript://example.com/%0A', 'mailto:a@example.com', 'tel:+1555', '/about', 'localhost:3000', 'a@example.com']) {
+    for (const site of ['ftp://example.com/a', 'javascript://example.com/%0A', 'mailto:a@example.com', 'tel:+1555', '/about', 'localhost:3000', 'a@example.com', '192.168.0.1/x', '-example.com', 'example.com:80a']) {
       expect(rule(site), site).toEqual(['format'])
     }
   })
@@ -220,7 +220,7 @@ describe('a write is kept as the backend stores it', () => {
     const res = store.applyOp(entity, model, {
       kind: OP.create,
       [FIELD.section]: id('jobs'),
-      data: { started: '2024-5-3', month: '2024-05', site: 'example.com/cv', links: ['HTTPS://A.example.com', '//b.example.com'], home: { en: 'example.com', fr: 'https://exemple.fr' } },
+      data: { started: '2024-5-3', month: '2024-05', site: 'example.com/cv', links: ['HTTPS://A.example.com', '//b.example.com'], home: { en: 'example.com', fr: 'bücher.de' } },
     })
     expect(res.result[FIELD.item]).toBeTruthy()
     expect(entity.items.at(-1).data).toEqual({
@@ -228,7 +228,7 @@ describe('a write is kept as the backend stores it', () => {
       month: '2024-05',
       site: 'https://example.com/cv',
       links: ['https://A.example.com', 'https://b.example.com'],
-      home: { en: 'https://example.com', fr: 'https://exemple.fr' },
+      home: { en: 'https://example.com', fr: 'https://bücher.de' },
     })
   })
 
