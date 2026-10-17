@@ -144,6 +144,19 @@ describe('checkFields', () => {
     }
   })
 
+  // MEASURED by the backend, 2026-10-17: and one a browser can open — the WHATWG URL parser accepts
+  // it as stored. What passes is kept as written.
+  it('a url is one a browser can open', () => {
+    const fields = { site: { type: 'string', format: 'url' } }
+    const rule = (site) => checkFields(fields, { site }).map((p) => p.rule)
+    for (const site of ['https://example', 'https://-example.com', 'https://example..com', 'https:///example.com', 'https://example.com:65535', 'https://[::1]:8080', 'https://ex%41mple.com', 'example.com:0']) {
+      expect(rule(site), site).toEqual([])
+    }
+    for (const site of ['https://example.com:99999', 'https://example.com:abc', 'https://[::1', 'https://exa<mple.com', 'https://user@/', 'https://ex%20ample.com', 'https://example.123', 'https://1.2.3.999', 'example.com:99999']) {
+      expect(rule(site), site).toEqual(['format'])
+    }
+  })
+
   // Stated by the backend, 2026-10-15: the whole value, as JavaScript matches it with `v`.
   it("a string's pattern, matched whole — a url as stored", () => {
     const fields = {

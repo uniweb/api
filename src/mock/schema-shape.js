@@ -300,15 +300,27 @@ function matchesFormat(value, format) {
  * `192.168.0.1/x`, `a@example.com`). ⚠️ Past that corpus, "letters and digits" is this
  * package's reading: Unicode's Alphabetic and Numeric. ⛔ Until 2026-10-15 any `scheme://…`
  * passed, as it did there.
+ *
+ * ⭐ And one a browser can open (MEASURED by the backend, 2026-10-17, over the same corpus): the
+ * WHATWG URL parser — `URL` — accepts the address as stored, so a port above 65535 or not a number,
+ * an unclosed `[`, a character no host may hold, an empty host, a host ending in a number
+ * (`example.123`) and an IPv4 address out of range (`1.2.3.999`) are refused, with a scheme or
+ * without. What passes is kept as written, never as the parser rewrites it.
  */
 const LABEL = String.raw`[\p{Alphabetic}\p{N}](?:[\p{Alphabetic}\p{N}-]*[\p{Alphabetic}\p{N}])?`
 const HOST_START = new RegExp(String.raw`^(?:${LABEL}\.)+(?=[\p{Alphabetic}\p{N}-]*\p{Alphabetic})${LABEL}(?::\d+)?(?:[/?#]|$)`, 'u')
 function storedUrl(value) {
   if (typeof value !== 'string' || value === '' || /\s/.test(value)) return null
   const scheme = /^(https?):\/\/./i.exec(value)
-  if (scheme) return scheme[1].toLowerCase() + value.slice(scheme[1].length)
   const bare = value.startsWith('//') ? value.slice(2) : value
-  return HOST_START.test(bare) ? `https://${bare}` : null
+  const stored = scheme ? scheme[1].toLowerCase() + value.slice(scheme[1].length) : HOST_START.test(bare) ? `https://${bare}` : null
+  if (stored === null) return null
+  try {
+    new URL(stored)
+    return stored
+  } catch {
+    return null
+  }
 }
 
 /** A day as the backend stores it: in full, however it was written — `2024-5-3` → `2024-05-03` (MEASURED by the backend, 2026-10-15). */
