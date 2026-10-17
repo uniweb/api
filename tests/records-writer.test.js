@@ -23,7 +23,7 @@ describe('useRecords', () => {
     // `matched` counts the rows in this answer (measured); with a page of one that
     // came back full, a next page may hold more.
     withBackend(() => json(200, { entities: [{ uuid: 's-1', brief: { title: 'A' } }], matched: 1 }))
-    const { result } = renderHook(() => useRecords({ schema: '@/session', limit: 1 }))
+    const { result } = renderHook(() => useRecords({ schema: '@acme/session', limit: 1 }))
 
     expect(result.current.status).toBe('loading')
     await waitFor(() => expect(result.current.status).toBe('ready'))
@@ -36,7 +36,7 @@ describe('useRecords', () => {
     const client = withBackend(() => json(401, { status: 401, title: 'Unauthorized' }))
     await client.ensureSession()
     const calls = client.fetchFn.mock.calls.length
-    const { result } = renderHook(() => useRecords({ schema: '@/session' }))
+    const { result } = renderHook(() => useRecords({ schema: '@acme/session' }))
     expect(result.current.status).toBe('absent')
     expect(client.fetchFn.mock.calls.length).toBe(calls)
   })
@@ -47,14 +47,14 @@ describe('useRecords', () => {
     // answered and there is nothing there. Reporting the first as the second tells
     // a visitor "no sessions yet" because the site has no backend.
     createUniweb(WITHOUT_BACKEND)
-    const { result } = renderHook(() => useRecords({ schema: '@/session' }))
+    const { result } = renderHook(() => useRecords({ schema: '@acme/session' }))
     expect(result.current.status).toBe('absent')
     expect(result.current.records).toEqual([])
   })
 
   it('reports an answered-and-empty list as ready', async () => {
     withBackend(() => json(200, { entities: [], matched: 0 }))
-    const { result } = renderHook(() => useRecords({ schema: '@/session' }))
+    const { result } = renderHook(() => useRecords({ schema: '@acme/session' }))
     await waitFor(() => expect(result.current.status).toBe('ready'))
     expect(result.current.records).toEqual([])
   })
@@ -74,7 +74,7 @@ describe('useRecords', () => {
       calls += 1
       return json(200, { entities: [], matched: 0 })
     })
-    const q = { schema: '@/session' }
+    const q = { schema: '@acme/session' }
     const a = renderHook(() => useRecords(q))
     const b = renderHook(() => useRecords(q))
     await waitFor(() => expect(a.result.current.status).toBe('ready'))
@@ -91,7 +91,7 @@ describe('useEntityWriter', () => {
       sent = JSON.parse(init.body)
       return json(200, { item_id: 'i-1', item_updated_at: 'T2' })
     })
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/track', uuid: 'e-1' }))
 
     await act(async () => {
       await result.current.update('i-1', { room: 'Hall A' })
@@ -108,7 +108,7 @@ describe('useEntityWriter', () => {
       sent = JSON.parse(init.body)
       return json(200, {})
     })
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/track', uuid: 'e-1' }))
     await act(async () => {
       await result.current.move(1, { after: 0 })
     })
@@ -120,7 +120,7 @@ describe('useEntityWriter', () => {
     // ⭐ This is what invalidation is FOR, and the assertion worth making: not that
     // a cache entry vanished, but that the list a component is showing reflects the
     // write. Dropping the entry notifies the mounted hook, which reloads by itself.
-    const seenBySchema = { '@/session': 0, '@/room': 0 }
+    const seenBySchema = { '@acme/session': 0, '@acme/room': 0 }
     withBackend((url, init) => {
       if ((init?.method ?? 'GET') === 'GET') {
         const model = parse(url).searchParams.get('model')
@@ -130,13 +130,13 @@ describe('useEntityWriter', () => {
       return json(200, { item_id: 'i-1', item_updated_at: 'T1' })
     })
 
-    const sessions = renderHook(() => useRecords({ schema: '@/session' }))
-    const rooms = renderHook(() => useRecords({ schema: '@/room' }))
+    const sessions = renderHook(() => useRecords({ schema: '@acme/session' }))
+    const rooms = renderHook(() => useRecords({ schema: '@acme/room' }))
     await waitFor(() => expect(sessions.result.current.status).toBe('ready'))
     await waitFor(() => expect(rooms.result.current.status).toBe('ready'))
-    expect(seenBySchema).toEqual({ '@/session': 1, '@/room': 1 })
+    expect(seenBySchema).toEqual({ '@acme/session': 1, '@acme/room': 1 })
 
-    const writer = renderHook(() => useEntityWriter({ schema: '@/session', uuid: 'e-1' }))
+    const writer = renderHook(() => useEntityWriter({ schema: '@acme/session', uuid: 'e-1' }))
     await act(async () => {
       await writer.result.current.update('i-1', {})
     })
@@ -144,8 +144,8 @@ describe('useEntityWriter', () => {
     // The session list read again; the room list did not. A write to one Model says
     // nothing about another, and sweeping wider refetches pages the viewer is
     // looking at for nothing.
-    await waitFor(() => expect(seenBySchema['@/session']).toBe(2))
-    expect(seenBySchema['@/room']).toBe(1)
+    await waitFor(() => expect(seenBySchema['@acme/session']).toBe(2))
+    expect(seenBySchema['@acme/room']).toBe(1)
   })
 
   it('⛔ surfaces a conflict and does not retry', async () => {
@@ -154,7 +154,7 @@ describe('useEntityWriter', () => {
       calls += 1
       return json(409, { status: 409, title: 'Conflict', current_updated_at: 'T9' })
     })
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/track', uuid: 'e-1' }))
 
     await act(async () => {
       await expect(result.current.update(1, {})).rejects.toThrow()
@@ -170,7 +170,7 @@ describe('useEntityWriter', () => {
     // Measured: an insert-only section answers 409 too. Calling that a conflict
     // tells a person to reload for a write that can never succeed.
     withBackend(() => json(409, { status: 409, title: 'Append-Only Section', detail: 'insert-only', section: 'checkins' }))
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/attendance', uuid: 'e-1' }))
     await act(async () => {
       await expect(result.current.remove(3)).rejects.toMatchObject({ kind: 'rule' })
     })
@@ -180,7 +180,7 @@ describe('useEntityWriter', () => {
 
   it('refuses an update without the whole data, and a move without a position', async () => {
     withBackend(() => json(200, {}))
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/track', uuid: 'e-1' }))
     await act(async () => {
       await expect(result.current.update(1)).rejects.toMatchObject({ kind: 'invalid' })
       await expect(result.current.move(1)).rejects.toMatchObject({ kind: 'invalid' })
@@ -189,7 +189,7 @@ describe('useEntityWriter', () => {
 
   it('reports not-enabled with no backend instead of throwing on render', async () => {
     createUniweb(WITHOUT_BACKEND)
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/track', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/track', uuid: 'e-1' }))
     expect(result.current.enabled).toBe(false)
     await act(async () => {
       await expect(result.current.update('i-1', {})).rejects.toThrow()
@@ -205,7 +205,7 @@ describe('useEntityWriter — create needs a section', () => {
     // a real browser: check-ins written without a section landed outside the
     // append_only section, so the tamper-evidence simply did not apply.
     withBackend(() => json(200, {}))
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/attendance', uuid: 'e-1' }))
     await act(async () => {
       await expect(result.current.create({ session: 's-1' })).rejects.toThrow(/needs a section/)
     })
@@ -214,13 +214,13 @@ describe('useEntityWriter — create needs a section', () => {
   it('sends the section it was given — as the id the item route takes', async () => {
     let sent
     withBackend((url, init) => {
-      if (parse(url).pathname === '/_api/models/@/attendance') {
+      if (parse(url).pathname === '/_api/models/@acme/attendance') {
         return json(200, { sections: [{ id: 5, name: 'attendance', parent_section_id: null }, { id: 6, name: 'checkins', parent_section_id: null }] })
       }
       sent = JSON.parse(init.body)
       return json(200, {})
     })
-    const { result } = renderHook(() => useEntityWriter({ schema: '@/attendance', uuid: 'e-1' }))
+    const { result } = renderHook(() => useEntityWriter({ schema: '@acme/attendance', uuid: 'e-1' }))
     await act(async () => {
       await result.current.create({ session: 's-1' }, { section: 'checkins', position: 'last' })
     })

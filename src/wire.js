@@ -946,6 +946,15 @@ export const PROBLEM = {
  */
 export const ASSUMPTIONS = [
   {
+    id: 'localized-json-is-a-locale-map',
+    we:
+      "read a `localized` `json` field's value — a rich text's documents (`format: prosemirror`) — as a `{ locale: value }` map, one value per language: narrowed to the read's language by a `?locale=` read, as a text field's is, and whole without one; a value that is itself a document (`type: 'doc'`) is a value, never a map. The mock answers so",
+    from:
+      "the backend's entity-content i18n design (§5a, §5b, §10): a `localized` json field keeps the per-language object shape and is projected by locale like a text field, and a rich text stores one self-contained document per language — its design, not measured from this package",
+    breaks:
+      "a backend that answers a localized json field whole on a `?locale=` read hands a component the map where it expects one document; a backend that refuses a bare document on a write refuses the save of a field that still holds one",
+  },
+  {
     id: 'elevation-by-provider',
     we:
       "send the page's address without its query or fragment as `redirect_uri`, and a fresh `state` of our own per attempt, which we never read back — the session's own `elevation.until` says whether it worked; we then take `?elevate=ok`, `?error=oauth_step_up_not_linked` and our `state` off the address bar",

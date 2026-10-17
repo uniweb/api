@@ -169,15 +169,15 @@ describe('checkFields', () => {
 
 describe('enforcement — declared sections', () => {
   it('REFUSES an item write that violates a multi section — as the backend does, 400 naming the field', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const { entity, model, id } = entityOf(store, '@/course')
+    const store = storeWith({ '@acme/course': COURSE })
+    const { entity, model, id } = entityOf(store, '@acme/course')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('modules'), data: { summary: 'no title' } })
     expect(res.problem).toMatchObject({ status: 400, title: 'Validation', field: 'data.title' })
   })
 
   it('accepts a conforming multi-section write, and records no diagnostic', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const { entity, model, id } = entityOf(store, '@/course')
+    const store = storeWith({ '@acme/course': COURSE })
+    const { entity, model, id } = entityOf(store, '@acme/course')
     const res = store.applyOp(entity, model, {
       kind: OP.create,
       [FIELD.section]: id('modules'),
@@ -188,8 +188,8 @@ describe('enforcement — declared sections', () => {
   })
 
   it('enforces on update as well as create', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const { entity, model } = entityOf(store, '@/course', [{ section: 'modules', data: { title: 'ok' } }])
+    const store = storeWith({ '@acme/course': COURSE })
+    const { entity, model } = entityOf(store, '@acme/course', [{ section: 'modules', data: { title: 'ok' } }])
     const res = store.applyOp(entity, model, { kind: OP.update, [FIELD.item]: entity.items[0].id, data: { title: 42 } })
     expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
   })
@@ -215,8 +215,8 @@ describe('a write is kept as the backend stores it', () => {
   }
 
   it('a day in full, a url with https:// and its scheme in small letters', () => {
-    const store = storeWith({ '@/profile': PROFILE })
-    const { entity, model, id } = entityOf(store, '@/profile')
+    const store = storeWith({ '@acme/profile': PROFILE })
+    const { entity, model, id } = entityOf(store, '@acme/profile')
     const res = store.applyOp(entity, model, {
       kind: OP.create,
       [FIELD.section]: id('jobs'),
@@ -233,8 +233,8 @@ describe('a write is kept as the backend stores it', () => {
   })
 
   it('an update writing the same day or address short is no change — the token holds', () => {
-    const store = storeWith({ '@/profile': PROFILE })
-    const { entity, model } = entityOf(store, '@/profile', [{ section: 'jobs', data: { started: '2024-05-03', site: 'https://example.com' } }])
+    const store = storeWith({ '@acme/profile': PROFILE })
+    const { entity, model } = entityOf(store, '@acme/profile', [{ section: 'jobs', data: { started: '2024-05-03', site: 'https://example.com' } }])
     const item = entity.items[0]
     const before = item.updated_at
     const res = store.applyOp(entity, model, { kind: OP.update, [FIELD.item]: item.id, data: { started: '2024-5-3', site: 'example.com' } })
@@ -243,15 +243,15 @@ describe('a write is kept as the backend stores it', () => {
   })
 
   it('a pattern the value does not match is refused, naming the field and the pattern', () => {
-    const store = storeWith({ '@/profile': PROFILE })
-    const { entity, model, id } = entityOf(store, '@/profile')
+    const store = storeWith({ '@acme/profile': PROFILE })
+    const { entity, model, id } = entityOf(store, '@acme/profile')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('jobs'), data: { code: 'ab12' } })
     expect(res.problem).toMatchObject({ status: 400, title: 'Validation', field: 'data.code', rule: 'pattern', pattern: '[A-Z]{2}\\d{4}' })
   })
 
   it('CONTROL — a url a backend refuses is refused, and nothing is kept', () => {
-    const store = storeWith({ '@/profile': PROFILE })
-    const { entity, model, id } = entityOf(store, '@/profile')
+    const store = storeWith({ '@acme/profile': PROFILE })
+    const { entity, model, id } = entityOf(store, '@acme/profile')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('jobs'), data: { site: 'ftp://example.com/cv' } })
     expect(res.problem).toMatchObject({ status: 400, field: 'data.site', rule: 'format', format: 'url' })
     expect(entity.items).toHaveLength(0)
@@ -260,14 +260,14 @@ describe('a write is kept as the backend stores it', () => {
 
 describe('a section outside the declaration', () => {
   it('⭐ a typo section cannot be written at all — the Model has no such section', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const res = store.create(store.model('@/course'), [{ section: 'moduels', data: { title: 'typo' } }])
+    const store = storeWith({ '@acme/course': COURSE })
+    const res = store.create(store.model('@acme/course'), [{ section: 'moduels', data: { title: 'typo' } }])
     expect(res.problem).toMatchObject({ status: 404, kind: 'section' })
   })
 
   it('a section the site owns as debt is writable, and recorded', () => {
-    const store = storeWith({ '@/course': { ...COURSE, migration_debt: ['meta'] } })
-    const { entity, model, id } = entityOf(store, '@/course')
+    const store = storeWith({ '@acme/course': { ...COURSE, migration_debt: ['meta'] } })
+    const { entity, model, id } = entityOf(store, '@acme/course')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('meta'), data: { a: 1 } })
     expect(res.result).toBeTruthy()
     expect(store.diagnostics[0]).toMatchObject({ section: 'meta', reason: UNRESOLVED_REASON.UNDECLARED_SECTION })
@@ -277,12 +277,12 @@ describe('a section outside the declaration', () => {
     const KEY = {
       sections: { answers: { multiple: true, fields: { question: { type: 'int', required: true } } } },
     }
-    const strict = storeWith({ '@/quiz-key': KEY })
-    const a = entityOf(strict, '@/quiz-key')
+    const strict = storeWith({ '@acme/quiz-key': KEY })
+    const a = entityOf(strict, '@acme/quiz-key')
     expect(strict.applyOp(a.entity, a.model, { kind: OP.create, [FIELD.section]: a.id('answers'), data: { answers: {} } }).problem).toBeTruthy()
 
-    const owned = storeWith({ '@/quiz-key': { ...KEY, migration_debt: ['answers'] } })
-    const b = entityOf(owned, '@/quiz-key')
+    const owned = storeWith({ '@acme/quiz-key': { ...KEY, migration_debt: ['answers'] } })
+    const b = entityOf(owned, '@acme/quiz-key')
     const res = owned.applyOp(b.entity, b.model, { kind: OP.create, [FIELD.section]: b.id('answers'), data: { answers: {} } })
     expect(res.result).toBeTruthy()
     expect(owned.diagnostics[0]).toMatchObject({ reason: UNRESOLVED_REASON.DIVERGENT_SECTION })
@@ -291,15 +291,15 @@ describe('a section outside the declaration', () => {
 
 describe('a declared SINGLE section', () => {
   it('refuses a violating write to a single/brief section', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const { entity, model, id } = entityOf(store, '@/course')
+    const store = storeWith({ '@acme/course': COURSE })
+    const { entity, model, id } = entityOf(store, '@acme/course')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('course'), data: {} })
     expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
   })
 
   it('holds ONE item: a second create is the backend\'s 409 Schema Rule Violation', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const { entity, model, id } = entityOf(store, '@/course', [{ section: 'course', data: { title: 'A' } }])
+    const store = storeWith({ '@acme/course': COURSE })
+    const { entity, model, id } = entityOf(store, '@acme/course', [{ section: 'course', data: { title: 'A' } }])
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('course'), data: { title: 'B' } })
     expect(res.problem).toMatchObject({ status: 409, title: 'Schema Rule Violation' })
   })
@@ -307,15 +307,15 @@ describe('a declared SINGLE section', () => {
 
 describe('creating an entity — content is items, by section', () => {
   it('✅ checks each item of the create against its section (the question that stood open here is answered)', () => {
-    const store = storeWith({ '@/course': COURSE })
-    const res = store.create(store.model('@/course'), [{ section: 'course', data: { title: 99 } }])
+    const store = storeWith({ '@acme/course': COURSE })
+    const res = store.create(store.model('@acme/course'), [{ section: 'course', data: { title: 99 } }])
     expect(res.problem).toMatchObject({ status: 400, field: 'data.title' })
     expect(store.diagnostics).toHaveLength(0)
   })
 
   it('dedupes by (model, op, section, reason) and counts, so the list stays a map', () => {
-    const store = storeWith({ '@/course': { ...COURSE, migration_debt: ['content'] } })
-    const { entity, model, id } = entityOf(store, '@/course')
+    const store = storeWith({ '@acme/course': { ...COURSE, migration_debt: ['content'] } })
+    const { entity, model, id } = entityOf(store, '@acme/course')
     for (let i = 0; i < 5; i += 1) {
       store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('content'), data: { n: i } })
     }
@@ -324,10 +324,10 @@ describe('creating an entity — content is items, by section', () => {
   })
 
   it('a model with no declared sections is unchecked, not diagnosed', () => {
-    const store = storeWith({ '@/course': {} }, [
-      { model: '@/course', items: [{ section: 'anything', data: {} }] },
+    const store = storeWith({ '@acme/course': {} }, [
+      { model: '@acme/course', items: [{ section: 'anything', data: {} }] },
     ])
-    const { entity, model, id } = entityOf(store, '@/course')
+    const { entity, model, id } = entityOf(store, '@acme/course')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('anything'), data: { a: 1 } })
     expect(res.result).toBeTruthy()
     expect(store.diagnostics).toHaveLength(0)
@@ -359,8 +359,8 @@ describe('the registry lowering spelling (multiple: true)', () => {
   })
 
   it('still ENFORCES against a registry-form declaration', () => {
-    const store = storeWith({ '@/course': COURSE_REGISTRY_FORM })
-    const { entity, model, id } = entityOf(store, '@/course')
+    const store = storeWith({ '@acme/course': COURSE_REGISTRY_FORM })
+    const { entity, model, id } = entityOf(store, '@acme/course')
     const res = store.applyOp(entity, model, { kind: OP.create, [FIELD.section]: id('modules'), data: { level: 'Expert' } })
     // The first violation, named as the backend names it.
     expect(res.problem).toMatchObject({ status: 400, title: 'Validation', field: 'data.title' })

@@ -13,7 +13,7 @@
 
 import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
-import { ApiError } from './errors.js'
+import { ApiError, unqualifiedModel } from './errors.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
@@ -800,6 +800,8 @@ export class ApiClient {
   async readEntity({ schema, uuid, via, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'readEntity needs a uuid')
     if (!schema) throw ApiError.invalid('No Model', 'readEntity needs a schema — the backend reads an entity by its Model')
+    const unqualified = unqualifiedModel(schema, 'readEntity')
+    if (unqualified) throw unqualified
     const mark = this.ledger.mark()
     try {
       const [entity, sections] = await Promise.all([
@@ -853,6 +855,8 @@ export class ApiClient {
    */
   async listEntities({ schema, scope, limit, offset, all = false, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'listEntities needs a schema')
+    const unqualified = unqualifiedModel(schema, 'listEntities')
+    if (unqualified) throw unqualified
     const query = { [PARAM.model]: schema, [PARAM.scope]: scope, ...this._localeQuery() }
     let pageSize = null
     if (all) query[PARAM.paginate] = false
@@ -878,6 +882,8 @@ export class ApiClient {
    */
   sections(schema, signal) {
     if (!schema) return Promise.reject(ApiError.invalid('No Model', 'sections needs a schema'))
+    const unqualified = unqualifiedModel(schema, 'sections')
+    if (unqualified) return Promise.reject(unqualified)
     return this._definition(schema, signal).then((body) =>
       (Array.isArray(body?.[SCHEMA.sections]) ? body[SCHEMA.sections] : []).map((s) => ({
         id: s[SCHEMA.id],
@@ -939,6 +945,8 @@ export class ApiClient {
    */
   async readDefinition({ schema, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'readDefinition needs a schema')
+    const unqualified = unqualifiedModel(schema, 'readDefinition')
+    if (unqualified) throw unqualified
     return formOf(await this._definition(schema, signal))
   }
 
@@ -1019,6 +1027,8 @@ export class ApiClient {
    */
   async listChoices({ schema, field, section, parent, q, searchIn, cursor, limit, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'listChoices needs the schema whose field offers the choices')
+    const unqualified = unqualifiedModel(schema, 'listChoices')
+    if (unqualified) throw unqualified
     if (!field) throw ApiError.invalid('No Field', 'listChoices needs the field whose choices to list')
     const { sections } = await this.readDefinition({ schema, signal })
     const found = sections
@@ -1143,6 +1153,8 @@ export class ApiClient {
   async writeItems({ schema, uuid, ops, readback = false, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'writeItems needs a uuid')
     if (!schema) throw ApiError.invalid('No Model', 'writeItems needs a schema')
+    const unqualified = unqualifiedModel(schema, 'writeItems')
+    if (unqualified) throw unqualified
     const list = Array.isArray(ops) ? ops : [ops]
     if (list.length === 0) throw ApiError.invalid('No Ops', 'writeItems needs at least one op')
 
@@ -1206,6 +1218,8 @@ export class ApiClient {
    */
   async createEntity({ schema, items, data, unit, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'createEntity needs a schema')
+    const unqualified = unqualifiedModel(schema, 'createEntity')
+    if (unqualified) throw unqualified
     if (data !== undefined) {
       throw ApiError.invalid(
         'No Entity Data',
@@ -1257,6 +1271,8 @@ export class ApiClient {
    */
   async deleteEntity({ uuid, schema, revRefPolicy, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'deleteEntity needs a uuid')
+    const unqualified = unqualifiedModel(schema, 'deleteEntity')
+    if (unqualified) throw unqualified
     const answer = await this.request('DELETE', ROUTES.remove(uuid), {
       query: { [PARAM.revRefPolicy]: revRefPolicy },
       signal,

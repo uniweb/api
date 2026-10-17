@@ -48,6 +48,9 @@ tree-shaken per import, and inert on a site that declares no backend.
   to one entry is given and taken back under `/grants/*` by whoever administers it, and a
   create lands in a unit from `GET /unit/mine` (both 2026-10-15) — never the backend's own
   administration, which is the Admin link's.
+- **A type is named in full, `@scope/name`.** The client refuses `@/x` before sending
+  (`errors.js::unqualifiedModel`) and the mock refuses it in a seed — no backend holds one, since
+  `register` qualifies a foundation's types (2026-10-16). Tests and seeds use `@acme/…`.
 - **`@uniweb/core` is `workspace:~`** in `dependencies` — the framework's cascade rule; never
   `workspace:*` or `workspace:^` in a published section. *(This said `workspace:^` until
   2026-10-11, when every sibling range became a tilde.)*

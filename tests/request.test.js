@@ -19,7 +19,7 @@ function clientWith(content, handler) {
 describe('request — the one composition', () => {
   it('composes ${base}<path> — the base IS the API route space — with the query it is given, and nothing it is not', async () => {
     const client = clientWith(WITH_BACKEND, () => json(200, { ok: true }))
-    await client.request('GET', '/things', { query: { model: '@/thing', skip: undefined, via: null } })
+    await client.request('GET', '/things', { query: { model: '@acme/thing', skip: undefined, via: null } })
 
     const [url, init] = client.fetchFn.mock.calls[0]
     const u = parse(url)
@@ -29,7 +29,7 @@ describe('request — the one composition', () => {
     // No locale unless the caller adds one: the backend refuses a parameter a
     // route does not take (400 "Unexpected parameters: locale" on /auth/me).
     expect(u.searchParams.has('locale')).toBe(false)
-    expect(u.searchParams.get('model')).toBe('@/thing')
+    expect(u.searchParams.get('model')).toBe('@acme/thing')
     expect(u.searchParams.has('skip')).toBe(false)
     expect(u.searchParams.has('via')).toBe(false)
     expect(init.method).toBe('GET')
@@ -130,15 +130,15 @@ describe('load — read-through, deduplicated', () => {
 
   it('keys two schemas apart on one endpoint — a page reads several lists at once', () => {
     const client = clientWith(WITH_BACKEND, () => json(200, {}))
-    const lessons = client.cacheKey({ endpoint: '/entities', schema: '@/lesson' })
-    const quizzes = client.cacheKey({ endpoint: '/entities', schema: '@/quiz' })
+    const lessons = client.cacheKey({ endpoint: '/entities', schema: '@acme/lesson' })
+    const quizzes = client.cacheKey({ endpoint: '/entities', schema: '@acme/quiz' })
     expect(lessons).not.toBe(quizzes)
   })
 
   it('keys the pages of one list apart', () => {
     const client = clientWith(WITH_BACKEND, () => json(200, {}))
-    const first = client.cacheKey({ endpoint: '/entities', schema: '@/lesson', limit: 10, offset: 0 })
-    const second = client.cacheKey({ endpoint: '/entities', schema: '@/lesson', limit: 10, offset: 10 })
+    const first = client.cacheKey({ endpoint: '/entities', schema: '@acme/lesson', limit: 10, offset: 0 })
+    const second = client.cacheKey({ endpoint: '/entities', schema: '@acme/lesson', limit: 10, offset: 10 })
     expect(first).not.toBe(second)
   })
 

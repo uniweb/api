@@ -13,7 +13,7 @@
  * reaches the wire through `request` and keeps its state on the instance.
  */
 
-import { ApiError } from './errors.js'
+import { ApiError, unqualifiedModel } from './errors.js'
 import { GRANT, GRANTS, OFFERS, PARAM } from './wire.js'
 
 /** What an entry's access list is cached under — so a grant or a revoke can drop it. */
@@ -61,6 +61,8 @@ function idOf(to, name) {
 function entryOf({ schema, uuid } = {}, name) {
   if (!uuid) throw ApiError.invalid('No Entity', `${name} needs the uuid of an entry`)
   if (!schema) throw ApiError.invalid('No Model', `${name} needs a schema — the backend addresses an entry with its Model`)
+  const unqualified = unqualifiedModel(schema, name)
+  if (unqualified) throw unqualified
   return { schema, uuid }
 }
 

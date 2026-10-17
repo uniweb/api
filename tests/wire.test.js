@@ -35,8 +35,10 @@ describe('wire — the assumptions are a reviewable set', () => {
   // backend, and the invitation routes brought two more, both answered by the backend
   // on 2026-10-12. Since 2026-10-14 it holds `elevation-by-provider`: the backend names
   // that route and its answers, and not what `state` must be. A new assumption added
-  // without an entry here fails this — building ahead is paid for in bookkeeping.
-  const EXPECTED = ['elevation-by-provider']
+  // without an entry here fails this — building ahead is paid for in bookkeeping. Since
+  // 2026-10-16 it also holds `localized-json-is-a-locale-map`: the backend's design says a
+  // localized rich text is a map of documents read one language at a time; nobody measured it.
+  const EXPECTED = ['localized-json-is-a-locale-map', 'elevation-by-provider']
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)
@@ -129,7 +131,7 @@ describe('wire — the lane', () => {
   it('⛔ sends a Model\'s `@scope` raw — the backend does not percent-decode a path segment', () => {
     // Measured: `/models/%40acme/track` is a 404 where `/models/@acme/track` answers.
     expect(ROUTES.schema('@acme/track')).toBe('/models/@acme/track')
-    expect(ROUTES.schema('@/track')).toBe('/models/@/track')
+    expect(ROUTES.schema('@acme/track')).toBe('/models/@acme/track')
   })
 })
 

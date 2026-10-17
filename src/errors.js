@@ -139,3 +139,23 @@ export class ApiError extends Error {
     return new ApiError({ status: 0, title, detail, kind: 'invalid' })
   }
 }
+
+/**
+ * ⛔ A TYPE IS NAMED IN FULL, `@scope/name` — the name `register` stores it under. `@/x` is the
+ * foundation-relative spelling the build and a push qualify in `meta.js` and `queries.yml`;
+ * nothing qualifies a name handed to this package, because a foundation's scope never reaches its
+ * runtime. A backend matches the exact name, so `@/x` would be a `404`, and a read would look like
+ * `absent`. Refused before anything is sent. ⛔ Until 2026-10-16 it was sent, and the mock, which
+ * also served whatever names its seed gave, answered it.
+ *
+ * @param {*} schema - the type a call names
+ * @param {string} name - the function or hook it was handed to
+ * @returns {ApiError|null} the refusal, or null for a name this package sends
+ */
+export function unqualifiedModel(schema, name) {
+  if (typeof schema !== 'string' || !schema.startsWith('@/')) return null
+  return ApiError.invalid(
+    'Model Not Named in Full',
+    `${name} names the type ${schema} — name it in full, @<scope>/${schema.slice(2)}, the scope your foundation is registered under. @/ is the spelling of meta.js and queries.yml, which the build qualifies; a call is sent as written`,
+  )
+}

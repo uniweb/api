@@ -113,6 +113,12 @@ function unknownPermission(permission, { title = 'Validation', prefix = '' } = {
 
 /** A floor is `read` or `edit`, for every Model or per Model — or none. */
 function checkFloor(floor, where) {
+  if (floor != null && typeof floor === 'object') {
+    const unqualified = Object.keys(floor).filter((name) => name.startsWith('@/'))
+    if (unqualified.length) {
+      throw new Error(`[uniweb/api mock] ${where} names ${unqualified.join(', ')}: a Model is named in full, @scope/name, as the seed's schemas are`)
+    }
+  }
   const floors = floor != null && typeof floor === 'object' ? Object.values(floor) : [floor]
   for (const f of floors) {
     if (f != null && !['read', 'edit'].includes(f)) {
@@ -190,17 +196,24 @@ function sectionKind(section) {
  * A `{ locale: value }` map — a plain object, never an array (a localized list's
  * value), and never the value of a field whose OWN type is an object.
  *
- * ⛔ A `json` field's value is a plain object too — a richtext body is a ProseMirror
- * document — and read as a map it has no `en`, so the body was DELETED from every
- * read that carried `?locale=`, which the client sends on every browser read.
- * Measured 2026-09-24 on a lesson whose `content` section became declared. The
- * write checker (`schema-shape.js`) takes any object in such a field as THE value,
- * so the projection reads it the same way: for these types the map shape is not
- * knowable, and a value is a value.
+ * ⭐ A `json` field's value is an object either way, so for one the map is told by its
+ * keys: languages (and the `@` metadata key), never a document's own `type`. A localized
+ * rich text holds one document per language — `{ en: doc, fr: doc }` — and a read in a
+ * language answers that language's, as for a text field (`ASSUMPTIONS`,
+ * `localized-json-is-a-locale-map`). ⛔ A document is a value: until 2026-09-24 a bare one
+ * was read as a map with no `en` and DELETED from every read that carried `?locale=`,
+ * which the client sends on every browser read; and from then until 2026-10-16 no json
+ * value was a map, so a rich text in two languages came back whole to a component that
+ * reads one.
  */
-const OBJECT_TYPED = new Set(['json', 'object', 'group'])
-const isLocaleMap = (field, value) =>
-  value != null && typeof value === 'object' && !Array.isArray(value) && !OBJECT_TYPED.has(field?.type)
+const OBJECT_TYPED = new Set(['object', 'group'])
+const LOCALE_KEY = /^(@|[a-z]{2,3}(-[A-Za-z0-9]{2,8})*)$/
+const isLocaleMap = (field, value) => {
+  if (value == null || typeof value !== 'object' || Array.isArray(value) || OBJECT_TYPED.has(field?.type)) return false
+  if (field?.type !== 'json') return true
+  const keys = Object.keys(value)
+  return value.type !== 'doc' && keys.length > 0 && keys.every((key) => LOCALE_KEY.test(key))
+}
 
 export class MockStore {
   /**
@@ -208,7 +221,10 @@ export class MockStore {
    * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, operator? }`.
    *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
    *   also marks the operator.)
-   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, migration_debt? } }`.
+   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable?, migration_debt? } }`.
+   *   ⛔ Named in full, as a backend holds a Model — a `@/` name is refused.
+   *   `grantable: false`, as a data schema declares it, gives no access to an entry of it: a
+   *   grant is refused `403` (`model_not_grantable`).
    *   ⛔ No `creatable_by` — retired 2026-09-23, Models are open; a seed carrying it is refused.
    *   `sections` is the LOWERED sections map (`{ [name]: { kind | multiple, brief, append_only, fields } }`)
    *   as the framework's normalizer produces it; with it, writes are shape-checked
@@ -250,6 +266,17 @@ export class MockStore {
           `[uniweb/api mock] ${name}: creatable_by is retired — Models are open: anyone signed in may create entries of any Model, and who may see or edit an entry is decided by the entry. Remove it.`
         )
       }
+    }
+    // ⛔ A SEEDED MODEL IS NAMED IN FULL, as a backend holds it: `register` stores a foundation's
+    // types under its scope, so no backend holds a `@/` name, and a call naming one finds nothing
+    // there. ⛔ Until 2026-10-16 the mock served whatever names its seed gave, so a seed and its
+    // calls written `@/x` agreed here and failed on the first real backend.
+    const unqualified = [...new Set([...Object.keys(this.schemas), ...(seed.entities || []).map((e) => e?.model)])]
+      .filter((name) => typeof name === 'string' && name.startsWith('@/'))
+    if (unqualified.length) {
+      throw new Error(
+        `[uniweb/api mock] ${unqualified.join(', ')}: a Model is named in full, @scope/name — the name register stores your foundation's types under. No backend holds a @/ name; seed ${unqualified.map((n) => `@<scope>/${n.slice(2)}`).join(', ')} and call it by that name.`
+      )
     }
     checkFloor(seed.memberFloor, 'memberFloor')
     /**

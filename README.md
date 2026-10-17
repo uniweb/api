@@ -245,6 +245,16 @@ the item.
 Its `absent` covers both not-found and not-permitted, on purpose: render your paywall
 or sign-in prompt on it and never say "deleted".
 
+**Name a type in full** — `@acme/lesson`, the scope your foundation is registered under.
+`@/lesson` is right in `meta.js` and `queries.yml`, where the build qualifies it, but a call
+is sent as written and a backend matches the exact name, so the package refuses a `@/` name
+before sending anything (`kind: 'invalid'`).
+
+**A read is in the visitor's language.** Each localized field comes back as one value: the
+page's language, else the site's — a string for a text field, one document for a rich text
+(a `json` field with `format: prosemirror`, which holds a document per language,
+`{ en: doc, fr: doc }`). A field with neither language is left out of the answer.
+
 ### A Model's definition — what a form is built from
 
 ```jsx
@@ -588,8 +598,9 @@ covers what lands in it, for them and for those placed in the units below it. Th
 models no roles but the operator's: no reader or editor held at a unit, and nothing a
 reference opens.
 
-Write a seed's schemas as you write them for a backend — `type: 'int'`, `multiple: true`,
-`options:` — and the mock's definition answers what a backend keeps of them, so a key no
+Write a seed's schemas as you write them for a backend — named in full (`@acme/track`; a `@/`
+name, which no backend holds, is refused when the mock starts), `type: 'int'`, `multiple: true`,
+`grantable: false` for a type whose entries are never shared, `options:` — and the mock's definition answers what a backend keeps of them, so a key no
 backend takes is left out of it (a backend refuses it when you register). Seed a list's
 choices as items of a lists entry, each item holding the items that sit under it:
 

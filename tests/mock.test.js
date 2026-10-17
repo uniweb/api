@@ -39,27 +39,27 @@ const TRACK = '01926d5e-0000-7000-8000-00000000a001'
 describe('the client against the mock — reading', () => {
   it('refuses an anonymous list, then answers once signed in: rows are summaries', async () => {
     const { client } = stack()
-    await expect(client.listEntities({ schema: '@/track' })).rejects.toMatchObject({ kind: 'auth' })
+    await expect(client.listEntities({ schema: '@acme/track' })).rejects.toMatchObject({ kind: 'auth' })
 
     await signIn(client, 'organiser')
-    const { records, matched, hasMore } = await client.listEntities({ schema: '@/track' })
+    const { records, matched, hasMore } = await client.listEntities({ schema: '@acme/track' })
     expect(matched).toBe(2)
     expect(hasMore).toBe(false)
     expect(records.map((r) => r.brief.name).sort()).toEqual(['Main hall', 'Workshops'])
     // A row carries no items — read one entity for those.
     expect('items' in records[0]).toBe(false)
     // The seeded programme is the operator's own, so its rows are `owner`.
-    expect(records[0]).toMatchObject({ model_name: '@/track', via: 'owner' })
+    expect(records[0]).toMatchObject({ model_name: '@acme/track', via: 'owner' })
   })
 
   it('⭐ lets the operator read a member\'s through its role — and change nothing of it until it elevates', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    const theirs = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    const theirs = await client.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await client.signOut()
     await signIn(client, 'organiser')
-    expect((await client.listEntities({ schema: '@/attendance' })).records.map((r) => r.via)).toEqual(['rbac'])
-    const seen = await client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })
+    expect((await client.listEntities({ schema: '@acme/attendance' })).records.map((r) => r.via)).toEqual(['rbac'])
+    const seen = await client.readEntity({ schema: '@acme/attendance', uuid: theirs.uuid })
     expect(seen.entity.hydrated.entity.brief).toEqual({ who: 'Ada' })
     expect(seen.entity.can_edit).toBe(false)
     await expect(client.deleteEntity({ uuid: theirs.uuid })).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'delete' } })
@@ -69,9 +69,9 @@ describe('the client against the mock — reading', () => {
     // Ruled 2026-10-14: closing a Model gates creating its entries, never reading its
     // definition. A member reads the operator's programme Model, though none of its entries.
     const { client } = stack()
-    await expect(client.sections('@/track')).rejects.toMatchObject({ kind: 'auth', status: 401 })
+    await expect(client.sections('@acme/track')).rejects.toMatchObject({ kind: 'auth', status: 401 })
     await signIn(client, 'attendee')
-    const sections = await client.sections('@/track')
+    const sections = await client.sections('@acme/track')
     expect(sections.length).toBeGreaterThan(0)
     expect(sections.every((s) => typeof s.id === 'number' && typeof s.name === 'string')).toBe(true)
   })
@@ -79,30 +79,30 @@ describe('the client against the mock — reading', () => {
   it('⭐ gives a member nothing of anyone else\'s — sharing is explicit', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    await expect(client.listEntities({ schema: '@/track' })).resolves.toMatchObject({ records: [], matched: 0 })
+    await expect(client.listEntities({ schema: '@acme/track' })).resolves.toMatchObject({ records: [], matched: 0 })
     // Not found and not permitted are one answer.
-    await expect(client.readEntity({ schema: '@/track', uuid: TRACK })).resolves.toEqual({ status: 'absent', entity: null })
+    await expect(client.readEntity({ schema: '@acme/track', uuid: TRACK })).resolves.toEqual({ status: 'absent', entity: null })
   })
 
   it('pages: `matched` is the page, and a full page may have more', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    const page = await client.listEntities({ schema: '@/track', limit: 1, offset: 0 })
+    const page = await client.listEntities({ schema: '@acme/track', limit: 1, offset: 0 })
     expect(page.records).toHaveLength(1)
     expect(page.matched).toBe(1)
     expect(page.hasMore).toBe(true)
-    const last = await client.listEntities({ schema: '@/track', limit: 1, offset: 1 })
+    const last = await client.listEntities({ schema: '@acme/track', limit: 1, offset: 1 })
     expect(last.hasMore).toBe(true)
-    const past = await client.listEntities({ schema: '@/track', limit: 1, offset: 2 })
+    const past = await client.listEntities({ schema: '@acme/track', limit: 1, offset: 2 })
     expect(past).toMatchObject({ records: [], matched: 0, hasMore: false })
   })
 
   it('reads one entity: content is items, the brief is the summary, can_edit is the gate\'s answer', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    const { status, entity } = await client.readEntity({ schema: '@/track', uuid: TRACK })
+    const { status, entity } = await client.readEntity({ schema: '@acme/track', uuid: TRACK })
     expect(status).toBe('ready')
-    expect(entity.model_name).toBe('@/track')
+    expect(entity.model_name).toBe('@acme/track')
     expect(entity.can_edit).toBe(true)
     expect(entity.hydrated.entity.brief).toEqual({ name: 'Main hall' })
     expect(entity.hydrated.items.map((i) => i.data.title).filter(Boolean)).toEqual([
@@ -129,7 +129,7 @@ describe('the client against the mock — reading', () => {
     const seed = {
       accounts: [{ username: 'organiser', password: 'organiser', operator: true }],
       schemas: {
-        '@/course': {
+        '@acme/course': {
           sections: {
             course: {
               kind: 'single',
@@ -146,14 +146,14 @@ describe('the client against the mock — reading', () => {
       entities: [
         {
           uuid: COURSE,
-          model: '@/course',
+          model: '@acme/course',
           items: [{ section: 'course', data: { title: { en: 'Open Water', fr: 'Eau libre' }, outcomes: ['Plan a dive', 'Clear a mask'], level: 'Beginner' } }],
         },
       ],
     }
     const { client } = stack({ seed })
     await signIn(client, 'organiser')
-    const { entity } = await client.readEntity({ schema: '@/course', uuid: COURSE })
+    const { entity } = await client.readEntity({ schema: '@acme/course', uuid: COURSE })
     // The client asked for `en`: the map is projected, the list and the plain string are values.
     expect(entity.hydrated.entity.brief).toEqual({ title: 'Open Water', outcomes: ['Plan a dive', 'Clear a mask'], level: 'Beginner' })
     expect(entity.hydrated.items[0].data.outcomes).toEqual(['Plan a dive', 'Clear a mask'])
@@ -172,7 +172,7 @@ describe('the client against the mock — reading', () => {
     const seed = {
       accounts: [{ username: 'organiser', password: 'organiser', operator: true }],
       schemas: {
-        '@/lesson': {
+        '@acme/lesson': {
           sections: {
             lesson: { kind: 'single', brief: true, fields: { title: { type: 'string', localized: true } } },
             content: { kind: 'single', fields: { content: { type: 'json', localized: true, format: 'prosemirror' } } },
@@ -182,7 +182,7 @@ describe('the client against the mock — reading', () => {
       entities: [
         {
           uuid: LESSON,
-          model: '@/lesson',
+          model: '@acme/lesson',
           items: [
             { section: 'lesson', data: { title: { en: 'Breathing', fr: 'Respirer' } } },
             { section: 'content', data: { content: doc('Breathe slowly.') } },
@@ -192,30 +192,30 @@ describe('the client against the mock — reading', () => {
     }
     const { client } = stack({ seed })
     await signIn(client, 'organiser')
-    const first = await client.readEntity({ schema: '@/lesson', uuid: LESSON })
+    const first = await client.readEntity({ schema: '@acme/lesson', uuid: LESSON })
     expect(first.entity.hydrated.entity.brief).toEqual({ title: 'Breathing' })
     const body = first.entity.hydrated.items.find((i) => i.section === 'content')
     expect(body.data.content).toEqual(doc('Breathe slowly.'))
     // The editor's save: a bare document, as every write is.
-    await client.writeItems({ schema: '@/lesson', uuid: LESSON, ops: { kind: 'update', item_id: body.id, data: { content: doc('Exhale fully.') } } })
-    const again = await client.readEntity({ schema: '@/lesson', uuid: LESSON })
+    await client.writeItems({ schema: '@acme/lesson', uuid: LESSON, ops: { kind: 'update', item_id: body.id, data: { content: doc('Exhale fully.') } } })
+    const again = await client.readEntity({ schema: '@acme/lesson', uuid: LESSON })
     expect(again.entity.hydrated.items.find((i) => i.section === 'content').data.content).toEqual(doc('Exhale fully.'))
   })
 
   it('answers not-found as `absent`, and a path id that is not a UUID as the backend does — 400', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    await expect(client.readEntity({ schema: '@/track', uuid: '01926d5e-0000-7000-8000-0000000000ff' })).resolves.toEqual({
+    await expect(client.readEntity({ schema: '@acme/track', uuid: '01926d5e-0000-7000-8000-0000000000ff' })).resolves.toEqual({
       status: 'absent',
       entity: null,
     })
-    await expect(client.readEntity({ schema: '@/track', uuid: 'track-main' })).rejects.toMatchObject({ kind: 'invalid' })
+    await expect(client.readEntity({ schema: '@acme/track', uuid: 'track-main' })).rejects.toMatchObject({ kind: 'invalid' })
   })
 
   it('lists only the viewer\'s own with `scope: "mine"`', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    expect((await client.listEntities({ schema: '@/track', scope: 'mine' })).records).toEqual([])
+    expect((await client.listEntities({ schema: '@acme/track', scope: 'mine' })).records).toEqual([])
   })
 })
 
@@ -224,12 +224,12 @@ describe('the client against the mock — writing', () => {
     const { client } = stack()
 
     await signIn(client, 'attendee')
-    const mine = await client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'My notes' } }] })
-    expect(mine).toMatchObject({ model_name: '@/track', brief: { name: 'My notes' } })
+    const mine = await client.createEntity({ schema: '@acme/track', items: [{ section: 'track', data: { name: 'My notes' } }] })
+    expect(mine).toMatchObject({ model_name: '@acme/track', brief: { name: 'My notes' } })
     // What protects the programme is who may edit an entry, never who may create one.
     await expect(
       client.writeItems({
-        schema: '@/track',
+        schema: '@acme/track',
         uuid: '01926d5e-0000-7000-8000-00000000a001',
         ops: { kind: 'create', section: 'sessions', data: { title: 'Sneaky' } },
       }),
@@ -237,12 +237,12 @@ describe('the client against the mock — writing', () => {
 
     await client.signOut()
     await signIn(client, 'organiser')
-    const made = await client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'Side room' } }] })
-    expect(made).toMatchObject({ model_name: '@/track', brief: { name: 'Side room' } })
+    const made = await client.createEntity({ schema: '@acme/track', items: [{ section: 'track', data: { name: 'Side room' } }] })
+    expect(made).toMatchObject({ model_name: '@acme/track', brief: { name: 'Side room' } })
   })
 
   it('⛔ refuses a seed that still declares creatable_by — it is retired', () => {
-    expect(() => createMockBackend({ seed: { schemas: { '@/track': { creatable_by: 'unit_members' } } } })).toThrow(
+    expect(() => createMockBackend({ seed: { schemas: { '@acme/track': { creatable_by: 'unit_members' } } } })).toThrow(
       /creatable_by is retired — Models are open/,
     )
   })
@@ -250,21 +250,21 @@ describe('the client against the mock — writing', () => {
   it('creates with items by section name, then writes an item by section name — the id is resolved', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    const made = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    const made = await client.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     const written = await client.writeItems({
-      schema: '@/attendance',
+      schema: '@acme/attendance',
       uuid: made.uuid,
       ops: { kind: 'create', section: 'checkins', data: { session: 'keynote', at: 'door A' } },
     })
     expect(Number.isInteger(written.item_id)).toBe(true)
-    const { entity } = await client.readEntity({ schema: '@/attendance', uuid: made.uuid })
+    const { entity } = await client.readEntity({ schema: '@acme/attendance', uuid: made.uuid })
     expect(entity.hydrated.items.map((i) => i.data)).toEqual([{ who: 'Ada' }, { session: 'keynote', at: 'door A' }])
   })
 
   it('guards the FIRST edit with the token from the read — and rebases a conflict without retrying', async () => {
     const { client, mock } = stack()
     await signIn(client, 'organiser')
-    const { entity } = await client.readEntity({ schema: '@/track', uuid: TRACK })
+    const { entity } = await client.readEntity({ schema: '@acme/track', uuid: TRACK })
     const keynote = entity.hydrated.items.find((i) => i.data.title === 'Opening keynote')
 
     // Someone else edits it after our read.
@@ -273,20 +273,20 @@ describe('the client against the mock — writing', () => {
     stored.updated_at = mock.store.clock()
 
     const err = await client
-      .writeItems({ schema: '@/track', uuid: TRACK, ops: { kind: 'update', item_id: keynote.id, data: { ...keynote.data, minutes: 50 } } })
+      .writeItems({ schema: '@acme/track', uuid: TRACK, ops: { kind: 'update', item_id: keynote.id, data: { ...keynote.data, minutes: 50 } } })
       .catch((e) => e)
     expect(err).toBeInstanceOf(ApiError)
     expect(err.kind).toBe('conflict')
     // Rebased onto the truth: the next attempt — a decision the caller makes — lands.
     await expect(
-      client.writeItems({ schema: '@/track', uuid: TRACK, ops: { kind: 'update', item_id: keynote.id, data: { ...keynote.data, minutes: 50 } } }),
+      client.writeItems({ schema: '@acme/track', uuid: TRACK, ops: { kind: 'update', item_id: keynote.id, data: { ...keynote.data, minutes: 50 } } }),
     ).resolves.toMatchObject({ item_id: keynote.id })
   })
 
   it('names the stale item of a batch, so the rebase lands on it — the fresh op is untouched', async () => {
     const { client, mock } = stack()
     await signIn(client, 'organiser')
-    const { entity } = await client.readEntity({ schema: '@/track', uuid: TRACK })
+    const { entity } = await client.readEntity({ schema: '@acme/track', uuid: TRACK })
     const [first, second] = entity.hydrated.items.filter((i) => i.data.title)
     const tokenOfFirst = client.ledger.get(first.id)
 
@@ -299,35 +299,35 @@ describe('the client against the mock — writing', () => {
       { kind: 'update', item_id: first.id, data: { ...first.data, minutes: 50 } },
       { kind: 'update', item_id: second.id, data: { ...second.data, minutes: 40 } },
     ]
-    const err = await client.writeItems({ schema: '@/track', uuid: TRACK, ops }).catch((e) => e)
+    const err = await client.writeItems({ schema: '@acme/track', uuid: TRACK, ops }).catch((e) => e)
     expect(err).toMatchObject({ kind: 'conflict', extensions: { item_id: second.id } })
     expect(client.ledger.get(first.id)).toBe(tokenOfFirst)
     expect(client.ledger.get(second.id)).toBe(stored.updated_at)
     // The whole batch rolled back, so the caller's next attempt of it lands.
-    await expect(client.writeItems({ schema: '@/track', uuid: TRACK, ops })).resolves.toMatchObject({ results: [{}, {}] })
+    await expect(client.writeItems({ schema: '@acme/track', uuid: TRACK, ops })).resolves.toMatchObject({ results: [{}, {}] })
   })
 
   it('reads an entity named under another Model as absent — the Model is part of the address', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    await expect(client.readEntity({ schema: '@/attendance', uuid: TRACK })).resolves.toEqual({ status: 'absent', entity: null })
+    await expect(client.readEntity({ schema: '@acme/attendance', uuid: TRACK })).resolves.toEqual({ status: 'absent', entity: null })
   })
 
   it('orders by position, server-side, with no number from the client', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
     const titles = async () =>
-      (await client.readEntity({ schema: '@/track', uuid: TRACK })).entity.hydrated.items.map((i) => i.data.title).filter(Boolean)
+      (await client.readEntity({ schema: '@acme/track', uuid: TRACK })).entity.hydrated.items.map((i) => i.data.title).filter(Boolean)
     const ids = Object.fromEntries(
-      (await client.readEntity({ schema: '@/track', uuid: TRACK })).entity.hydrated.items.map((i) => [i.data.title, i.id]),
+      (await client.readEntity({ schema: '@acme/track', uuid: TRACK })).entity.hydrated.items.map((i) => [i.data.title, i.id]),
     )
     client.invalidate(() => true)
 
-    await client.writeItems({ schema: '@/track', uuid: TRACK, ops: { kind: 'move', item_id: ids['Closing panel'], position: 'first' } })
+    await client.writeItems({ schema: '@acme/track', uuid: TRACK, ops: { kind: 'move', item_id: ids['Closing panel'], position: 'first' } })
     expect(await titles()).toEqual(['Closing panel', 'Opening keynote', 'Designing for the edge'])
 
     await client.writeItems({
-      schema: '@/track',
+      schema: '@acme/track',
       uuid: TRACK,
       ops: { kind: 'move', item_id: ids['Closing panel'], position: { after: ids['Opening keynote'] } },
     })
@@ -337,9 +337,9 @@ describe('the client against the mock — writing', () => {
   it('⭐ enforces append_only — a check-in can be added and moved, and then not unmade', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    const made = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'me' } }] })
+    const made = await client.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'me' } }] })
     const added = await client.writeItems({
-      schema: '@/attendance',
+      schema: '@acme/attendance',
       uuid: made.uuid,
       ops: { kind: 'create', section: 'checkins', data: { session: 'keynote' } },
     })
@@ -348,11 +348,11 @@ describe('the client against the mock — writing', () => {
     // and reported as the rule it is, never as someone else's edit.
     for (const op of [{ kind: 'update', data: {} }, { kind: 'delete' }]) {
       await expect(
-        client.writeItems({ schema: '@/attendance', uuid: made.uuid, ops: { ...op, item_id: added.item_id } }),
+        client.writeItems({ schema: '@acme/attendance', uuid: made.uuid, ops: { ...op, item_id: added.item_id } }),
       ).rejects.toMatchObject({ status: 409, title: 'Append-Only Section', kind: 'rule' })
     }
     await expect(
-      client.writeItems({ schema: '@/attendance', uuid: made.uuid, ops: { kind: 'move', item_id: added.item_id, position: 'first' } }),
+      client.writeItems({ schema: '@acme/attendance', uuid: made.uuid, ops: { kind: 'move', item_id: added.item_id, position: 'first' } }),
     ).resolves.toBeTruthy()
   })
 
@@ -365,7 +365,7 @@ describe('the client against the mock — writing', () => {
 
     await expect(
       client.writeItems({
-        schema: '@/track',
+        schema: '@acme/track',
         uuid: TRACK,
         ops: [
           { kind: 'update', item_id: first.id, data: { ...first.data, title: 'Changed' } },
@@ -380,11 +380,11 @@ describe('the client against the mock — writing', () => {
   it('forgets a deleted item by the op that named it — its result names none', async () => {
     const { client } = stack()
     await signIn(client, 'organiser')
-    const { entity } = await client.readEntity({ schema: '@/track', uuid: TRACK })
+    const { entity } = await client.readEntity({ schema: '@acme/track', uuid: TRACK })
     const panel = entity.hydrated.items.find((i) => i.data.title === 'Closing panel')
     expect(client.ledger.get(panel.id)).toBeTruthy()
 
-    const answer = await client.writeItems({ schema: '@/track', uuid: TRACK, ops: { kind: 'delete', item_id: panel.id } })
+    const answer = await client.writeItems({ schema: '@acme/track', uuid: TRACK, ops: { kind: 'delete', item_id: panel.id } })
     expect(answer.item_id).toBeNull()
     expect(client.ledger.get(panel.id)).toBeNull()
   })
@@ -393,34 +393,34 @@ describe('the client against the mock — writing', () => {
     // A site's api service lets members read the operator's courses while each
     // member's progress stays private. A global floor cannot say that: it opened
     // every Model, so every learner read every learner's records (measured
-    // 2026-09-22 — a learner listing `@/enrollment` got the whole roster).
+    // 2026-09-22 — a learner listing `@acme/enrollment` got the whole roster).
     const seed = {
-      memberFloor: { '@/course': 'read' },
+      memberFloor: { '@acme/course': 'read' },
       accounts: [
         { username: 'organiser', password: 'organiser', operator: true },
         { username: 'ada', password: 'ada' },
         { username: 'bo', password: 'bo' },
       ],
       schemas: {
-        '@/course': { sections: { course: { kind: 'single', brief: true, fields: { title: { type: 'string' } } } } },
-        '@/progress': { sections: { progress: { kind: 'single', brief: true, fields: { done: { type: 'int' } } } } },
+        '@acme/course': { sections: { course: { kind: 'single', brief: true, fields: { title: { type: 'string' } } } } },
+        '@acme/progress': { sections: { progress: { kind: 'single', brief: true, fields: { done: { type: 'int' } } } } },
       },
     }
     const { client } = stack({ seed })
     await signIn(client, 'organiser')
-    const course = await client.createEntity({ schema: '@/course', items: [{ section: 'course', data: { title: 'Open Water' } }] })
+    const course = await client.createEntity({ schema: '@acme/course', items: [{ section: 'course', data: { title: 'Open Water' } }] })
     await client.signOut()
     await signIn(client, 'ada')
-    const adas = await client.createEntity({ schema: '@/progress', items: [{ section: 'progress', data: { done: 3 } }] })
+    const adas = await client.createEntity({ schema: '@acme/progress', items: [{ section: 'progress', data: { done: 3 } }] })
     await client.signOut()
     await signIn(client, 'bo')
     // The floored Model: bo reads the operator's course.
-    await expect(client.readEntity({ schema: '@/course', uuid: course.uuid })).resolves.toMatchObject({ status: 'ready' })
+    await expect(client.readEntity({ schema: '@acme/course', uuid: course.uuid })).resolves.toMatchObject({ status: 'ready' })
     // The unfloored one: ada's progress is not bo's to see, in a read or a list.
-    await expect(client.readEntity({ schema: '@/progress', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
-    expect((await client.listEntities({ schema: '@/progress' })).records).toEqual([])
+    await expect(client.readEntity({ schema: '@acme/progress', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    expect((await client.listEntities({ schema: '@acme/progress' })).records).toEqual([])
     // And a floor value that is not read/edit is refused, per Model too.
-    expect(() => createMockBackend({ seed: { ...seed, memberFloor: { '@/course': 'all' } } })).toThrow(/memberFloor/)
+    expect(() => createMockBackend({ seed: { ...seed, memberFloor: { '@acme/course': 'all' } } })).toThrow(/memberFloor/)
   })
 
   it('keeps members\' entities private to them by default — and a service that chose a floor shares them', async () => {
@@ -436,7 +436,7 @@ describe('the client against the mock — writing', () => {
         { username: 'bo', password: 'bo' },
       ],
       schemas: {
-        '@/attendance': {
+        '@acme/attendance': {
           sections: {
             attendance: { kind: 'single', brief: true, fields: { who: { type: 'string' } } },
             checkins: { kind: 'multi', append_only: true, fields: { at: { type: 'string' } } },
@@ -447,28 +447,28 @@ describe('the client against the mock — writing', () => {
 
     const privately = stack({ seed: seed(undefined) }).client
     await signIn(privately, 'ada')
-    const adas = await privately.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    const adas = await privately.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await privately.signOut()
     await signIn(privately, 'bo')
-    await expect(privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
-    expect((await privately.listEntities({ schema: '@/attendance' })).records).toEqual([])
+    await expect(privately.readEntity({ schema: '@acme/attendance', uuid: adas.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    expect((await privately.listEntities({ schema: '@acme/attendance' })).records).toEqual([])
     await expect(
-      privately.writeItems({ schema: '@/attendance', uuid: adas.uuid, ops: { kind: 'create', section: 'checkins', data: { at: 'x' } } }),
+      privately.writeItems({ schema: '@acme/attendance', uuid: adas.uuid, ops: { kind: 'create', section: 'checkins', data: { at: 'x' } } }),
     ).rejects.toMatchObject({ kind: 'forbidden', extensions: { op: 'edit' } })
     await privately.signOut()
     await signIn(privately, 'organiser')
-    expect((await privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).entity.can_edit).toBe(false)
+    expect((await privately.readEntity({ schema: '@acme/attendance', uuid: adas.uuid })).entity.can_edit).toBe(false)
     delete globalThis.uniweb
 
     const shared = stack({ seed: seed('read') }).client
     await signIn(shared, 'ada')
-    const adas2 = await shared.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    const adas2 = await shared.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await shared.signOut()
     await signIn(shared, 'bo')
-    const seen = await shared.readEntity({ schema: '@/attendance', uuid: adas2.uuid })
+    const seen = await shared.readEntity({ schema: '@acme/attendance', uuid: adas2.uuid })
     expect(seen.entity.hydrated.entity.brief).toEqual({ who: 'Ada' })
     expect(seen.entity.can_edit).toBe(false)
-    expect((await shared.listEntities({ schema: '@/attendance' })).records.map((r) => r.via)).toEqual(['unit_member'])
+    expect((await shared.listEntities({ schema: '@acme/attendance' })).records.map((r) => r.via)).toEqual(['unit_member'])
   })
 })
 
@@ -760,7 +760,7 @@ describe('the client against the mock — elevation', () => {
   async function membersEntry() {
     const { client, mock } = stack()
     await signIn(client, 'attendee')
-    const theirs = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    const theirs = await client.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await client.signOut()
     await signIn(client, 'organiser')
     return { client, mock, theirs }
@@ -769,17 +769,17 @@ describe('the client against the mock — elevation', () => {
   it('⭐ the operator reads a member\'s, elevates, removes it — and lowered, changes nothing again', async () => {
     const { client, theirs } = await membersEntry()
     expect(client.session.viewer.elevation).toEqual({ available: true, until: null })
-    await expect(client.deleteEntity({ uuid: theirs.uuid, schema: '@/attendance' })).rejects.toMatchObject({ kind: 'forbidden' })
+    await expect(client.deleteEntity({ uuid: theirs.uuid, schema: '@acme/attendance' })).rejects.toMatchObject({ kind: 'forbidden' })
 
     const { until } = await client.elevate({ password: 'organiser' })
     expect(Date.parse(until) - Date.now()).toBeGreaterThan(14 * 60_000)
     expect(client.session.viewer).toMatchObject({ roles: [{ role: 'system_admin', scope_unit_id: null }], elevation: { available: true, until } })
-    expect((await client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).entity.can_edit).toBe(true)
+    expect((await client.readEntity({ schema: '@acme/attendance', uuid: theirs.uuid })).entity.can_edit).toBe(true)
 
     const another = await (async () => {
       await client.signOut()
       await signIn(client, 'attendee')
-      const made = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Bo' } }] })
+      const made = await client.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Bo' } }] })
       await client.signOut()
       await signIn(client, 'organiser')
       return made
@@ -787,8 +787,8 @@ describe('the client against the mock — elevation', () => {
     // A new sign-in is a new session: it reads until it is elevated again.
     expect(client.session.viewer.elevation.until).toBeNull()
     await client.elevate({ password: 'organiser' })
-    await client.deleteEntity({ uuid: theirs.uuid, schema: '@/attendance' })
-    await expect(client.readEntity({ schema: '@/attendance', uuid: theirs.uuid })).resolves.toEqual({ status: 'absent', entity: null })
+    await client.deleteEntity({ uuid: theirs.uuid, schema: '@acme/attendance' })
+    await expect(client.readEntity({ schema: '@acme/attendance', uuid: theirs.uuid })).resolves.toEqual({ status: 'absent', entity: null })
 
     await client.lower()
     expect(client.session.viewer).toMatchObject({ roles: [{ role: 'content_reader', scope_unit_id: null }], elevation: { until: null } })
@@ -806,8 +806,8 @@ describe('the client against the mock — elevation', () => {
     const { client } = stack()
     await signIn(client, 'attendee')
     expect(client.session.viewer.elevation).toEqual({ available: false, until: null })
-    const mine = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
-    expect((await client.readEntity({ schema: '@/attendance', uuid: mine.uuid })).entity.can_edit).toBe(true)
+    const mine = await client.createEntity({ schema: '@acme/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
+    expect((await client.readEntity({ schema: '@acme/attendance', uuid: mine.uuid })).entity.can_edit).toBe(true)
   })
 
   it('closes the window on its own', async () => {
@@ -842,14 +842,14 @@ describe('the mock is as strict as the backend', () => {
 
   it('refuses a query parameter a route does not take', async () => {
     const mock = createMockBackend({ signedInAs: 'attendee' })
-    const res = await call(mock, '/_api/entities?model=@/track&sort=title')
+    const res = await call(mock, '/_api/entities?model=@acme/track&sort=title')
     expect(res.status).toBe(400)
     expect((await res.json()).detail).toBe('Unexpected parameters: sort')
   })
 
   it('refuses an item create that names its section — the item route takes section_id', async () => {
     const mock = createMockBackend({ signedInAs: 'organiser' })
-    const res = await call(mock, `/_api/entities/${TRACK}/items?model=@/track`, {
+    const res = await call(mock, `/_api/entities/${TRACK}/items?model=@acme/track`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-uniweb-csrf': '1' },
       body: JSON.stringify({ kind: 'create', section: 'sessions', data: { title: 'x' } }),
@@ -860,7 +860,7 @@ describe('the mock is as strict as the backend', () => {
 
   it('refuses a signed-in mutation without the CSRF header', async () => {
     const mock = createMockBackend({ signedInAs: 'organiser' })
-    const res = await call(mock, '/_api/entities?model=@/track', { method: 'POST', body: '{}' })
+    const res = await call(mock, '/_api/entities?model=@acme/track', { method: 'POST', body: '{}' })
     expect(res.status).toBe(403)
     expect((await res.json()).title).toBe('CSRF Header Required')
   })
@@ -880,7 +880,7 @@ describe('signedInAs', () => {
       { username: 'alex', password: 'alex', operator: true },
       { username: 'visitor', password: 'visitor' },
     ],
-    entities: [{ uuid: '01926d5e-0000-7000-8000-0000000000c1', model: '@/course', items: [] }],
+    entities: [{ uuid: '01926d5e-0000-7000-8000-0000000000c1', model: '@acme/course', items: [] }],
   }
   const call = async (mock, path, init) => mock.fetch(new Request('http://x' + path, init))
 
@@ -899,7 +899,7 @@ describe('signedInAs', () => {
 
   it('the session it opens is a REAL one, not a flag', async () => {
     const mock = createMockBackend({ seed, signedInAs: 'alex' })
-    expect((await call(mock, '/entities?model=@/course')).status).toBe(200)
+    expect((await call(mock, '/entities?model=@acme/course')).status).toBe(200)
     await call(mock, '/auth/logout', { method: 'POST', headers: { 'x-uniweb-csrf': '1' } })
     expect((await call(mock, '/auth/me')).status).toBe(401)
   })
@@ -910,6 +910,6 @@ describe('signedInAs', () => {
   })
 
   it('⛔ throws on a seed entity id that is not a UUID — the backend would 400 it', () => {
-    expect(() => createMockBackend({ seed: { ...seed, entities: [{ uuid: 'track-main', model: '@/course' }] } })).toThrow(/not a UUID/)
+    expect(() => createMockBackend({ seed: { ...seed, entities: [{ uuid: 'track-main', model: '@acme/course' }] } })).toThrow(/not a UUID/)
   })
 })
