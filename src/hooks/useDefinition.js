@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
+import { hookTypeName } from '../types.js'
 
 const noSubscribe = () => () => {}
 const noSnapshot = () => null
@@ -8,7 +9,7 @@ const noSnapshot = () => null
  * A Model's definition — the sections and fields a form is built from.
  *
  * ```jsx
- * const { status, definition } = useDefinition('@acme/cv')
+ * const { status, definition } = useDefinition('@/cv')
  * if (status !== 'ready') return null
  * const brief = definition.sections.find((s) => s.brief)
  * // brief.fields → [{ key: 'title', kind: 'string', required: true, max_length: 250 }, …]
@@ -21,10 +22,11 @@ const noSnapshot = () => null
  * `absent` — no `backend` service, or nobody signed in: a definition is read by someone
  * signed in. Cached under a key scoped to the viewer.
  *
- * @param {string|null} schema - the Model, e.g. `@acme/cv`; null to skip
+ * @param {string|null} type - the Model: `@/cv`, one of this foundation's own (named in full by
+ *   this foundation's copy of the package: `types.js`), or any other in full; null to skip
  * @returns {{ status: string, definition: object|null, error: Error|null, refresh: Function }}
  */
-export function useDefinition(schema) {
+export function useDefinition(type) {
   const client = getClient()
   const store = client?.website?.dataStore ?? null
 
@@ -34,7 +36,9 @@ export function useDefinition(schema) {
     client ? () => client.session : noSnapshot,
   )
 
-  const active = !!(client && client.enabled && store && schema && session?.status !== 'anonymous')
+  const { schema, refused } = hookTypeName(type, 'useDefinition')
+  const wanted = !!(client && client.enabled && store && type && session?.status !== 'anonymous')
+  const active = wanted && !refused
   const spec = active ? { endpoint: '/models', schema } : null
   const key = spec ? client.cacheKey(spec) : null
 
@@ -69,6 +73,7 @@ export function useDefinition(schema) {
     setAttempt((n) => n + 1)
   }, [store, key, client, schema])
 
+  if (wanted && refused) return { status: 'error', definition: null, error: refused, refresh }
   if (!active) return { status: 'absent', definition: null, error: null, refresh }
   if (entry) return { status: 'ready', definition: entry.data, error: null, refresh }
   if (error) return { status: 'error', definition: null, error, refresh }

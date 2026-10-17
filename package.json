@@ -38,7 +38,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@uniweb/core": "workspace:~"
+    "@uniweb/core": "workspace:~",
+    "@uniweb/schemas": "workspace:~"
   },
   "peerDependencies": {
     "react": "^19.0.0"

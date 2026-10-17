@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
+import { hookTypeName } from '../types.js'
 
 const noSubscribe = () => () => {}
 const noSnapshot = () => null
@@ -10,11 +11,11 @@ const NONE = Object.freeze([])
  *
  * ```jsx
  * const [q, setQ] = useState('')
- * const { status, items } = useChoices({ schema: '@acme/cv', field: 'country', q, searchIn: 'label' })
+ * const { status, items } = useChoices({ schema: '@/cv', field: 'country', q, searchIn: 'label' })
  * // items[i].uuid is the value to store in `country`; items[i].data.label what to show
  *
  * // a dependent list: the provinces of the country chosen above
- * const provinces = useChoices(country ? { schema: '@acme/cv', field: 'province', parent: country } : null)
+ * const provinces = useChoices(country ? { schema: '@/cv', field: 'province', parent: country } : null)
  * ```
  *
  * `field` is a field of kind `item_ref` (`options:` in a schema); `listChoices` says
@@ -39,7 +40,8 @@ export function useChoices(query) {
     client ? () => client.session : noSnapshot,
   )
 
-  const active = !!(
+  const { schema, refused } = hookTypeName(query?.schema, 'useChoices')
+  const wanted = !!(
     client &&
     client.enabled &&
     store &&
@@ -48,10 +50,11 @@ export function useChoices(query) {
     query.field &&
     session?.status !== 'anonymous'
   )
+  const active = wanted && !refused
   const spec = active
     ? {
         endpoint: '/sections',
-        schema: query.schema,
+        schema,
         field: query.field,
         section: query.section,
         parent: query.parent,
@@ -77,7 +80,7 @@ export function useChoices(query) {
     if (!key || entry) return undefined
     let live = true
     setError(null)
-    client.load(key, () => client.listChoices(query), spec).catch((err) => {
+    client.load(key, () => client.listChoices({ ...query, schema }), spec).catch((err) => {
       if (live) setError(err)
     })
     return () => {
@@ -93,6 +96,7 @@ export function useChoices(query) {
   }, [store, key])
 
   const empty = { items: NONE, nextCursor: null, hasMore: false }
+  if (wanted && refused) return { status: 'error', ...empty, error: refused, refresh }
   if (!active) return { status: 'absent', ...empty, error: null, refresh }
   if (entry) return { status: 'ready', ...entry.data, error: null, refresh }
   if (error) return { status: 'error', ...empty, error, refresh }

@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { getClient } from '../client.js'
+import { hookTypeName } from '../types.js'
 import { ApiError } from '../errors.js'
 import { CREATE, FIELD, OP } from '../wire.js'
 
@@ -11,7 +12,7 @@ const ERROR = 'error'
  * Write the items of one entity, in domain terms.
  *
  * ```jsx
- * const programme = useEntityWriter({ schema: '@acme/track', uuid: track.uuid })
+ * const programme = useEntityWriter({ schema: '@/track', uuid: track.uuid })
  * await programme.create({ title: 'Keynote' }, { section: 'sessions' })   // appended
  * await programme.update(item.id, { ...item.data, room: 'Hall A' })       // whole data
  * await programme.move(item.id, { after: other.id })                     // the organiser arranges
@@ -61,7 +62,7 @@ export function useEntityWriter(target) {
   // A write in flight must not be reported by a later render of a stale closure.
   const seq = useRef(0)
 
-  const schema = target?.schema ?? null
+  const { schema, refused } = hookTypeName(target?.schema ?? null, 'useEntityWriter')
   const uuid = target?.uuid ?? null
   const enabled = !!(client && client.enabled && uuid)
 
@@ -71,6 +72,7 @@ export function useEntityWriter(target) {
       const mine = (seq.current += 1)
       setState({ status: SAVING, error: null, conflict: null })
       try {
+        if (refused) throw refused
         const result = await client.writeItems({ schema, uuid, ops })
         // Only this Model's reads — a write to one Model says nothing about another,
         // and sweeping wider would refetch pages the user is looking at for nothing.
@@ -83,7 +85,7 @@ export function useEntityWriter(target) {
         throw err
       }
     },
-    [client, enabled, schema, uuid],
+    [client, enabled, schema, refused, uuid],
   )
 
   const api = useMemo(

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
+import { hookTypeName } from '../types.js'
 
 const noSubscribe = () => () => {}
 const noSnapshot = () => null
@@ -10,7 +11,7 @@ const DISABLED = Object.freeze({ status: 'absent', entity: null, error: null })
  * when `via` names one.
  *
  * ```jsx
- * const { status, entity } = useEntity({ schema: '@acme/lesson', uuid, via: course.uuid })
+ * const { status, entity } = useEntity({ schema: '@/lesson', uuid, via: course.uuid })
  * // status: 'loading' | 'ready' | 'absent' | 'error'
  * if (status === 'absent') return <EnrolWall />   // not found OR not permitted — one word, by design
  * ```
@@ -25,6 +26,9 @@ const DISABLED = Object.freeze({ status: 'absent', entity: null, error: null })
  * sign-in or sign-out changes the key and the record is read again for who
  * is now looking. On a site with no backend, or with nobody signed in, the
  * answer is `absent`: there is nothing this viewer can read.
+ *
+ * `schema` is a Model's name — `@/lesson` for one of this foundation's own (named in full
+ * by this foundation's copy of the package: `types.js`), any other in full.
  *
  * @param {{ schema: string, uuid: string, via?: string } | null} ref - pass null to skip
  * @returns {{ status: string, entity: object|null, error: Error|null, refresh: Function }}
@@ -42,9 +46,11 @@ export function useEntity(ref) {
   )
 
   // Signed out, the backend reads nothing to this viewer (`401`) — absent, unasked.
-  const active = !!(client && client.enabled && store && ref && ref.uuid && session?.status !== 'anonymous')
+  const { schema, refused } = hookTypeName(ref?.schema, 'useEntity')
+  const wanted = !!(client && client.enabled && store && ref && ref.uuid && session?.status !== 'anonymous')
+  const active = wanted && !refused
   const key = active
-    ? client.cacheKey({ endpoint: `/entities/${ref.uuid}`, schema: ref.schema, via: ref.via })
+    ? client.cacheKey({ endpoint: `/entities/${ref.uuid}`, schema, via: ref.via })
     : null
 
   const subscribe = useCallback((fn) => (key ? store.subscribe(key, fn) : noSubscribe()), [store, key])
@@ -61,7 +67,7 @@ export function useEntity(ref) {
     if (!key || entry) return undefined
     let live = true
     setError(null)
-    client.load(key, () => client.readEntity(ref), { schema: ref.schema, uuid: ref.uuid }).catch((err) => {
+    client.load(key, () => client.readEntity({ ...ref, schema }), { schema, uuid: ref.uuid }).catch((err) => {
       if (live) setError(err)
     })
     return () => {
@@ -76,6 +82,7 @@ export function useEntity(ref) {
     setAttempt((n) => n + 1)
   }, [store, key])
 
+  if (wanted && refused) return { status: 'error', entity: null, error: refused, refresh }
   if (!active) return { ...DISABLED, refresh }
   if (entry) return { status: entry.data.status, entity: entry.data.entity, error: null, refresh }
   if (error) return { status: 'error', entity: null, error, refresh }

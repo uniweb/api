@@ -48,9 +48,14 @@ tree-shaken per import, and inert on a site that declares no backend.
   to one entry is given and taken back under `/grants/*` by whoever administers it, and a
   create lands in a unit from `GET /unit/mine` (both 2026-10-15) — never the backend's own
   administration, which is the Admin link's.
-- **A type is named in full, `@scope/name`.** The client refuses `@/x` before sending
-  (`errors.js::unqualifiedModel`) and the mock refuses it in a seed — no backend holds one, since
-  `register` qualifies a foundation's types (2026-10-16). Tests and seeds use `@acme/…`.
+- **A foundation's own type is `@/x`, named in full in the caller's copy of this code** —
+  `types.js::typeName`, with the scope the foundation's build stamped (`__FOUNDATION_SCOPE__`,
+  `@uniweb/build`): in full in a build that ships, as written under `uniweb dev` (null), refused
+  where no Uniweb build set it [Diego, 2026-10-17]. The exported functions and the hooks call it;
+  a client method never does — the client is shared by every foundation on a page, so its methods
+  may be another foundation's copy. The mock matches a name exactly and takes `@/x` in a seed, as
+  `uniweb dev` sends it. A test sets the scope with `vi.stubGlobal('__FOUNDATION_SCOPE__', …)`.
+  *(1.3.0 refused `@/x` everywhere, 2026-10-16.)*
 - **`@uniweb/core` is `workspace:~`** in `dependencies` — the framework's cascade rule; never
   `workspace:*` or `workspace:^` in a published section. *(This said `workspace:^` until
   2026-10-11, when every sibling range became a tilde.)*

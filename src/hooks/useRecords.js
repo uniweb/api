@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
+import { hookTypeName } from '../types.js'
 
 const noSubscribe = () => () => {}
 const noSnapshot = () => null
@@ -10,7 +11,7 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * The entities of a Model the viewer may see.
  *
  * ```jsx
- * const { status, records } = useRecords({ schema: '@acme/session' })
+ * const { status, records } = useRecords({ schema: '@/session' })
  * if (status === 'absent') return <StaticProgramme />   // no backend — render the site's own content
  * if (status === 'ready' && records.length === 0) return <Empty />
  * ```
@@ -41,6 +42,9 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * Cached under a key scoped to the viewer, so a sign-in re-reads the list for who
  * is now looking, and a write through `useEntityWriter` drops it.
  *
+ * `schema` is a Model's name — `@/session` for one of this foundation's own (named in full
+ * by this foundation's copy of the package: `types.js`), any other in full.
+ *
  * @param {{ schema: string, scope?: 'accessible'|'mine'|'all', limit?: number, offset?: number, all?: boolean } | null} query
  *   pass null to skip
  * @returns {{ status: string, records: object[], matched: number, hasMore: boolean, error: Error|null, refresh: Function }}
@@ -59,11 +63,13 @@ export function useRecords(query) {
 
   // Signed out, there is no live source: the backend lists nothing to an anonymous
   // caller, so asking would only buy a `401`.
-  const active = !!(client && client.enabled && store && query && query.schema && session?.status !== 'anonymous')
+  const { schema, refused } = hookTypeName(query?.schema, 'useRecords')
+  const wanted = !!(client && client.enabled && store && query && query.schema && session?.status !== 'anonymous')
+  const active = wanted && !refused
   const spec = active
     ? {
         endpoint: '/entities',
-        schema: query.schema,
+        schema,
         scope: query.scope,
         limit: query.limit,
         offset: query.offset,
@@ -86,7 +92,7 @@ export function useRecords(query) {
     if (!key || entry) return undefined
     let live = true
     setError(null)
-    client.load(key, () => client.listEntities(query), spec).catch((err) => {
+    client.load(key, () => client.listEntities({ ...query, schema }), spec).catch((err) => {
       if (live) setError(err)
     })
     return () => {
@@ -101,6 +107,7 @@ export function useRecords(query) {
     setAttempt((n) => n + 1)
   }, [store, key])
 
+  if (wanted && refused) return { status: 'error', records: NONE, matched: 0, hasMore: false, error: refused, refresh }
   if (!active) return { ...DISABLED, refresh }
   if (entry) return { status: 'ready', ...entry.data, error: null, refresh }
   if (error) return { status: 'error', records: NONE, matched: 0, hasMore: false, error, refresh }

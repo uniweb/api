@@ -207,7 +207,7 @@ the backend happens at the other end of the link.
 ```jsx
 import { useRecords, useEntity } from '@uniweb/api'
 
-const { status, records, hasMore } = useRecords({ schema: '@acme/session', scope: 'mine' })
+const { status, records, hasMore } = useRecords({ schema: '@/session', scope: 'mine' })
 // records[i].brief — the entity's summary; records[i].uuid — its id
 ```
 
@@ -229,7 +229,7 @@ full (`limit`, default 50); `matched` counts the records in this answer, not a t
 `all: true` reads the whole list in one request.
 
 ```jsx
-const { status, entity } = useEntity({ schema: '@acme/lesson', uuid, via: course.uuid })
+const { status, entity } = useEntity({ schema: '@/lesson', uuid, via: course.uuid })
 // entity.hydrated.items — the content: { id, section, section_id, data, … } each
 // entity.hydrated.entity.brief — the summary
 // entity.can_edit — whether this viewer may write to it
@@ -245,10 +245,12 @@ the item.
 Its `absent` covers both not-found and not-permitted, on purpose: render your paywall
 or sign-in prompt on it and never say "deleted".
 
-**Name a type in full** — `@acme/lesson`, the scope your foundation is registered under.
-`@/lesson` is right in `meta.js` and `queries.yml`, where the build qualifies it, but a call
-is sent as written and a backend matches the exact name, so the package refuses a `@/` name
-before sending anything (`kind: 'invalid'`).
+**Name your foundation's own types `@/lesson`**, as `meta.js` and `queries.yml` do. A built
+foundation sends one in the scope in its name — `@acme/lesson` for a foundation named
+`@acme/marketing`, the name `register` stored the type under — and under `uniweb dev` it is
+sent as written, which is how your mock's seed names it. Name any other type in full: a
+standard one, `@std/person`, or another foundation's. Outside a Uniweb build nothing knows
+your foundation's scope, so `@/lesson` is refused before anything is sent (`kind: 'invalid'`).
 
 **A read is in the visitor's language.** Each localized field comes back as one value: the
 page's language, else the site's — a string for a text field, one document for a rich text
@@ -260,7 +262,7 @@ page's language, else the site's — a string for a text field, one document for
 ```jsx
 import { useDefinition } from '@uniweb/api'
 
-const { status, definition } = useDefinition('@acme/cv')
+const { status, definition } = useDefinition('@/cv')
 const brief = definition?.sections.find((s) => s.brief)
 // brief.fields → [{ key: 'title', kind: 'string', required: true, label: 'Title', max_length: 250 }, …]
 ```
@@ -283,11 +285,11 @@ items:
 ```jsx
 import { useChoices } from '@uniweb/api'
 
-const { items, hasMore } = useChoices({ schema: '@acme/cv', field: 'country', q, searchIn: 'label' })
+const { items, hasMore } = useChoices({ schema: '@/cv', field: 'country', q, searchIn: 'label' })
 // items[i].uuid — the value to store; items[i].data — the choice, in the site's language
 
 // a dependent list: the provinces of the country chosen above
-const provinces = useChoices(country ? { schema: '@acme/cv', field: 'province', parent: country } : null)
+const provinces = useChoices(country ? { schema: '@/cv', field: 'province', parent: country } : null)
 ```
 
 - **A page at a time** — `limit`, 50 by default and at most 1000; pass `nextCursor` back as
@@ -313,7 +315,7 @@ takes as many as you add.
 ```jsx
 import { useEntityWriter } from '@uniweb/api'
 
-const programme = useEntityWriter({ schema: '@acme/track', uuid: track.uuid })
+const programme = useEntityWriter({ schema: '@/track', uuid: track.uuid })
 
 await programme.create({ title: 'Keynote' }, { section: 'sessions', position: 'last' })
 await programme.update(item.id, { ...item.data, room: 'Hall A' })
@@ -347,7 +349,7 @@ To create an entity, name each item's section:
 ```js
 import { createEntity } from '@uniweb/api/client'
 
-await createEntity({ schema: '@acme/course', items: [{ section: 'course', data: { title: 'Intro' } }] })
+await createEntity({ schema: '@/course', items: [{ section: 'course', data: { title: 'Intro' } }] })
 ```
 
 **Where it lands.** Everything a member creates lands at the root of the organization the
@@ -359,7 +361,7 @@ import { useUnits, createEntity } from '@uniweb/api'
 
 const { units } = useUnits()                       // the units the viewer is placed in
 const course = units.find((u) => u.handle === 'intro-101')
-await createEntity({ schema: '@acme/submission', unit: course.unit, items: [...] })
+await createEntity({ schema: '@/submission', unit: course.unit, items: [...] })
 ```
 
 - A unit is `{ unit, id, handle?, name?, parent?, depth, primary }`: `unit` is the uuid a
@@ -389,7 +391,7 @@ An entry someone was given lists for them with `via: 'grant'`.
 import { useAccess } from '@uniweb/api'
 
 function Roster({ course }) {
-  const { status, grants, grant, revoke, working } = useAccess({ schema: '@acme/course', uuid: course.uuid })
+  const { status, grants, grant, revoke, working } = useAccess({ schema: '@/course', uuid: course.uuid })
   if (status !== 'ready') return null              // 'forbidden': not this viewer's to give
   return (
     <>
@@ -536,7 +538,7 @@ export default createMockBackend({
       { username: 'member', password: 'member' },
     ],
     schemas: {
-      '@acme/track': {
+      '@/track': {
         sections: {
           track: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
           sessions: { kind: 'multi', fields: { title: { type: 'string', required: true } } },
@@ -546,7 +548,7 @@ export default createMockBackend({
     entities: [
       {
         uuid: '01926d5e-0000-7000-8000-000000000001',    // a UUID, as on the wire
-        model: '@acme/track',
+        model: '@/track',
         items: [{ section: 'track', data: { name: 'Main hall' } }],
       },
     ],
@@ -567,7 +569,7 @@ is as strict as the backend about requests, so a mistake fails here rather than 
 user.
 Everyone signed in reads and writes their own entities, and a member nothing of anyone
 else's (`memberFloor: 'read'` in the seed models a service set up to let members read
-each other's — or per Model, `memberFloor: { '@acme/course': 'read' }`, so the
+each other's — or per Model, `memberFloor: { '@/course': 'read' }`, so the
 operator's content is shared while each member's own records stay private). The
 operator, as on a real site, reads every member's entities and changes them only once
 elevated, with its password, for fifteen minutes. The mail the backend would send — a sign-up's
@@ -588,9 +590,9 @@ given — `grants: { member: 'read' }` — and with units in the seed, a create 
 ```js
 units: [
   { handle: 'science', name: 'Science' },
-  { handle: 'intro-101', name: 'Intro', parent: 'science', members: ['me', 'member'], floor: { '@acme/lesson': 'read' } },
+  { handle: 'intro-101', name: 'Intro', parent: 'science', members: ['me', 'member'], floor: { '@/lesson': 'read' } },
 ],
-entities: [{ model: '@acme/lesson', owner: 'me', unit: 'intro-101', items: [...] }],
+entities: [{ model: '@/lesson', owner: 'me', unit: 'intro-101', items: [...] }],
 ```
 
 `members` are placed in the unit, and its `floor` — as `memberFloor`, which is the root's —
@@ -598,8 +600,10 @@ covers what lands in it, for them and for those placed in the units below it. Th
 models no roles but the operator's: no reader or editor held at a unit, and nothing a
 reference opens.
 
-Write a seed's schemas as you write them for a backend — named in full (`@acme/track`; a `@/`
-name, which no backend holds, is refused when the mock starts), `type: 'int'`, `multiple: true`,
+Name a seed's types as your foundation's calls send them under `uniweb dev`: your own as
+`@/track`, any other in full — the mock matches a name exactly, so `@std/person` is not
+`@/person`. Real-backend testing is a job for a built foundation, which sends your own types in
+full. Write the schemas as you write them for a backend — `type: 'int'`, `multiple: true`,
 `grantable: false` for a type whose entries are never shared, `options:` — and the mock's definition answers what a backend keeps of them, so a key no
 backend takes is left out of it (a backend refuses it when you register). Seed a list's
 choices as items of a lists entry, each item holding the items that sit under it:

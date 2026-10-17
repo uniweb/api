@@ -13,7 +13,8 @@
 
 import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
-import { ApiError, unqualifiedModel } from './errors.js'
+import { ApiError } from './errors.js'
+import { withTypeName } from './types.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
@@ -211,6 +212,13 @@ function formOf(body) {
   return { model: body?.model ?? null, sections }
 }
 
+/**
+ * The one client a page holds, shared by every foundation on it (`getClient`).
+ *
+ * ⛔ A method takes a Model's name as it is given. A foundation's own `@/x` is named in full
+ * before a method is reached — by the exported function or the hook the foundation called
+ * (`types.js`) — because a method here may be another foundation's copy of this code.
+ */
 export class ApiClient {
   /**
    * @param {object} uniweb - the page's `Uniweb` singleton
@@ -715,6 +723,9 @@ export class ApiClient {
    * client.invalidate((spec) => spec.schema === '@acme/session')
    * ```
    *
+   * A spec names a type as it was sent: a foundation's own `@/session` in full, in a build
+   * that ships (`types.js`).
+   *
    * ⛔ **A key with no remembered spec is never matched, and never swept.** It is
    * not knowable whether it belongs, and dropping an entry a caller still relies on
    * to be safe about one it might not is the wrong trade: a stale read is visible
@@ -800,8 +811,6 @@ export class ApiClient {
   async readEntity({ schema, uuid, via, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'readEntity needs a uuid')
     if (!schema) throw ApiError.invalid('No Model', 'readEntity needs a schema — the backend reads an entity by its Model')
-    const unqualified = unqualifiedModel(schema, 'readEntity')
-    if (unqualified) throw unqualified
     const mark = this.ledger.mark()
     try {
       const [entity, sections] = await Promise.all([
@@ -855,8 +864,6 @@ export class ApiClient {
    */
   async listEntities({ schema, scope, limit, offset, all = false, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'listEntities needs a schema')
-    const unqualified = unqualifiedModel(schema, 'listEntities')
-    if (unqualified) throw unqualified
     const query = { [PARAM.model]: schema, [PARAM.scope]: scope, ...this._localeQuery() }
     let pageSize = null
     if (all) query[PARAM.paginate] = false
@@ -882,8 +889,6 @@ export class ApiClient {
    */
   sections(schema, signal) {
     if (!schema) return Promise.reject(ApiError.invalid('No Model', 'sections needs a schema'))
-    const unqualified = unqualifiedModel(schema, 'sections')
-    if (unqualified) return Promise.reject(unqualified)
     return this._definition(schema, signal).then((body) =>
       (Array.isArray(body?.[SCHEMA.sections]) ? body[SCHEMA.sections] : []).map((s) => ({
         id: s[SCHEMA.id],
@@ -915,7 +920,7 @@ export class ApiClient {
    * A Model's definition — what an editor builds a form from.
    *
    * ```js
-   * const { sections } = await readDefinition({ schema: '@acme/cv' })
+   * const { sections } = await readDefinition({ schema: '@/cv' })
    * const brief = sections.find((s) => s.brief)
    * // brief.fields → [{ key: 'title', kind: 'string', required: true, label: 'Title', max_length: 250 }, …]
    * ```
@@ -945,8 +950,6 @@ export class ApiClient {
    */
   async readDefinition({ schema, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'readDefinition needs a schema')
-    const unqualified = unqualifiedModel(schema, 'readDefinition')
-    if (unqualified) throw unqualified
     return formOf(await this._definition(schema, signal))
   }
 
@@ -1002,9 +1005,9 @@ export class ApiClient {
    * The choices a field offers — the field's own list, read from the Model's definition.
    *
    * ```js
-   * const { items } = await listChoices({ schema: '@acme/cv', field: 'country', q: 'can', searchIn: 'label' })
+   * const { items } = await listChoices({ schema: '@/cv', field: 'country', q: 'can', searchIn: 'label' })
    * // items[i].uuid is the value to store in `country`
-   * const provinces = await listChoices({ schema: '@acme/cv', field: 'province', parent: country })
+   * const provinces = await listChoices({ schema: '@/cv', field: 'province', parent: country })
    * ```
    *
    * `field` is a field of kind `item_ref` — in a schema, `type: item_ref` with
@@ -1027,8 +1030,6 @@ export class ApiClient {
    */
   async listChoices({ schema, field, section, parent, q, searchIn, cursor, limit, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'listChoices needs the schema whose field offers the choices')
-    const unqualified = unqualifiedModel(schema, 'listChoices')
-    if (unqualified) throw unqualified
     if (!field) throw ApiError.invalid('No Field', 'listChoices needs the field whose choices to list')
     const { sections } = await this.readDefinition({ schema, signal })
     const found = sections
@@ -1153,8 +1154,6 @@ export class ApiClient {
   async writeItems({ schema, uuid, ops, readback = false, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'writeItems needs a uuid')
     if (!schema) throw ApiError.invalid('No Model', 'writeItems needs a schema')
-    const unqualified = unqualifiedModel(schema, 'writeItems')
-    if (unqualified) throw unqualified
     const list = Array.isArray(ops) ? ops : [ops]
     if (list.length === 0) throw ApiError.invalid('No Ops', 'writeItems needs at least one op')
 
@@ -1187,7 +1186,7 @@ export class ApiClient {
    *
    * ```js
    * await createEntity({
-   *   schema: '@acme/course',
+   *   schema: '@/course',
    *   items: [{ section: 'course', data: { title: 'Intro' } }],
    * })
    * ```
@@ -1218,8 +1217,6 @@ export class ApiClient {
    */
   async createEntity({ schema, items, data, unit, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'createEntity needs a schema')
-    const unqualified = unqualifiedModel(schema, 'createEntity')
-    if (unqualified) throw unqualified
     if (data !== undefined) {
       throw ApiError.invalid(
         'No Entity Data',
@@ -1271,8 +1268,6 @@ export class ApiClient {
    */
   async deleteEntity({ uuid, schema, revRefPolicy, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'deleteEntity needs a uuid')
-    const unqualified = unqualifiedModel(schema, 'deleteEntity')
-    if (unqualified) throw unqualified
     const answer = await this.request('DELETE', ROUTES.remove(uuid), {
       query: { [PARAM.revRefPolicy]: revRefPolicy },
       signal,
@@ -1378,32 +1373,35 @@ export const acceptInvitation = (id) => acceptInvitationWith(required(), id)
 export const declineInvitation = (id) => declineInvitationWith(required(), id)
 /** @see ApiClient#listUnits — on any instance, an older copy's too */
 export const listUnits = (options) => listUnitsWith(required(), options)
+// ⭐ A call that names a type names it in full HERE, in the calling foundation's copy of this
+// code — `@/x` in its own scope (`types.js`). The client a call reaches is shared by every
+// foundation on the page, so its methods take a name as given.
 /** @see ApiClient#listAccess — on any instance, an older copy's too */
-export const listAccess = (args) => listAccessWith(required(), args)
+export const listAccess = async (args) => listAccessWith(required(), withTypeName(args, 'listAccess'))
 /** @see ApiClient#listAccessCandidates — on any instance, an older copy's too */
-export const listAccessCandidates = (args) => listAccessCandidatesWith(required(), args)
+export const listAccessCandidates = async (args) => listAccessCandidatesWith(required(), withTypeName(args, 'listAccessCandidates'))
 /** @see ApiClient#grantAccess — on any instance, an older copy's too */
-export const grantAccess = (args) => grantAccessWith(required(), args)
+export const grantAccess = async (args) => grantAccessWith(required(), withTypeName(args, 'grantAccess'))
 /** @see ApiClient#revokeAccess — on any instance, an older copy's too */
-export const revokeAccess = (args) => revokeAccessWith(required(), args)
+export const revokeAccess = async (args) => revokeAccessWith(required(), withTypeName(args, 'revokeAccess'))
 /** @see ApiClient#leaveAccess — on any instance, an older copy's too */
-export const leaveAccess = (args) => leaveAccessWith(required(), args)
+export const leaveAccess = async (args) => leaveAccessWith(required(), withTypeName(args, 'leaveAccess'))
 /** @see ApiClient#readEntity */
-export const readEntity = (args) => required().readEntity(args)
+export const readEntity = async (args) => required().readEntity(withTypeName(args, 'readEntity'))
 /** @see ApiClient#listEntities */
-export const listEntities = (args) => required().listEntities(args)
+export const listEntities = async (args) => required().listEntities(withTypeName(args, 'listEntities'))
 
-export const readDefinition = (args) => required().readDefinition(args)
+export const readDefinition = async (args) => required().readDefinition(withTypeName(args, 'readDefinition'))
 
 export const listSectionItems = (args) => required().listSectionItems(args)
 
-export const listChoices = (args) => required().listChoices(args)
+export const listChoices = async (args) => required().listChoices(withTypeName(args, 'listChoices'))
 /** @see ApiClient#writeItems */
-export const writeItems = (args) => required().writeItems(args)
+export const writeItems = async (args) => required().writeItems(withTypeName(args, 'writeItems'))
 /** @see ApiClient#createEntity */
-export const createEntity = (args) => required().createEntity(args)
+export const createEntity = async (args) => required().createEntity(withTypeName(args, 'createEntity'))
 /** @see ApiClient#deleteEntity */
-export const deleteEntity = (args) => required().deleteEntity(args)
+export const deleteEntity = async (args) => required().deleteEntity(withTypeName(args, 'deleteEntity'))
 /** The Admin link for the current viewer, or `null` — never throws; see `adminHrefOf`. */
 export const adminHref = () => adminHrefOf(getClient())
 

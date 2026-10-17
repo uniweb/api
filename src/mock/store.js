@@ -113,12 +113,6 @@ function unknownPermission(permission, { title = 'Validation', prefix = '' } = {
 
 /** A floor is `read` or `edit`, for every Model or per Model — or none. */
 function checkFloor(floor, where) {
-  if (floor != null && typeof floor === 'object') {
-    const unqualified = Object.keys(floor).filter((name) => name.startsWith('@/'))
-    if (unqualified.length) {
-      throw new Error(`[uniweb/api mock] ${where} names ${unqualified.join(', ')}: a Model is named in full, @scope/name, as the seed's schemas are`)
-    }
-  }
   const floors = floor != null && typeof floor === 'object' ? Object.values(floor) : [floor]
   for (const f of floors) {
     if (f != null && !['read', 'edit'].includes(f)) {
@@ -227,7 +221,10 @@ export class MockStore {
    *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
    *   also marks the operator.)
    * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable?, migration_debt? } }`.
-   *   ⛔ Named in full, as a backend holds a Model — a `@/` name is refused.
+   *   Named as a call sends it, and matched exactly: your foundation's own types as `@/name`,
+   *   which is how `uniweb dev` sends them, and any other in full — `@std/person` is not
+   *   `@/person`. A built foundation sends its own in full, `@<scope>/name`, as a backend
+   *   holds them (`types.js`).
    *   `grantable: false`, as a data schema declares it, gives no access to an entry of it: a
    *   grant is refused `403` (`model_not_grantable`).
    *   ⛔ No `creatable_by` — retired 2026-09-23, Models are open; a seed carrying it is refused.
@@ -272,17 +269,10 @@ export class MockStore {
         )
       }
     }
-    // ⛔ A SEEDED MODEL IS NAMED IN FULL, as a backend holds it: `register` stores a foundation's
-    // types under its scope, so no backend holds a `@/` name, and a call naming one finds nothing
-    // there. ⛔ Until 2026-10-16 the mock served whatever names its seed gave, so a seed and its
-    // calls written `@/x` agreed here and failed on the first real backend.
-    const unqualified = [...new Set([...Object.keys(this.schemas), ...(seed.entities || []).map((e) => e?.model)])]
-      .filter((name) => typeof name === 'string' && name.startsWith('@/'))
-    if (unqualified.length) {
-      throw new Error(
-        `[uniweb/api mock] ${unqualified.join(', ')}: a Model is named in full, @scope/name — the name register stores your foundation's types under. No backend holds a @/ name; seed ${unqualified.map((n) => `@<scope>/${n.slice(2)}`).join(', ')} and call it by that name.`
-      )
-    }
+    // ⭐ A SEEDED MODEL IS NAMED AS A CALL SENDS IT, and matched exactly. Under `uniweb dev` a
+    // foundation sends its own types as written, `@/x`, so a seed names them so; a built one sends
+    // them in full, as a backend holds them (`types.js`). ⛔ In 1.3.0 (2026-10-16) a `@/` name was
+    // refused here, as the client refused to send one.
     checkFloor(seed.memberFloor, 'memberFloor')
     /**
      * What membership lets one member do to another's entities: `null` (nothing), `read`

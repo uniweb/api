@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
+import { hookTypeName } from '../types.js'
 import { ApiError } from '../errors.js'
 import { accessSpec, listAccessWith, grantAccessWith, revokeAccessWith } from '../access.js'
 
@@ -12,7 +13,7 @@ const QUIET = Object.freeze({ working: false, workError: null })
  * Who has access to an entry, and the controls to give it and take it back.
  *
  * ```jsx
- * const { status, owner, grants, grant, revoke, working } = useAccess({ schema: '@acme/course', uuid: course.uuid })
+ * const { status, owner, grants, grant, revoke, working } = useAccess({ schema: '@/course', uuid: course.uuid })
  * if (status !== 'ready') return null          // 'forbidden' — not this viewer's to give
  * return (
  *   <>
@@ -64,7 +65,7 @@ const QUIET = Object.freeze({ working: false, workError: null })
 export function useAccess(ref) {
   const client = getClient()
   const store = client?.website?.dataStore ?? null
-  const schema = ref?.schema ?? null
+  const { schema, refused } = hookTypeName(ref?.schema ?? null, 'useAccess')
   const uuid = ref?.uuid ?? null
 
   const session = useSyncExternalStore(
@@ -78,7 +79,8 @@ export function useAccess(ref) {
     if (client?.enabled) client.ensureSession()
   }, [client])
 
-  const active = !!(client && client.enabled && store && schema && uuid && session?.status === 'authenticated')
+  const wanted = !!(client && client.enabled && store && ref?.schema && uuid && session?.status === 'authenticated')
+  const active = wanted && !refused
   const spec = active ? accessSpec(schema, uuid) : null
   const key = spec ? client.cacheKey(spec) : null
 
@@ -123,6 +125,7 @@ export function useAccess(ref) {
       const mine = (seq.current += 1)
       setWork({ working: true, workError: null })
       try {
+        if (refused) throw refused
         const result = await run(client, { schema, uuid, ...args })
         if (live.current && seq.current === mine) setWork(QUIET)
         return result
@@ -131,7 +134,7 @@ export function useAccess(ref) {
         throw err
       }
     },
-    [client, schema, uuid],
+    [client, schema, refused, uuid],
   )
 
   const grant = useCallback((to, permission) => change(grantAccessWith, { to, permission }), [change])
@@ -144,6 +147,7 @@ export function useAccess(ref) {
 
   const actions = { grant, revoke, ...work, refresh }
   const empty = { owner: null, grants: NONE, pending: NONE }
+  if (wanted && refused) return { status: 'error', ...empty, error: refused, ...actions }
   if (!active) return { status: 'absent', ...empty, error: null, ...actions }
   if (entry) return { status: 'ready', ...entry.data, error: null, ...actions }
   if (error?.kind === 'forbidden') return { status: 'forbidden', ...empty, error, ...actions }

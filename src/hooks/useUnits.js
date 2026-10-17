@@ -12,7 +12,7 @@ const NONE = Object.freeze([])
  * ```jsx
  * const { status, units } = useUnits()
  * const courses = units.filter((u) => u.depth > 1)
- * // …then createEntity({ schema: '@acme/submission', unit: course.unit, items })
+ * // …then createEntity({ schema: '@/submission', unit: course.unit, items })
  * ```
  *
  * Each unit is as the backend lists it: `{ unit, id, handle?, name?, parent?, depth,

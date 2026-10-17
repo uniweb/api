@@ -26,8 +26,11 @@ const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src')
 /** The entries a bundler follows for a foundation. `./mock` is deliberately not one. */
 const BROWSER_ENTRIES = ['index.js', 'client.js', 'wire.js']
 
-/** Bare specifiers the browser half may depend on. */
-const ALLOWED_PACKAGES = new Set(['react', '@uniweb/core', '@uniweb/core/services'])
+/**
+ * Bare specifiers the browser half may depend on. `@uniweb/schemas/refs` is the one rule that
+ * names a foundation's own `@/x` in full, a leaf that imports nothing (its package pins that).
+ */
+const ALLOWED_PACKAGES = new Set(['react', '@uniweb/core', '@uniweb/core/services', '@uniweb/schemas/refs'])
 
 const stripComments = (code) =>
   code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')

@@ -30,7 +30,7 @@ export const DEFAULT_SEED = {
     { username: 'attendee', password: 'attendee' },
   ],
   schemas: {
-    '@acme/track': {
+    '@/track': {
       sections: {
         track: { kind: 'single', brief: true, fields: { name: { type: 'string', required: true } } },
         sessions: {
@@ -41,7 +41,7 @@ export const DEFAULT_SEED = {
     },
     // Check-ins are insert-only: an attendee may record attending, and nobody —
     // including them — may edit or remove it afterwards.
-    '@acme/attendance': {
+    '@/attendance': {
       sections: {
         attendance: { kind: 'single', brief: true, fields: { who: { type: 'string' } } },
         checkins: { kind: 'multi', append_only: true, fields: { session: { type: 'string' }, at: { type: 'string' } } },
@@ -51,7 +51,7 @@ export const DEFAULT_SEED = {
   entities: [
     {
       uuid: '01926d5e-0000-7000-8000-00000000a001',
-      model: '@acme/track',
+      model: '@/track',
       items: [
         { section: 'track', data: { name: 'Main hall' } },
         { section: 'sessions', data: { title: 'Opening keynote', room: 'Hall A', minutes: 45 } },
@@ -61,7 +61,7 @@ export const DEFAULT_SEED = {
     },
     {
       uuid: '01926d5e-0000-7000-8000-00000000a002',
-      model: '@acme/track',
+      model: '@/track',
       items: [
         { section: 'track', data: { name: 'Workshops' } },
         { section: 'sessions', data: { title: 'Hands-on: foundations', room: 'Room 2', minutes: 90 } },

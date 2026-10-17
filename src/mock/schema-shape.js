@@ -66,8 +66,8 @@ export const STORAGE = {
    * A `(model, section)` pair the site has declared as `migration_debt`: storage we
    * know does not match its declaration, kept working while the thing that forced it
    * is unwound. Two shapes qualify, and both are OUR debt, not the framework's:
-   *   • a section the schema does not declare at all (`@acme/course` `meta`), and
-   *   • a declared section whose records diverge (`@acme/quiz-key` `answers` holds one
+   *   • a section the schema does not declare at all (`@/course` `meta`), and
+   *   • a declared section whose records diverge (`@/quiz-key` `answers` holds one
    *     record carrying a map, where the schema declares many).
    *
    * Both exist because `@uniweb/api` had no route to update entity data — an
