@@ -948,7 +948,7 @@ export const ASSUMPTIONS = [
   {
     id: 'localized-json-is-a-locale-map',
     we:
-      "read a `localized` `json` field's value — a rich text's documents (`format: prosemirror`) — as a `{ locale: value }` map, one value per language: narrowed to the read's language by a `?locale=` read, as a text field's is, and whole without one; a value that is itself a document (`type: 'doc'`) is a value, never a map. The mock answers so",
+      "read a `localized` `json` field's value — a rich text's documents (`format: prosemirror`) — as a `{ locale: value }` map, one value per language: narrowed to the read's language by a `?locale=` read, as a text field's is, and whole without one. The mock narrows only to a language the value holds and drops nothing — a document, a bare object or a map without the language is answered as stored — where the backend may omit a field that has none of the read's languages",
     from:
       "the backend's entity-content i18n design (§5a, §5b, §10): a `localized` json field keeps the per-language object shape and is projected by locale like a text field, and a rich text stores one self-contained document per language — its design, not measured from this package",
     breaks:

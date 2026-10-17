@@ -193,26 +193,31 @@ function sectionKind(section) {
 }
 
 /**
- * A `{ locale: value }` map — a plain object, never an array (a localized list's
- * value), and never the value of a field whose OWN type is an object.
- *
- * ⭐ A `json` field's value is an object either way, so for one the map is told by its
- * keys: languages (and the `@` metadata key), never a document's own `type`. A localized
- * rich text holds one document per language — `{ en: doc, fr: doc }` — and a read in a
- * language answers that language's, as for a text field (`ASSUMPTIONS`,
- * `localized-json-is-a-locale-map`). ⛔ A document is a value: until 2026-09-24 a bare one
- * was read as a map with no `en` and DELETED from every read that carried `?locale=`,
- * which the client sends on every browser read; and from then until 2026-10-16 no json
- * value was a map, so a rich text in two languages came back whole to a component that
- * reads one.
+ * A `{ locale: value }` map of a TEXT field — a plain object, never an array (a localized
+ * list's value), and never the value of a field whose OWN type is an object: a `json`
+ * value is an object either way (`projectJson`).
  */
-const OBJECT_TYPED = new Set(['object', 'group'])
-const LOCALE_KEY = /^(@|[a-z]{2,3}(-[A-Za-z0-9]{2,8})*)$/
-const isLocaleMap = (field, value) => {
-  if (value == null || typeof value !== 'object' || Array.isArray(value) || OBJECT_TYPED.has(field?.type)) return false
-  if (field?.type !== 'json') return true
-  const keys = Object.keys(value)
-  return value.type !== 'doc' && keys.length > 0 && keys.every((key) => LOCALE_KEY.test(key))
+const OBJECT_TYPED = new Set(['json', 'object', 'group'])
+const isLocaleMap = (field, value) =>
+  value != null && typeof value === 'object' && !Array.isArray(value) && !OBJECT_TYPED.has(field?.type)
+
+/**
+ * A localized `json` field's value in the read's language — a rich text holds one document
+ * per language, `{ en: doc, fr: doc }`, and a read in a language answers that language's,
+ * as for a text field (`ASSUMPTIONS`, `localized-json-is-a-locale-map`). Narrowed only to a
+ * language the value holds; anything else — a document, a bare object, a map without the
+ * language — is answered as stored, and NEVER dropped: its keys cannot tell a language map
+ * from a value that happens to have short keys (`{ lat, lng }`).
+ *
+ * ⛔ Until 2026-09-24 a bare document was read as a map with no `en` and DELETED from every
+ * read that carried `?locale=` (the client sends it on every browser read). From then no
+ * json value was narrowed, so a rich text came back in every language; and in 1.3.0 a value
+ * whose keys looked like languages was narrowed — and a bare `{ lat, lng }` was deleted.
+ */
+function projectJson(value, locales) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value) || value.type === 'doc') return value
+  const hit = locales.find((l) => Object.hasOwn(value, l) && value[l] != null)
+  return hit ? value[hit] : value
 }
 
 export class MockStore {
@@ -1365,6 +1370,10 @@ export class MockStore {
     if (!locales?.length || !section?.fields || !data || typeof data !== 'object') return data
     const out = { ...data }
     for (const [key, field] of Object.entries(section.fields)) {
+      if (field?.localized && field.type === 'json' && key in out) {
+        out[key] = projectJson(out[key], locales)
+        continue
+      }
       if (!field?.localized || !isLocaleMap(field, out[key])) continue
       const hit = locales.find((l) => out[key][l] != null)
       if (hit) out[key] = out[key][hit]

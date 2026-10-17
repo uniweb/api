@@ -66,6 +66,34 @@ describe('a localized rich text', () => {
     expect(bodyOf(entity)).toEqual(doc('Breathe slowly.'))
   })
 
+  it('a value that is not a map of languages is answered as stored — never dropped', async () => {
+    const PLACE = '01926d5e-0000-7000-8000-00000000d002'
+    const mock = createMockBackend({ onMail: null, seed: {
+      accounts: [{ username: 'organiser', password: 'organiser', operator: true }],
+      schemas: { '@acme/place': { sections: { place: { kind: 'single', brief: true, fields: { name: { type: 'string' }, where: { type: 'json', localized: true } } } } } },
+      entities: [{ uuid: PLACE, model: '@acme/place', items: [{ section: 'place', data: { name: 'Office', where: { lat: 45.4, lng: -75.7 } } }] }],
+    } })
+    createUniweb({ config: { ...WITH_BACKEND.config, defaultLanguage: 'en', languages: ['en', 'fr'], activeLocale: 'fr' } })
+    const client = getClient()
+    client.fetchFn = (url, init) => mock.fetch(new Request(new URL(String(url), 'http://site.test'), init))
+    await client.signIn({ username: 'organiser', password: 'organiser' })
+    const { entity } = await client.readEntity({ schema: '@acme/place', uuid: PLACE })
+    expect(entity.hydrated.entity.brief).toEqual({ name: 'Office', where: { lat: 45.4, lng: -75.7 } })
+  })
+
+  it('a language spelled with an underscore is narrowed to, as it is named', async () => {
+    const mock = createMockBackend({ onMail: null, seed: { ...seed, entities: [{ ...seed.entities[0], items: [
+      seed.entities[0].items[0],
+      { section: 'content', data: { content: { en: doc('Breathe slowly.'), pt_BR: doc('Respire devagar.') } } },
+    ] }] } })
+    createUniweb({ config: { ...WITH_BACKEND.config, defaultLanguage: 'en', languages: ['en', 'pt_BR'], activeLocale: 'pt_BR' } })
+    const client = getClient()
+    client.fetchFn = (url, init) => mock.fetch(new Request(new URL(String(url), 'http://site.test'), init))
+    await client.signIn({ username: 'organiser', password: 'organiser' })
+    const { entity } = await client.readEntity({ schema: '@acme/lesson', uuid: LESSON })
+    expect(bodyOf(entity)).toEqual(doc('Respire devagar.'))
+  })
+
   it('is whole — every language — to a read that names none, which is how an editor reads it', async () => {
     const { mock } = await readIn('en')
     const cookie = (await mock.fetch(new Request('http://site.test/_api/auth/login', {
