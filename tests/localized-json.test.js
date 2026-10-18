@@ -16,7 +16,7 @@ afterEach(() => {
  *
  * ⛔ Until 2026-10-16 the mock took any object in a json field as one value, so a component reading
  * a page in French was handed the map of every language, where the build — which marks a
- * `format: prosemirror` json field localized — and the backend's design hand it one document.
+ * `format: richtext` json field localized — and the backend's design hand it one document.
  */
 const LESSON = '01926d5e-0000-7000-8000-00000000d001'
 const doc = (text) => ({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] })
@@ -26,7 +26,7 @@ const seed = {
     '@acme/lesson': {
       sections: {
         lesson: { kind: 'single', brief: true, fields: { title: { type: 'string', localized: true } } },
-        content: { kind: 'single', fields: { content: { type: 'json', localized: true, format: 'prosemirror' } } },
+        content: { kind: 'single', fields: { content: { type: 'json', localized: true, format: 'richtext' } } },
       },
     },
   },

@@ -175,7 +175,7 @@ describe('the client against the mock — reading', () => {
         '@/lesson': {
           sections: {
             lesson: { kind: 'single', brief: true, fields: { title: { type: 'string', localized: true } } },
-            content: { kind: 'single', fields: { content: { type: 'json', localized: true, format: 'prosemirror' } } },
+            content: { kind: 'single', fields: { content: { type: 'json', localized: true, format: 'richtext' } } },
           },
         },
       },

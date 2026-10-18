@@ -254,7 +254,7 @@ your foundation's scope, so `@/lesson` is refused before anything is sent (`kind
 
 **A read is in the visitor's language.** Each localized field comes back as one value: the
 page's language, else the site's — a string for a text field, one document for a rich text
-(a `json` field with `format: prosemirror`, which holds a document per language,
+(a `json` field with `format: richtext`, which holds a document per language,
 `{ en: doc, fr: doc }`). A field with neither language is left out of the answer.
 
 ### A Model's definition — what a form is built from
