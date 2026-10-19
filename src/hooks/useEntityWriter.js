@@ -15,9 +15,17 @@ const ERROR = 'error'
  * const programme = useEntityWriter({ schema: '@/track', uuid: track.uuid })
  * await programme.create({ title: 'Keynote' }, { section: 'sessions' })   // appended
  * await programme.update(item.id, { ...item.data, room: 'Hall A' })       // whole data
+ * await programme.update(item.id, { ...item.data, title: 'Accueil' }, { language: 'fr' })
  * await programme.move(item.id, { after: other.id })                     // the organiser arranges
  * await programme.remove(item.id)
  * ```
+ *
+ * ⭐ **A translated field is saved one language at a time.** With `{ language }`, each
+ * field the Model declares `localized` that `data` names is its value in that language,
+ * merged into the others the item holds (`ApiClient.updateInLanguage`). On a site with
+ * more than one language, an update without it, of an item read in the page's language,
+ * that gives a translated field one plain value is refused: it would replace every
+ * language with that one (`ApiClient.writeItems`).
  *
  * An item id is the `id` of an item on a read (`entity.hydrated.items`), an integer.
  * A section is named as the Model names it; the package resolves it to the id the
@@ -66,14 +74,14 @@ export function useEntityWriter(target) {
   const uuid = target?.uuid ?? null
   const enabled = !!(client && client.enabled && uuid)
 
-  const send = useCallback(
-    async (ops) => {
+  const run = useCallback(
+    async (write) => {
       if (!enabled) throw ApiError.disabled()
       const mine = (seq.current += 1)
       setState({ status: SAVING, error: null, conflict: null })
       try {
         if (refused) throw refused
-        const result = await client.writeItems({ schema, uuid, ops })
+        const result = await write()
         // Only this Model's reads — a write to one Model says nothing about another,
         // and sweeping wider would refetch pages the user is looking at for nothing.
         client.invalidate((spec) => spec?.schema === schema)
@@ -85,8 +93,9 @@ export function useEntityWriter(target) {
         throw err
       }
     },
-    [client, enabled, schema, refused, uuid],
+    [client, enabled, schema, refused],
   )
+  const send = useCallback((ops) => run(() => client.writeItems({ schema, uuid, ops })), [run, client, schema, uuid])
 
   const api = useMemo(
     () => ({
@@ -124,10 +133,24 @@ export function useEntityWriter(target) {
           ...(position != null ? { position } : {}),
         })
       },
-      /** Replace an item's data. ⚠️ Whole-data replace — round-trip what you do not edit. */
-      update: (itemId, data) => {
+      /**
+       * Replace an item's data. ⚠️ Whole-data replace — round-trip what you do not edit.
+       *
+       * With `{ language }`, each translated field `data` names is its value in that language,
+       * merged into every other language the item holds; a translated field it leaves out
+       * keeps them all. `plain` names the language a plain value — one for every language — is
+       * written in, when a second is added to it: the site's default language unless named.
+       *
+       * @param {number} itemId
+       * @param {object} data
+       * @param {{ language?: string, plain?: string }} [opts]
+       */
+      update: (itemId, data, { language, plain } = {}) => {
         if (data == null || typeof data !== 'object') {
           return Promise.reject(ApiError.invalid('No Data', "update replaces the item's data whole — pass all of it"))
+        }
+        if (language != null) {
+          return run(() => client.updateInLanguage({ schema, uuid, itemId, data, language, plain }))
         }
         return send({ kind: OP.update, [FIELD.item]: itemId, data })
       },
@@ -150,7 +173,7 @@ export function useEntityWriter(target) {
       batch: (ops) => send(ops),
       reset: () => setState({ status: IDLE, error: null, conflict: null }),
     }),
-    [send],
+    [send, run, client, schema, uuid],
   )
 
   return { ...api, ...state, enabled }

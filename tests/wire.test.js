@@ -38,7 +38,15 @@ describe('wire — the assumptions are a reviewable set', () => {
   // without an entry here fails this — building ahead is paid for in bookkeeping. Since
   // 2026-10-16 it also holds `localized-json-is-a-locale-map`: the backend's design says a
   // localized rich text is a map of documents read one language at a time; nobody measured it.
-  const EXPECTED = ['localized-json-is-a-locale-map', 'elevation-by-provider']
+  // Since 2026-10-19 it also holds `unprojected-read-is-every-language` and
+  // `language-chain-adds-base`: an editor's read in every language, and the base language a
+  // read in a regional one walks — both the backend's design, neither measured from here.
+  const EXPECTED = [
+    'localized-json-is-a-locale-map',
+    'elevation-by-provider',
+    'unprojected-read-is-every-language',
+    'language-chain-adds-base',
+  ]
 
   it('names exactly the assumptions we have handed over', () => {
     expect(ASSUMPTIONS.map((a) => a.id)).toEqual(EXPECTED)

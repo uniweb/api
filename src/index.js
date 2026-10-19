@@ -50,6 +50,9 @@ export {
   adminHref,
   ApiError,
   Ledger,
+  languagesOf,
+  inLanguage,
+  withLanguage,
 } from './client.js'
 
 export { useSession } from './hooks/useSession.js'

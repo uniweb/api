@@ -30,7 +30,11 @@ const DISABLED = Object.freeze({ status: 'absent', entity: null, error: null })
  * `schema` is a Model's name — `@/lesson` for one of this foundation's own (named in full
  * by this foundation's copy of the package: `types.js`), any other in full.
  *
- * @param {{ schema: string, uuid: string, via?: string } | null} ref - pass null to skip
+ * A translated field comes back in the page's language. An editor reads every language —
+ * `languages: 'all'` — and saves one with `update(id, data, { language })` (`useEntityWriter`)
+ * or `withLanguage`. The two reads are kept apart: each is its own cache entry.
+ *
+ * @param {{ schema: string, uuid: string, via?: string, languages?: 'all' } | null} ref - pass null to skip
  * @returns {{ status: string, entity: object|null, error: Error|null, refresh: Function }}
  */
 export function useEntity(ref) {
@@ -50,7 +54,7 @@ export function useEntity(ref) {
   const wanted = !!(client && client.enabled && store && ref && ref.uuid && session?.status !== 'anonymous')
   const active = wanted && !refused
   const key = active
-    ? client.cacheKey({ endpoint: `/entities/${ref.uuid}`, schema, via: ref.via })
+    ? client.cacheKey({ endpoint: `/entities/${ref.uuid}`, schema, via: ref.via, languages: ref.languages ?? undefined })
     : null
 
   const subscribe = useCallback((fn) => (key ? store.subscribe(key, fn) : noSubscribe()), [store, key])
@@ -73,7 +77,7 @@ export function useEntity(ref) {
     return () => {
       live = false
     }
-    // `ref` is read through `key`, which already encodes schema, uuid and via.
+    // `ref` is read through `key`, which already encodes schema, uuid, via and languages.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, key, entry, attempt])
 

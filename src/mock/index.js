@@ -21,6 +21,7 @@ import {
 } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
+import { languageChain } from '../languages.js'
 
 /**
  * The mock's postman: each message, as it is sent, where the mock runs — the dev
@@ -254,9 +255,10 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
   const unauthorized = () => problem({ status: 401, title: 'Unauthorized' })
   const notFound = (kind, key) => problem({ status: 404, title: 'Not Found', detail: `${kind} ${key} not found`, kind, key })
 
+  /** The languages a read walks — each it names, then its base language (`languageChain`). */
   function locales(q) {
     const raw = (q.get(PARAM.locale) || '').trim()
-    return raw ? raw.split(',').map((l) => l.trim()).filter(Boolean) : null
+    return raw ? languageChain(raw.split(',').map((l) => l.trim()).filter(Boolean)) : null
   }
 
   /** The entity a path names, checked against `?model=` — or the answer that refuses it. */

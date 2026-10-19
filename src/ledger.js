@@ -27,6 +27,11 @@
  * whose lessons are a sequence, ordered and re-ordered by hand. `move` carries a
  * precondition like any other op on an existing item.
  *
+ * ⭐ **It also keeps how each item was last read** — in the page's language, or in every
+ * language (`languages: 'all'`) — and in which section, under the same rule: a read
+ * that started before this client wrote an item says nothing about it. A write in one
+ * language over a translated field is refused on that knowledge (`ApiClient.writeItems`).
+ *
  * ⛔ **Every field name here comes from `./wire.js`.** This module once read an
  * op's target as `op.item` while the wire says `item_id`, so a correct op looked
  * target-less and went out unguarded — by design, because an item never seen is
@@ -46,6 +51,8 @@ export class Ledger {
   constructor() {
     this._at = new Map()
     this._wrote = new Map()
+    this._projected = new Set()
+    this._section = new Map()
     this._clock = 0
   }
 
@@ -62,6 +69,18 @@ export class Ledger {
 
   forget(itemId) {
     this._at.delete(String(itemId))
+    this._projected.delete(String(itemId))
+    this._section.delete(String(itemId))
+  }
+
+  /** Whether this client last read an item in one language — the page's — rather than in every one. */
+  projected(itemId) {
+    return this._projected.has(String(itemId))
+  }
+
+  /** The id of the section an item was last read in, or null. */
+  sectionOf(itemId) {
+    return this._section.get(String(itemId)) ?? null
   }
 
   /** A point in this ledger's history — take one when a read STARTS. */
@@ -76,8 +95,9 @@ export class Ledger {
    *
    * @param {object[]} [items] - a hydrated read's items
    * @param {number} [mark] - `mark()` taken before the read was sent
+   * @param {{ projected?: boolean }} [how] - whether the read answered them in one language
    */
-  observe(items, mark = Infinity) {
+  observe(items, mark = Infinity, { projected = false } = {}) {
     if (!Array.isArray(items)) return
     for (const item of items) {
       const id = item?.[READ.itemId]
@@ -86,6 +106,10 @@ export class Ledger {
       const key = String(id)
       if ((this._wrote.get(key) ?? 0) > mark) continue
       this._at.set(key, at)
+      if (projected) this._projected.add(key)
+      else this._projected.delete(key)
+      const section = item?.[READ.itemSection]
+      if (section != null) this._section.set(key, section)
     }
   }
 
@@ -136,6 +160,8 @@ export class Ledger {
       }
       this.note(id, r[FIELD.token])
       this._wrote.set(id, this.mark())
+      // What this client wrote is what the item now holds — no longer a read in one language.
+      this._projected.delete(id)
     })
   }
 

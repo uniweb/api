@@ -454,7 +454,11 @@ export const ROUTES = {
  * `locale` is an ordered preference list, comma-separated. ⚠️ **The backend has no
  * fallback of its own**: a localized field with no value in any listed locale is
  * omitted, so a list that names only the visitor's language drops every field not
- * yet translated. This package sends the active locale, then the site's default.
+ * yet translated. This package sends the active locale, then the site's default, then
+ * every other language the site has (`readLanguages`, `./languages.js`): a value held
+ * in any of them is shown, not omitted. *(Until 2026-10-19 it sent the first two.)* A
+ * read with `languages: 'all'` sends none, and answers each localized field whole
+ * (`ASSUMPTIONS`, `unprojected-read-is-every-language`).
  */
 export const PARAM = {
   model: 'model',
@@ -656,6 +660,22 @@ export const READ = {
   itemParent: 'parent_item_id',
   itemToken: 'updated_at',
   canEdit: 'can_edit',
+}
+
+/**
+ * A translated value's languages. A `localized` field holds a per-language map,
+ * `{ en: 'Hello', fr: 'Bonjour' }`, or one plain value, which is the value in every
+ * language; `@` in a map is the value's own metadata, not a language (MEASURED
+ * 2026-10-14). A rich text holds one document per language (`ASSUMPTIONS`,
+ * `localized-json-is-a-locale-map`).
+ *
+ * ⚠️ A map key that is not a language is refused: a primary subtag of letters, then any
+ * subtags, `-` or `_` between — lenient on the tag on purpose (stated by the backend,
+ * 2026-09-26). `withLanguage` refuses the same keys before anything is sent.
+ */
+export const LANGUAGE = {
+  meta: '@',
+  tag: /^[A-Za-z]+(?:[-_][A-Za-z0-9]+)*$/,
 }
 
 /**
@@ -962,5 +982,23 @@ export const ASSUMPTIONS = [
       'the backend names the route, its two parameters and the two answers (2026-10-14), and says it works as step-up\'s provider flow does; what `state` must be, and how an answer joins a `redirect_uri` that has a query of its own, it does not say — a sign-in through a provider sends a fresh `state` per attempt and gets it back',
     breaks:
       "a backend that refuses a `state` it did not mint, or this site's origin as a `redirect_uri`, answers the navigation with a page of its own: the viewer is not elevated, and nothing else changes",
+  },
+  {
+    id: 'unprojected-read-is-every-language',
+    we:
+      "read an entity for editing — `languages: 'all'` — by sending no `locale`, and take each `localized` field as stored: a per-language map, or a plain value that is every language. An `update` with `{ language }` reads the item that way and merges one language into it. The mock answers a read with no locale the same way",
+    from:
+      "the backend's design: read-time projection is opt-in, and a read with no locale is not projected — every localized field whole, a list's rows too. Its design, not measured from this package",
+    breaks:
+      "a backend that projects a read with no locale to a language of its choosing hands an editor one language, and an `update` with `{ language }` merges into that one language and writes it over the others",
+  },
+  {
+    id: 'language-chain-adds-base',
+    we:
+      "walk a read's languages each followed by its base language — `fr-CA` reads `fr-CA`, then `fr` — where the first a value holds wins and a value holding none is left out: in `inLanguage`, and in the mock's answer to a read in a language",
+    from:
+      "the backend's design of its fallback chain: each tag the read names, then its base subtag, once each, in order. Its design, not measured from this package",
+    breaks:
+      "a backend that does not add the base language leaves a value held in `fr` out of a `fr-CA` read, where `inLanguage` and the mock show it",
   },
 ]

@@ -253,9 +253,11 @@ standard one, `@std/person`, or another foundation's. Outside a Uniweb build not
 your foundation's scope, so `@/lesson` is refused before anything is sent (`kind: 'invalid'`).
 
 **A read is in the visitor's language.** Each localized field comes back as one value: the
-page's language, else the site's — a string for a text field, one document for a rich text
-(a `json` field with `format: richtext`, which holds a document per language,
-`{ en: doc, fr: doc }`). A field with neither language is left out of the answer.
+page's language, else the site's default, else any other language the site has — a string
+for a text field, one document for a rich text (a `json` field with `format: richtext`, which
+holds a document per language, `{ en: doc, fr: doc }`). A field held in none of the site's
+languages is left out of the answer. An editor reads every language: see *Translated
+fields*, below.
 
 ### A Model's definition — what a form is built from
 
@@ -342,7 +344,8 @@ package resolves it to what the backend's item route takes.
   section — is an error of `kind: 'rule'`, not a conflict: nobody else is involved, and
   the same write fails the same way again.
 
-⚠️ `update` replaces the item's data whole. Spread what you are not editing.
+⚠️ `update` replaces the item's data whole. Spread what you are not editing. A translated
+field is saved one language at a time — *Translated fields*, below.
 
 To create an entity, name each item's section:
 
@@ -378,6 +381,47 @@ Every failure is an `ApiError` with a `kind`: `auth` (sign in), `unverified`, `a
 `forbidden` (`error.extensions.op` names what was refused), `invalid`
 (`error.extensions.field` names a field the Model refused), `conflict`, `rule`,
 `rate-limited`, `unavailable`, `disabled`. Branch on `kind`; `detail` is prose.
+
+## Translated fields
+
+A field the Model declares `localized` holds a map of languages, `{ en: 'Hello', fr: 'Bonjour' }`,
+or one plain value, which is the value in every language; a rich text holds one document per
+language. A read answers it in the page's language — so that one value, written back as the
+field's whole value, would become the value in every language, and the others would be lost.
+
+**Read every language to edit.** `languages: 'all'` reads each translated field as stored. It is a
+cache entry of its own, beside the read in the page's language:
+
+```jsx
+const { entity } = useEntity({ schema: '@/profile', uuid, languages: 'all' })
+// entity.hydrated.items[0].data.bio → { en: '…', fr: '…' }, or one plain value
+```
+
+**Save one language.** `update` with `{ language }` takes each translated field you name as its value
+in that language, merges it into the languages the item holds, and keeps every language of a
+translated field you leave out:
+
+```jsx
+await writer.update(item.id, { ...item.data, bio: 'Bonjour' }, { language: 'fr' })
+```
+
+- It reads the item again for its other languages, and writes it guarded by the version you were
+  shown: an item someone changed since is a `conflict`, never a merge into their change.
+- A plain value gains a language only when a second one is added, and only you know which language
+  it was written in: the site's default language, unless you name another — `{ language, plain }`.
+- ⛔ **On a site with more than one language, an update without `{ language }` that gives a translated
+  field one plain value is refused** (`kind: 'invalid'`, `title: 'Read In One Language'`) when the
+  item was read in the page's language: it would replace every language. Pass `{ language }`, or read
+  with `languages: 'all'` and write every language.
+
+**Helpers**, for a form that edits the map itself — pure functions, for a `localized` field's value
+only (a json field's `{ lat, lng }` is not a map of languages, and they cannot tell):
+
+| | |
+|---|---|
+| `languagesOf(value)` | the languages it holds, its `@` metadata aside — `[]` for a plain value, which is every language |
+| `inLanguage(value, languages?)` | its value as a read in a language answers it — by default the one on this page; a regional language reads its base language after it (`fr-CA`, then `fr`); `undefined` when it holds none |
+| `withLanguage(value, language, next, { plain? })` | the value with one language set, the others and its `@` metadata kept; `next` undefined takes the language out; a plain value needs `plain`, the language it is written in |
 
 ## Access to an entry
 
@@ -633,7 +677,8 @@ React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
 `mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`, for invitations,
 `listInvitations`, `acceptInvitation` and `declineInvitation`, for units, `listUnits`, and for
 access to an entry, `listAccess`, `listAccessCandidates`, `grantAccess`, `revokeAccess` and
-`leaveAccess`.
+`leaveAccess`, and for translated fields, `languagesOf`, `inLanguage` and `withLanguage` —
+`readEntity({ …, languages: 'all' })` reads every language.
 
 ## License
 

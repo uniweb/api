@@ -18,6 +18,7 @@ import { withTypeName } from './types.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
+import { readLanguages, readsEveryLanguage, isLanguageMap, mergeInLanguage, checkLanguage } from './languages.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
 import { listInvitationsWith, acceptInvitationWith, declineInvitationWith } from './invitations.js'
 import { viewerElevation, watchLapse, elevateWith, lowerWith, elevateWithProviderOf } from './elevation.js'
@@ -368,21 +369,20 @@ export class ApiClient {
 
   /**
    * The locale preference list for a read of localized values: the active locale,
-   * then the site's default.
+   * then the site's default, then every other language the site has (`readLanguages`).
    *
    * ⛔ **The backend applies the list in order and has no fallback of its own** — a
    * localized field with no value in any listed locale is omitted from the answer
    * (measured 2026-09-18: `locale=de` drops an English-only field, `locale=de,en`
    * returns it in English). Sending the active locale alone therefore hid every
-   * field not yet translated from a visitor in another language; the site's default
-   * is the same fallback its own static content uses.
+   * field not yet translated from a visitor in another language; and the site's
+   * default alone after it hid a value held only in a third language the site has —
+   * a member's bio written in French, on the English page. *(It sent those two until
+   * 2026-10-19.)*
    */
   _localeQuery() {
-    const website = this.website
-    const active = website?.getActiveLocale?.() ?? website?.activeLocale ?? null
-    const fallback = website?.getDefaultLocale?.() ?? website?.defaultLocale ?? null
-    const locales = [active, fallback].filter((l, i, all) => l && all.indexOf(l) === i)
-    return locales.length ? { [PARAM.locale]: locales.join(',') } : null
+    const languages = readLanguages(this.website)
+    return languages.length ? { [PARAM.locale]: languages.join(',') } : null
   }
 
   // ── The session ───────────────────────────────────────────────────────────
@@ -797,6 +797,12 @@ export class ApiClient {
    * ⭐ **The read seeds the concurrency ledger** with each item's `updated_at`, so
    * the first edit of an item is guarded by the version the viewer was shown.
    *
+   * ⭐ **In the page's language, or in every one.** A translated field comes back as
+   * one value, the page's language first (`_localeQuery`). With `languages: 'all'` it
+   * comes back as stored — a map of languages, or one plain value for every language —
+   * which is the read an editor saves from (`withLanguage`, or `update` with
+   * `{ language }`): written back whole, a value in one language would replace them all.
+   *
    * `absent` is one word for not-found-and-not-permitted, by the backend's
    * design; a component renders its enrol or paywall on it and never says
    * "deleted". Any other refusal throws.
@@ -805,17 +811,19 @@ export class ApiClient {
    * @param {string} args.schema - the entity's Model, e.g. `@acme/lesson` — required; the backend reads by Model
    * @param {string} args.uuid
    * @param {string} [args.via] - the granting container's uuid
+   * @param {'all'} [args.languages] - every language of each translated field; absent, the page's
    * @param {AbortSignal} [args.signal]
    * @returns {Promise<{ status: 'ready'|'absent', entity: object|null }>}
    */
-  async readEntity({ schema, uuid, via, signal } = {}) {
+  async readEntity({ schema, uuid, via, languages, signal } = {}) {
     if (!uuid) throw ApiError.invalid('No Entity', 'readEntity needs a uuid')
     if (!schema) throw ApiError.invalid('No Model', 'readEntity needs a schema — the backend reads an entity by its Model')
+    const inOne = readsEveryLanguage(languages, 'readEntity') ? null : this._localeQuery()
     const mark = this.ledger.mark()
     try {
       const [entity, sections] = await Promise.all([
         this.request('GET', ROUTES.read(uuid), {
-          query: { [PARAM.model]: schema, [PARAM.via]: via, ...this._localeQuery() },
+          query: { [PARAM.model]: schema, [PARAM.via]: via, ...inOne },
           signal,
         }),
         // A label, not a condition of the read: a definition this viewer cannot read
@@ -823,7 +831,7 @@ export class ApiClient {
         this.sections(schema, signal).catch(() => null),
       ])
       const items = entity?.[READ.hydrated]?.[READ.items]
-      this.ledger.observe(items, mark)
+      this.ledger.observe(items, mark, { projected: inOne != null })
       labelSections(items, sections)
       return { status: 'ready', entity }
     } catch (err) {
@@ -1143,6 +1151,15 @@ export class ApiClient {
    * own item, and a batch is not rebased at all: a guessed item would put one item's
    * token on another.
    *
+   * ## ⛔ A write in one language over a translated field is REFUSED
+   *
+   * On a site with more than one language, an `update` of an item this client last read
+   * in the page's language is refused when it gives a field the section declares
+   * `localized` one plain value: what it read was that language's value, and written
+   * whole it would become the value in every language, the others lost. Say which
+   * language it is (`updateInLanguage`, `update(id, data, { language })`), or read the
+   * entity with `languages: 'all'` and write every language.
+   *
    * @param {object} args
    * @param {string} args.schema - the entity's Model
    * @param {string} args.uuid - the entity whose items these are
@@ -1156,7 +1173,85 @@ export class ApiClient {
     if (!schema) throw ApiError.invalid('No Model', 'writeItems needs a schema')
     const list = Array.isArray(ops) ? ops : [ops]
     if (list.length === 0) throw ApiError.invalid('No Ops', 'writeItems needs at least one op')
+    await this._refuseOneLanguageWrites(schema, list, signal)
+    return this._writeItems({ schema, uuid, ops, readback, signal })
+  }
 
+  /** The refusal `writeItems` describes — an `update` that would make one language's value every language's. */
+  async _refuseOneLanguageWrites(schema, ops, signal) {
+    if (!this.website?.hasMultipleLocales?.()) return
+    const read = ops.filter((op) => op?.kind === OP.update && op?.[FIELD.item] != null && this.ledger.projected(op[FIELD.item]))
+    if (!read.length) return
+    // Which fields are translated is the definition's to say; one this viewer cannot read
+    // leaves the write to the backend, as it leaves a read unlabelled.
+    const definition = await this._definition(schema, signal).catch(() => null)
+    if (!definition) return
+    const { sections } = formOf(definition)
+    for (const op of read) {
+      const id = op[FIELD.item]
+      const section = sections.find((s) => s.id === this.ledger.sectionOf(id))
+      const flat = (section?.fields ?? [])
+        .filter((field) => field.localized && op.data?.[field.key] != null && !isLanguageMap(op.data[field.key]))
+        .map((field) => field.key)
+      if (flat.length) {
+        throw ApiError.invalid(
+          'Read In One Language',
+          `item ${id} was read in the page's language: written whole, ${flat.join(', ')} would become the same in every language — update(id, data, { language }) saves one language, or read it with languages: 'all' to write them all`,
+        )
+      }
+    }
+  }
+
+  /**
+   * Update one item with its translated fields in one language — merged into every other
+   * language the item holds, which this reads first.
+   *
+   * Each field the item's section declares `localized` that `data` names is its value in
+   * `language` (a map of languages is taken whole); a translated field `data` leaves out
+   * keeps every language it has; every other field is `data`'s, as with any update. A
+   * plain value — one for every language — gains a language as written in `plain`, the
+   * site's default language unless named (`withLanguage`).
+   *
+   * ⭐ **Guarded by what the viewer read, not by this read.** The item is read again in
+   * every language for its other languages only; the write carries the token the viewer
+   * last saw, so an item someone else changed since is a conflict, never a merge into
+   * their change.
+   *
+   * @param {object} args
+   * @param {string} args.schema
+   * @param {string} args.uuid - the entity
+   * @param {number} args.itemId
+   * @param {object} args.data - the item's data, its translated fields in `language`
+   * @param {string} args.language
+   * @param {string} [args.plain] - the language a plain value is written in
+   * @param {AbortSignal} [args.signal]
+   * @returns {Promise<*>} the write's answer, already absorbed
+   */
+  async updateInLanguage({ schema, uuid, itemId, data, language, plain, signal } = {}) {
+    if (!uuid) throw ApiError.invalid('No Entity', 'update needs the entity')
+    if (!schema) throw ApiError.invalid('No Model', 'update needs a schema')
+    if (itemId == null) throw ApiError.invalid('No Item', 'update needs an item id')
+    if (data == null || typeof data !== 'object') throw ApiError.invalid('No Data', "update needs the item's data")
+    checkLanguage(language, 'update')
+    const [entity, definition] = await Promise.all([
+      this.request('GET', ROUTES.read(uuid), { query: { [PARAM.model]: schema }, signal }),
+      this._definition(schema, signal),
+    ])
+    const item = (entity?.[READ.hydrated]?.[READ.items] ?? []).find((i) => String(i?.[READ.itemId]) === String(itemId))
+    if (!item) throw ApiError.invalid('No Item', `update: the entity has no item ${itemId}`)
+    const section = formOf(definition).sections.find((s) => s.id === item[READ.itemSection])
+    const localized = new Set((section?.fields ?? []).filter((field) => field.localized).map((field) => field.key))
+    const merged = mergeInLanguage(item.data, data, {
+      language,
+      plain: plain ?? this.website?.getDefaultLocale?.() ?? undefined,
+      localized,
+    })
+    return this._writeItems({ schema, uuid, ops: { kind: OP.update, [FIELD.item]: itemId, data: merged }, signal })
+  }
+
+  /** `writeItems` past its refusals: resolve, stamp, send, absorb — and rebase a conflict. */
+  async _writeItems({ schema, uuid, ops, readback = false, signal }) {
+    const list = Array.isArray(ops) ? ops : [ops]
     const resolved = await Promise.all(list.map((op) => this._resolveOp(schema, op, signal)))
     const stamped = resolved.map((op) => this.ledger.stamp(op))
     const query = { [PARAM.model]: schema }
@@ -1409,3 +1504,4 @@ export { mailedLink, forgetMailedLink } from './mailed-links.js'
 export { isElevated, rolesInFull, elevationReturn } from './elevation.js'
 export { ApiError, kindOf } from './errors.js'
 export { Ledger } from './ledger.js'
+export { languagesOf, inLanguage, withLanguage } from './languages.js'
