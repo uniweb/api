@@ -27,10 +27,14 @@
  * whose lessons are a sequence, ordered and re-ordered by hand. `move` carries a
  * precondition like any other op on an existing item.
  *
- * ⭐ **It also keeps how each item was last read** — in the page's language, or in every
- * language (`languages: 'all'`) — and in which section, under the same rule: a read
- * that started before this client wrote an item says nothing about it. A write in one
- * language over a translated field is refused on that knowledge (`ApiClient.writeItems`).
+ * ⭐ **It also keeps whether this client has read each item's current version in every
+ * language** (`languages: 'all'`), or only in the page's — and in which section. A read in
+ * every language marks the version it saw; a read in the page's language of that same
+ * version changes nothing, so a component that shows the one and edits from the other is
+ * answered the same whichever lands first; and a write changes nothing either — the data a
+ * component holds after it is still what its reads gave it. A write in one language over a
+ * translated field is refused on that knowledge (`ApiClient.writeItems`). The same rule as
+ * tokens holds: a read that started before this client wrote an item says nothing about it.
  *
  * ⛔ **Every field name here comes from `./wire.js`.** This module once read an
  * op's target as `op.item` while the wire says `item_id`, so a correct op looked
@@ -52,6 +56,7 @@ export class Ledger {
     this._at = new Map()
     this._wrote = new Map()
     this._projected = new Set()
+    this._whole = new Map()
     this._section = new Map()
     this._clock = 0
   }
@@ -70,10 +75,11 @@ export class Ledger {
   forget(itemId) {
     this._at.delete(String(itemId))
     this._projected.delete(String(itemId))
+    this._whole.delete(String(itemId))
     this._section.delete(String(itemId))
   }
 
-  /** Whether this client last read an item in one language — the page's — rather than in every one. */
+  /** Whether this client read an item's current version in the page's language only, never in every one. */
   projected(itemId) {
     return this._projected.has(String(itemId))
   }
@@ -106,8 +112,12 @@ export class Ledger {
       const key = String(id)
       if ((this._wrote.get(key) ?? 0) > mark) continue
       this._at.set(key, at)
-      if (projected) this._projected.add(key)
-      else this._projected.delete(key)
+      if (!projected) {
+        this._whole.set(key, at)
+        this._projected.delete(key)
+      } else if (this._whole.get(key) !== at) {
+        this._projected.add(key)
+      }
       const section = item?.[READ.itemSection]
       if (section != null) this._section.set(key, section)
     }
@@ -160,8 +170,6 @@ export class Ledger {
       }
       this.note(id, r[FIELD.token])
       this._wrote.set(id, this.mark())
-      // What this client wrote is what the item now holds — no longer a read in one language.
-      this._projected.delete(id)
     })
   }
 

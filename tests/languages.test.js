@@ -253,6 +253,28 @@ describe('⛔ an update in one language over a translated field, without saying 
     await client.writeItems({ schema: '@acme/lesson', uuid: LESSON, ops: { kind: 'update', item_id: item.id, data: { ...item.data, title: 'Breathe' } } })
     expect(stored(mock).title).toBe('Breathe')
   })
+
+  it("⭐ is written whichever read lands last — the page's read of a version read in every language changes nothing", async () => {
+    // A component that shows the page's read and edits from the read in every language loads
+    // both at once, in no fixed order.
+    const { client, mock } = await siteIn('fr', { title: { en: 'Breathing', fr: 'Respirer' } })
+    await client.readEntity({ schema: '@acme/lesson', uuid: LESSON, languages: 'all' })
+    const { entity } = await client.readEntity({ schema: '@acme/lesson', uuid: LESSON })
+    await client.writeItems({ schema: '@acme/lesson', uuid: LESSON, ops: { kind: 'update', item_id: itemOf(entity).id, data: { title: 'One title' } } })
+    expect(stored(mock).title).toBe('One title')
+  })
+
+  it('stays refused after an update in one language — what the component holds is still a read in one', async () => {
+    const { client, mock } = await siteIn('fr', { title: { en: 'Breathing', fr: 'Respirer' } })
+    const { entity } = await client.readEntity({ schema: '@acme/lesson', uuid: LESSON })
+    const item = itemOf(entity)
+    await client.updateInLanguage({ schema: '@acme/lesson', uuid: LESSON, itemId: item.id, data: { title: 'Respirer lentement' }, language: 'fr' })
+    const err = await client
+      .writeItems({ schema: '@acme/lesson', uuid: LESSON, ops: { kind: 'update', item_id: item.id, data: { title: 'Respirer vite' } } })
+      .catch((e) => e)
+    expect(err).toMatchObject({ kind: 'invalid', title: 'Read In One Language' })
+    expect(stored(mock).title).toEqual({ en: 'Breathing', fr: 'Respirer lentement' })
+  })
 })
 
 describe('the hooks', () => {
