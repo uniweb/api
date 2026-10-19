@@ -457,3 +457,29 @@ describe('a definition shows only what a data schema declares', () => {
     expect((await client.createEntity({ schema: '@acme/probe', items: [{ section: 'head', data: { year: '2024' } }] })).uuid).toBeTruthy()
   })
 })
+
+// An item's uuid is new each time the mock starts, so a seed names one to pick it.
+describe('a seed that picks from a seeded list', () => {
+  const CANADA = '01926d5e-0000-7000-8000-0000000c0001'
+  const CV = '01926d5e-0000-7000-8000-00000000f002'
+  const lists = (uuidOf) => ({ ...ENTITIES[0], items: ENTITIES[0].items.map((item) => ({ ...item, uuid: uuidOf(item) ?? undefined })) })
+  const pinned = (uuid = CANADA) => lists((item) => (item.data?.code === 'CA' ? uuid : null))
+  const cv = (country, extra = {}) => ({ uuid: CV, model: '@acme/cv', owner: 'attendee', items: [{ section: 'head', data: { title: 'Dr. B', country }, ...extra }] })
+
+  it('⭐ names a choice by the uuid the seed gives it, and reads the pick back as that choice', async () => {
+    // The CV comes first: a pick is resolved when it is read, so a seed's order does not matter.
+    const { client } = stack({ seed: seed({ entities: [cv(CANADA), pinned()] }) })
+    await signIn(client, 'attendee')
+    const countries = (await client.listChoices({ schema: '@acme/cv', field: 'country' })).items
+    expect(named(countries, 'code', 'CA').uuid).toBe(CANADA)
+    const { entity } = await client.readEntity({ schema: '@acme/cv', uuid: CV })
+    expect(entity.hydrated.items[0].data.country).toMatchObject({ item: CANADA, brief: { code: 'CA' } })
+  })
+
+  it('⛔ refuses to start on an item uuid that is not a UUID, or that another item has', () => {
+    const start = (entities) => () => createMockBackend({ onMail: null, seed: seed({ entities }) })
+    expect(start([pinned('canada')])).toThrow(/'canada', which is not a UUID/)
+    expect(start([lists((item) => (item.section === 'countries' ? CANADA : null))])).toThrow(/is given twice/)
+    expect(start([cv(CANADA, { uuid: CANADA }), pinned()])).toThrow(/is given twice/)
+  })
+})

@@ -233,8 +233,10 @@ export class MockStore {
    *   (`./schema-shape.js`). Without it the sections are inferred: a one-item brief
    *   section named for the Model, and a many-item section for every section name the
    *   seed's items and `append_only` use.
-   * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, unit?, grants?, items?: [{ section, data, parent? }] }`.
+   * @param {object[]} [seed.entities] - `{ uuid?, model, owner?, unit?, grants?, items?: [{ section, data, uuid?, parent?, items? }] }`.
    *   `uuid` must be a UUID. (`data`, the older spelling, becomes the brief section's item.)
+   *   An item's `uuid` is new each time the mock starts unless the seed gives one — a UUID no
+   *   other item has — which is how another seeded item's `item_ref` picks it.
    *   `unit` — a seeded unit's handle — is where it lands, the root by default; `grants`
    *   — `{ username: 'read' | 'edit' | 'admin' }` — is the access its owner gave.
    * @param {'read'|'edit'|Object<string,'read'|'edit'>} [seed.memberFloor] - what membership
@@ -1042,12 +1044,25 @@ export class MockStore {
     const brief = model.sections.find((s) => s.is_brief)
     if (data && brief && Object.keys(data).length) this.addItem(entity, brief, { data })
     // An item may carry the items that sit under it — a nested section's, or its own
-    // section's when its items nest — as `items`, so a seed never needs an item id.
+    // section's when its items nest — as `items`, so a seed never needs an item id. Its uuid
+    // is new each time the mock starts unless the seed gives one, which is how another seeded
+    // item's `item_ref` picks it.
     const place = (list, parent) => {
       for (const item of list) {
         const section = this.sectionNamed(model, item.section)
         if (!section) throw new Error(`[uniweb/api mock] seed: ${modelName} has no section '${item.section}'`)
         const made = this.addItem(entity, section, { data: item.data ?? {}, parent: parent ?? item.parent ?? null })
+        if (item.uuid != null) {
+          if (!isUuid(item.uuid)) {
+            throw new Error(
+              `[uniweb/api mock] seed: a ${modelName} item of '${item.section}' has uuid '${item.uuid}', which is not a UUID — a backend's items are named by UUIDs, and an item_ref holding anything else is refused`,
+            )
+          }
+          if (entity.items.some((i) => i.uuid === item.uuid) || this.itemByUuid(item.uuid)) {
+            throw new Error(`[uniweb/api mock] seed: item uuid '${item.uuid}' is given twice — a uuid names one item`)
+          }
+          made.uuid = item.uuid
+        }
         if (Array.isArray(item.items)) place(item.items, made.id)
       }
     }

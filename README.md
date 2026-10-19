@@ -653,10 +653,14 @@ backend takes is left out of it (a backend refuses it when you register). Seed a
 choices as items of a lists entry, each item holding the items that sit under it:
 
 ```js
-{ section: 'countries', data: { code: 'CA', label: { en: 'Canada' } }, items: [
+{ section: 'countries', uuid: '01926d5e-0000-7000-8000-0000000c0001', data: { code: 'CA', label: { en: 'Canada' } }, items: [
   { section: 'countries/subdivisions', data: { name: { en: 'Ontario' } } },
 ] }
 ```
+
+An item's uuid is new each time the mock starts unless the seed gives one, as Canada has
+above: a UUID no other item has. That is how a seeded entry picks a choice — `country:
+'01926d5e-0000-7000-8000-0000000c0001'` in a seeded CV reads back as Canada.
 
 A field whose `options:` names no section of a seeded Model is reported when the mock
 starts, and offers no choices — a backend refuses to register it.

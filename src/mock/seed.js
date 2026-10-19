@@ -12,7 +12,8 @@
  *   anyone signed in may create entries of any of them.
  * - **`entities`** — `uuid` must be a UUID, as it is on the wire; content is items,
  *   each naming its section. The entity's `brief` is derived from its brief
- *   section's item, as the backend derives it.
+ *   section's item, as the backend derives it. An item may give its own `uuid`, so
+ *   another item's `item_ref` can pick it.
  * - **`offers`** — optional, and none here: `{ email, invitations?, grants? }`, an
  *   invitation sent to an address with no account, mailed when the mock starts. Its
  *   link (`/?offer=…`) is how a site's pages are tried with one. Claimed — or bound,
