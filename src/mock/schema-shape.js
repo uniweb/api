@@ -1,51 +1,20 @@
 /**
- * Field-shape checking for writes, and an HONEST NAME for what we cannot check yet.
+ * Field-shape checking for item writes — the backend's rules, applied by the mock.
  *
- * ✅ **ANSWERED 2026-09-18 — the open question below.** There is no entity-level
- * data: an entity's content is always items in its sections, a `single` (brief)
- * section's item included, and creating an entity names each item's section. So
- * every write the mock sees is an item write into a declared section, checked by
- * `checkItemWrite`. `checkEntityDataWrite` and the `UNRESOLVED` classification
- * remain for code that imported them; the mock no longer calls them. What follows
- * is kept as the record of how the question stood.
+ * An entity's content is items, each in a section of its Model — a `single` (brief)
+ * section's one item included — and creating an entity names each item's section. So
+ * every write the mock sees is an item write, checked here against the fields of the
+ * section it names, and refused as the backend refuses it.
  *
- * ⭐ **Why this exists.** Until now the mock enforced exactly two things —
- * `creatable_by` and `append_only` — and performed no field-shape validation at
- * all. A demo could therefore write `{ minutes: "twelve" }` into a field the
- * schema calls an int and find out at integration. This module closes that for
- * the one storage shape we have evidence about, and refuses to guess about the
- * rest.
+ * | the section written | what we do |
+ * |---|---|
+ * | declared by the Model, `single` or `multi` | **ENFORCE** its fields |
+ * | not declared | **REFUSE** — a typo or an accidental section |
+ * | on the seed's `migration_debt` list | **DIAGNOSE** — written, and recorded |
  *
- * ## The evidence boundary — this is the whole design
- *
- * | shape | what we know | what we do |
- * |---|---|---|
- * | a `many:` (multi) section | **MEASURED** — stored as entity items | **ENFORCE** field shapes |
- * | a single/`brief` section | ⛔ **OPEN** — see below | **DIAGNOSE**, never refuse |
- * | a section the schema does not declare | ⛔ **OPEN** — same question | **DIAGNOSE**, never refuse |
- * | the create-time entity `data` payload | ⛔ **OPEN** — same question | **DIAGNOSE**, never refuse |
- *
- * ⛔ **The open question (one question, three faces).** A schema written with flat
- * `fields:` is lowered to exactly one `kind: 'single'`, `brief: true` section named
- * after the model — MEASURED in `@uniweb/build@0.44.4`
- * `src/uwx/data-schema.js::lowerFieldsForm`, which also notes "the registry's root
- * is always `sections:`". Separately, this API's entity routes are
- * list / read / readBatch / create / items / remove / removeBatch: entity `data` is
- * supplied at creation and there is no route to update it, while items are mutable.
- *
- * So: **what is the intended backend representation for the fields of a
- * single/brief section once the entity exists** — mutable entity data, an item, or
- * another update mechanism? Nobody has answered that yet. It is why a real
- * consumer (the Courses solution) keeps editable lesson fields in an item and
- * overlays course metadata with a mutable item over create-time data.
- *
- * ⛔ **Do NOT read "diagnose" as a permanent mock semantic.** It is not a policy
- * that writes of unknown shape are allowed; it is the absence of an answer, named.
- * That is why the state is called `UNRESOLVED_STORAGE_MAPPING` rather than
- * "warn" or "allow": when the question is answered, the fix is to change this
- * model's entry in `ENFORCEMENT` (and, if the answer says so, teach
- * `classifySection` the new mapping) — not to redesign the validator or hunt for
- * the places that quietly let writes through.
+ * ⛔ *Until 2026-10-19 this module also classified the `data` supplied when an entity is
+ * created as an unresolved storage mapping (`checkEntityDataWrite`, `STORAGE.UNRESOLVED`),
+ * for a question answered 2026-09-18: there is no entity-level data. Nothing called it.*
  */
 
 /** Where a written section lives, and therefore what we are entitled to do about it. */
@@ -56,8 +25,7 @@ export const STORAGE = {
    * ⭐ **RULED** *(Diego, 2026-09-11)*: sections ARE the storage model and hold
    * items ("section => abstract, item => concrete"); a `single` section simply holds
    * one. `brief: true` is an optional designation about what a card needs, **not** a
-   * storage class. So a declared section's records are checkable whatever its kind —
-   * which is why `single` no longer lives in the unresolved branch.
+   * storage class. So a declared section's records are checkable whatever its kind.
    */
   ITEMS: 'items',
   /**
@@ -79,11 +47,6 @@ export const STORAGE = {
    * or an accidental section, which must not be able to hide in the debt bucket.
    */
   UNDECLARED: 'undeclared-section',
-  /**
-   * ⛔ STILL OPEN. The create-time `data` payload: the one shape whose wire contract
-   * is genuinely unknown, pending the entity-update route.
-   */
-  UNRESOLVED: 'unresolved-storage-mapping',
 }
 
 /** Why a write was tolerated rather than judged. Reported; never changes what happens. */
@@ -92,22 +55,13 @@ export const UNRESOLVED_REASON = {
   UNDECLARED_SECTION: 'undeclared-section',
   /** On the list: declared, but the records stored there do not match the declaration. */
   DIVERGENT_SECTION: 'divergent-section',
-  /** The `data` supplied at creation. Awaiting the entity-update wire contract. */
-  ENTITY_DATA_PAYLOAD: 'entity-data-payload',
 }
 
-/**
- * What to DO about each storage classification.
- *
- * ⭐ **This table is the resolution point.** Answering the open question means
- * changing `UNRESOLVED` here (to `'enforce'`, or to whatever the answer implies),
- * and nothing else in this file's callers moves.
- */
+/** What to DO about each storage classification — the one table that says it. */
 export const ENFORCEMENT = {
   [STORAGE.ITEMS]: 'enforce',
   [STORAGE.UNDECLARED]: 'enforce',
   [STORAGE.MIGRATION_DEBT]: 'diagnose',
-  [STORAGE.UNRESOLVED]: 'diagnose',
 }
 
 /** Outcomes a check can produce. `VIOLATES` is the only one a caller may refuse on. */
@@ -571,9 +525,8 @@ export function checkItemWrite({ decl, section, data }) {
   }
   // ⭐ ALWAYS diagnosed, even when the data looks fine and even when there were no
   // fields to check it against. The finding is not "these values are wrong" — it is
-  // "this write's storage mapping is unanswered". A clean-looking write under an
-  // unresolved classification is still riding on the open question, and the whole
-  // value of the list is that it maps exactly which writes those are.
+  // "this write rides on the seed's debt list", and the whole value of the list is
+  // that it maps exactly which writes those are.
   return {
     outcome: OUTCOME.DIAGNOSED,
     storage: where.storage,
@@ -637,29 +590,4 @@ function mapChanged(list, fn) {
     if (stored !== entry) (out ??= [...list])[i] = stored
   })
   return out ?? list
-}
-
-/**
- * Check the `data` supplied at entity creation.
- *
- * ⛔ **Always the unresolved branch, by construction.** Whether this payload is the
- * brief section's fields (and therefore checkable against them) is precisely the
- * open question. We report what we see and refuse nothing.
- */
-export function checkEntityDataWrite({ decl, data }) {
-  if (!decl?.sections) return { outcome: OUTCOME.UNCHECKED, problems: [], undeclared: [] }
-
-  const briefName = Object.keys(decl.sections).find((n) => decl.sections[n]?.brief)
-  const brief = briefName ? decl.sections[briefName] : null
-  const problems = brief?.fields ? checkFields(brief.fields, data) : []
-  const undeclared = brief?.fields ? undeclaredKeys(brief.fields, data) : []
-
-  // Always diagnosed, for the same reason as `checkItemWrite` — see there.
-  return {
-    outcome: OUTCOME.DIAGNOSED,
-    storage: STORAGE.UNRESOLVED,
-    reason: UNRESOLVED_REASON.ENTITY_DATA_PAYLOAD,
-    problems,
-    undeclared,
-  }
 }

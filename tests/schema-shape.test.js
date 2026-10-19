@@ -394,12 +394,13 @@ describe('the registry lowering spelling (multiple: true)', () => {
   })
 })
 
-describe('the resolution point', () => {
+describe('the enforcement table', () => {
   it('is a table — what is enforced and what is owed is declared in one place', () => {
-    expect(ENFORCEMENT[STORAGE.ITEMS]).toBe('enforce')
-    expect(ENFORCEMENT[STORAGE.UNDECLARED]).toBe('enforce')
-    expect(ENFORCEMENT[STORAGE.MIGRATION_DEBT]).toBe('diagnose')
-    expect(ENFORCEMENT[STORAGE.UNRESOLVED]).toBe('diagnose')
+    expect(ENFORCEMENT).toEqual({
+      [STORAGE.ITEMS]: 'enforce',
+      [STORAGE.UNDECLARED]: 'enforce',
+      [STORAGE.MIGRATION_DEBT]: 'diagnose',
+    })
   })
 
   it('checkItemWrite reports the classification, so a caller never re-derives it', () => {
