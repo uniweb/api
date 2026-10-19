@@ -220,7 +220,7 @@ export class MockStore {
    * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, operator? }`.
    *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
    *   also marks the operator.)
-   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable?, migration_debt? } }`.
+   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable? } }`.
    *   Named as a call sends it, and matched exactly: your foundation's own types as `@/name`,
    *   which is how `uniweb dev` sends them, and any other in full — `@std/person` is not
    *   `@/person`. A built foundation sends its own in full, `@<scope>/name`, as a backend
@@ -315,11 +315,6 @@ export class MockStore {
       }
     }
 
-    /**
-     * Shape findings the mock saw but did not refuse — writes into a section the
-     * seed lists as `migration_debt`. Empty is the good state.
-     */
-    this.diagnostics = []
     /**
      * Mail the backend would send: `{ to, subject, token, link }`, newest last. `link` is
      * the mail's link without its origin — the site's root, its step's parameter and the
@@ -670,6 +665,14 @@ export class MockStore {
   // ── Models ──────────────────────────────────────────────────────────────────
 
   defineModel(name, decl = {}, itemSections = new Set()) {
+    // ⛔ `migration_debt` is retired (2026-10-19): every section a Model declares is checked,
+    // and one it does not declare is refused — a seed that still lists it says so here.
+    if (decl?.migration_debt !== undefined) {
+      throw new Error(
+        `[uniweb/api mock] ${name}: \`migration_debt\` is retired — every section a Model declares is checked, ` +
+          'and one it does not declare is refused. Declare the section, or remove the list.',
+      )
+    }
     const appendOnly = (sectionName, section) =>
       section?.append_only === true ||
       decl?.append_only === true ||
@@ -686,7 +689,7 @@ export class MockStore {
       created_at: at,
       updated_at: at,
     }
-    const add = (sectionName, { kind, brief = false, section = null, debt = false, parent = null }) => {
+    const add = (sectionName, { kind, brief = false, section = null, parent = null }) => {
       const row = {
         id: (this.ids.section += 1),
         // Never in the definition (`SCHEMA`): a field whose choices are this section's
@@ -704,7 +707,6 @@ export class MockStore {
         // Its own fields, by key — a nested section is a section of its own, not a field.
         fields: leavesOf(section),
         decl: section,
-        debt,
       }
       model.sections.push(row)
       return row
@@ -720,11 +722,6 @@ export class MockStore {
         }
       }
       walk(Object.entries(declared), null)
-      // Sections the site KNOWS diverge from the declaration, kept writable while
-      // they are unwound — and only the ones it named.
-      for (const sectionName of decl.migration_debt || []) {
-        if (!declared[sectionName]) add(sectionName, { kind: 'multi', debt: true })
-      }
     } else {
       const own = shortName(name)
       add(own, { kind: 'single', brief: true })
@@ -1501,15 +1498,14 @@ export class MockStore {
         `section ${section.id} (kind=single) accepts at most one item — create it once, then update it`,
       )
     }
-    return this.shapeGuard(model, section, data, itemId)
+    return this.shapeGuard(model, section, data)
   }
 
   /**
    * Shape-check a write against the seed's declaration, when it gave one. A
-   * violation is the backend's `400 Validation` naming the field; a write into a
-   * section on the seed's `migration_debt` list is recorded, not refused.
+   * violation is the backend's `400 Validation` naming the field.
    */
-  shapeGuard(model, section, data, itemId) {
+  shapeGuard(model, section, data) {
     if (!model.decl?.sections) return null
     const check = checkItemWrite({ decl: model.decl, section: section.path ?? section.name, data })
     if (check.outcome === OUTCOME.VIOLATES) {
@@ -1524,9 +1520,6 @@ export class MockStore {
         ...(first.params || {}),
       })
     }
-    if (check.outcome === OUTCOME.DIAGNOSED) {
-      this.diagnose(model.name, { op: itemId == null ? 'create-item' : 'update-item', section: section.name }, check)
-    }
     return this.refRefusal(section, data)
   }
 
@@ -1534,30 +1527,6 @@ export class MockStore {
   stored(model, section, data) {
     if (!model.decl?.sections) return data
     return storedItemData({ decl: model.decl, section: section.path ?? section.name, data })
-  }
-
-  /** Record a write the mock let through on the seed's say-so (`migration_debt`), deduped with a count. */
-  diagnose(model, where, result) {
-    const key = `${model}|${where.op}|${where.section ?? ''}|${result.reason}`
-    const at = new Date().toISOString()
-    const seen = this.diagnostics.find((d) => d.key === key)
-    if (seen) {
-      seen.count += 1
-      seen.lastAt = at
-      return
-    }
-    this.diagnostics.push({
-      key,
-      model,
-      ...where,
-      storage: result.storage,
-      reason: result.reason,
-      problems: result.problems,
-      undeclared: result.undeclared,
-      count: 1,
-      firstAt: at,
-      lastAt: at,
-    })
   }
 
   /** Apply one parsed op to an entity. `{ result }` or `{ problem }`. */
@@ -1611,7 +1580,7 @@ export class MockStore {
       })
     }
     if (op.kind === OP.update) {
-      const refusal = this.shapeGuard(model, section, op.data, item.id)
+      const refusal = this.shapeGuard(model, section, op.data)
       if (refusal) return refusal
       // Whole-data replace, like the backend: round-trip what you do not edit. And
       // like the backend, an update that changes nothing is a no-op — the token stays,

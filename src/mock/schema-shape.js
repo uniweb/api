@@ -10,11 +10,12 @@
  * |---|---|
  * | declared by the Model, `single` or `multi` | **ENFORCE** its fields |
  * | not declared | **REFUSE** — a typo or an accidental section |
- * | on the seed's `migration_debt` list | **DIAGNOSE** — written, and recorded |
  *
  * ⛔ *Until 2026-10-19 this module also classified the `data` supplied when an entity is
  * created as an unresolved storage mapping (`checkEntityDataWrite`, `STORAGE.UNRESOLVED`),
- * for a question answered 2026-09-18: there is no entity-level data. Nothing called it.*
+ * for a question answered 2026-09-18: there is no entity-level data. Nothing called it. And
+ * a seed could list sections as `migration_debt` — written unchecked, and recorded on the
+ * mock's `diagnostics` (`UNRESOLVED_REASON`, `ENFORCEMENT`) — a list no seed kept any more.*
  */
 
 /** Where a written section lives, and therefore what we are entitled to do about it. */
@@ -28,48 +29,14 @@ export const STORAGE = {
    * storage class. So a declared section's records are checkable whatever its kind.
    */
   ITEMS: 'items',
-  /**
-   * ⛔ **Known divergence, on an explicit list — never a catch-all.**
-   *
-   * A `(model, section)` pair the site has declared as `migration_debt`: storage we
-   * know does not match its declaration, kept working while the thing that forced it
-   * is unwound. Two shapes qualify, and both are OUR debt, not the framework's:
-   *   • a section the schema does not declare at all (`@/course` `meta`), and
-   *   • a declared section whose records diverge (`@/quiz-key` `answers` holds one
-   *     record carrying a map, where the schema declares many).
-   *
-   * Both exist because `@uniweb/api` had no route to update entity data — an
-   * omission, per Diego, not a backend rule. They retire with that route.
-   */
-  MIGRATION_DEBT: 'migration-debt',
-  /**
-   * A section that is neither declared nor listed as debt. **A violation** — a typo
-   * or an accidental section, which must not be able to hide in the debt bucket.
-   */
+  /** A section the Model does not declare. **A violation** — a typo or an accidental section. */
   UNDECLARED: 'undeclared-section',
-}
-
-/** Why a write was tolerated rather than judged. Reported; never changes what happens. */
-export const UNRESOLVED_REASON = {
-  /** On the site's `migration_debt` list: the schema declares no such section. */
-  UNDECLARED_SECTION: 'undeclared-section',
-  /** On the list: declared, but the records stored there do not match the declaration. */
-  DIVERGENT_SECTION: 'divergent-section',
-}
-
-/** What to DO about each storage classification — the one table that says it. */
-export const ENFORCEMENT = {
-  [STORAGE.ITEMS]: 'enforce',
-  [STORAGE.UNDECLARED]: 'enforce',
-  [STORAGE.MIGRATION_DEBT]: 'diagnose',
 }
 
 /** Outcomes a check can produce. `VIOLATES` is the only one a caller may refuse on. */
 export const OUTCOME = {
   CONFORMS: 'conforms',
   VIOLATES: 'violates',
-  /** Shape problems found, but under a classification we do not enforce. */
-  DIAGNOSED: 'diagnosed',
   /** No declaration to check against — the model is not described to the mock. */
   UNCHECKED: 'unchecked',
 }
@@ -123,7 +90,8 @@ function sectionAt(sections, path) {
 }
 
 /**
- * Is this section a multi section of the model's declaration?
+ * Where a written section lives — declared by the Model (`ITEMS`), with its declaration,
+ * or not (`UNDECLARED`) — or null when the declaration has no sections to check against.
  *
  * `decl.sections` is the lowered sections map (`{ [name]: { kind, brief, fields } }`)
  * as produced by the framework's own normalizer — the mock never parses schema
@@ -134,20 +102,7 @@ export function classifySection(decl, section) {
   if (!sections || typeof sections !== 'object') return null
   const found = sectionAt(sections, section)
 
-  // ⭐ The debt list is consulted FIRST and is an exact `(model, section)` match, so
-  // it can excuse a declared section whose records diverge as well as an undeclared
-  // one — but only ever the pairs the site named. Anything else falls through.
-  const isDebt = (decl.migration_debt || []).includes(section)
-  if (isDebt) {
-    return {
-      storage: STORAGE.MIGRATION_DEBT,
-      reason: found ? UNRESOLVED_REASON.DIVERGENT_SECTION : UNRESOLVED_REASON.UNDECLARED_SECTION,
-      section: found || null,
-    }
-  }
-
-  // ⛔ Not declared and not owned as debt: a typo or an accidental section. Refused,
-  // so it cannot disappear into the debt bucket — the reason the list is explicit.
+  // ⛔ Not declared: a typo or an accidental section. Refused.
   if (!found) return { storage: STORAGE.UNDECLARED, section: null }
 
   // Declared — single or multi alike. Sections hold items; `single` holds one.
@@ -347,8 +302,7 @@ function checkText(field, value, at) {
  *
  * ⛔ **A key the schema does not declare is NOT a violation.** We have no evidence
  * that the real store rejects extras, and inventing that rule here would refuse
- * writes production accepts. Unknown keys are reported by the caller as
- * diagnostics instead.
+ * writes production accepts.
  */
 export function checkFields(fields, data, path = '') {
   const problems = []
@@ -473,25 +427,19 @@ function boundOf(field, value, at) {
   return null
 }
 
-/** Keys present in the write that the section does not declare. Diagnostic only — see checkFields. */
-function undeclaredKeys(fields, data) {
-  if (!fields || !data || typeof data !== 'object') return []
-  return Object.keys(data).filter((k) => !(k in fields))
-}
-
 // ── The two entry points the store calls ──────────────────────────────────────
 
 /**
  * Check one item write (create or update) against the model's declaration.
  *
- * @returns {{outcome: string, storage?: string, reason?: string, problems: object[], undeclared: string[]}}
+ * @returns {{outcome: string, storage?: string, problems: object[]}}
  *   `outcome: 'violates'` is the ONLY result a caller may refuse on.
  */
 export function checkItemWrite({ decl, section, data }) {
-  if (!decl?.sections) return { outcome: OUTCOME.UNCHECKED, problems: [], undeclared: [] }
+  if (!decl?.sections) return { outcome: OUTCOME.UNCHECKED, problems: [] }
 
   const where = classifySection(decl, section)
-  if (!where) return { outcome: OUTCOME.UNCHECKED, problems: [], undeclared: [] }
+  if (!where) return { outcome: OUTCOME.UNCHECKED, problems: [] }
 
   // An undeclared section has no field set to conform to, so the violation is the
   // section itself — stated here rather than falling out of an empty field check.
@@ -506,33 +454,15 @@ export function checkItemWrite({ decl, section, data }) {
           detail: `'${section}' is not a section of this model`,
         },
       ],
-      undeclared: [],
     }
   }
 
   const fields = where.section?.fields
   const problems = fields ? checkFields(fields, data) : []
-  const undeclared = fields ? undeclaredKeys(fields, data) : []
-  const enforcement = ENFORCEMENT[where.storage]
-
-  if (enforcement === 'enforce') {
-    return {
-      outcome: problems.length ? OUTCOME.VIOLATES : OUTCOME.CONFORMS,
-      storage: where.storage,
-      problems,
-      undeclared,
-    }
-  }
-  // ⭐ ALWAYS diagnosed, even when the data looks fine and even when there were no
-  // fields to check it against. The finding is not "these values are wrong" — it is
-  // "this write rides on the seed's debt list", and the whole value of the list is
-  // that it maps exactly which writes those are.
   return {
-    outcome: OUTCOME.DIAGNOSED,
+    outcome: problems.length ? OUTCOME.VIOLATES : OUTCOME.CONFORMS,
     storage: where.storage,
-    reason: where.reason,
     problems,
-    undeclared,
   }
 }
 

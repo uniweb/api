@@ -133,7 +133,7 @@ function adminPage(account) {
  * @param {((message: object, url: string) => void) | null} [options.onMail] - called with each
  *   message as it is sent, and its link on the site's origin. `printMail` by default; `null`
  *   sends quietly
- * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore, diagnostics: object[], outbox: object[] }}
+ * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore, outbox: object[] }}
  */
 export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signedInAs = null, siteOrigin = null, onMail = printMail } = {}) {
   const store = new MockStore(seed, { signedInAs })
@@ -674,13 +674,6 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
   return {
     store,
     /**
-     * Writes the mock let through on the seed's say-so — into a section listed as
-     * `migration_debt`. Empty is the good state.
-     */
-    get diagnostics() {
-      return store.diagnostics
-    },
-    /**
      * The mail the backend would have sent — `{ to, subject, token, link }`, `link` a
      * site-root link carrying the token (`/?verify=…`, `/?reset=…`, `/?offer=…`).
      */
@@ -704,4 +697,4 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
 
 export { MockStore } from './store.js'
 export { DEFAULT_SEED } from './seed.js'
-export { STORAGE, UNRESOLVED_REASON, ENFORCEMENT, OUTCOME } from './schema-shape.js'
+export { STORAGE, OUTCOME } from './schema-shape.js'
