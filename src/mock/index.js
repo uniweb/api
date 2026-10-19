@@ -93,9 +93,9 @@ function adminPage(account) {
  *
  * Its routes are the API's own — `/auth/me`, `/entities`, `/sections` — under whatever the
  * site's `backend` address is. It accepts a request with the site's `/_api` prefix
- * still on, and one with an extra `/api` after it (how clients before 0.4
- * composed URLs), so it answers the same whether or not the server mounting it
- * strips its path.
+ * still on, so it answers the same whether or not the server mounting it strips its
+ * path. An extra `/api` after the prefix — `/_api/api/…` — answers `404`, as a hosted
+ * site does.
  *
  * ## What it models, and what it does not
  *
@@ -183,13 +183,10 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
     }
   }
 
-  /** The route's own path: the mount stripped, and an older client's extra `/api`. */
+  /** The route's own path: the mount stripped. */
   function ownPath(pathname) {
-    let path = pathname
-    for (const mount of [prefix, '/api']) {
-      if (mount && (path === mount || path.startsWith(`${mount}/`))) path = path.slice(mount.length) || '/'
-    }
-    return path
+    if (prefix && (pathname === prefix || pathname.startsWith(`${prefix}/`))) return pathname.slice(prefix.length) || '/'
+    return pathname
   }
 
   /** `400 Unexpected parameters` for anything a route does not take — the backend's rule. */

@@ -865,10 +865,11 @@ describe('the mock is as strict as the backend', () => {
     expect((await res.json()).title).toBe('CSRF Header Required')
   })
 
-  it('answers an older client that composed `/_api/api/…`, and one mounted with its prefix stripped', async () => {
+  it('answers with its prefix on or stripped, and an extra `/api` after it is a 404, as on a hosted site', async () => {
     const mock = createMockBackend({ signedInAs: 'attendee' })
-    expect((await call(mock, '/_api/api/auth/me')).status).toBe(200)
+    expect((await call(mock, '/_api/auth/me')).status).toBe(200)
     expect((await call(mock, '/auth/me')).status).toBe(200)
+    expect((await call(mock, '/_api/api/auth/me')).status).toBe(404)
   })
 })
 
