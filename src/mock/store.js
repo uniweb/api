@@ -65,7 +65,7 @@ import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './
  * sign-in providers, and so no elevation through one, roles other than the operator's
  * — so no reader or editor held at a unit, no entry grants, and no by person —
  * teams, step-up, a reference to an entity (an `entity_ref` value is stored unchecked,
- * and its `readable_with` opens nothing), a section's own rules — `exclusive`,
+ * and its `readable_with` and `sold_with` open nothing), a section's own rules — `exclusive`,
  * `unique_field`, `min_items` and the rest are answered in the definition and not
  * applied; a field's `enum` is — password rules, an offer's grants (a count, sharing
  * nothing), an offer of access to an address (every entry is the organization's, so
