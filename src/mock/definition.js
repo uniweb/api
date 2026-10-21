@@ -17,7 +17,7 @@
  * | `int` · `decimal` | `min`, `max` |
  * | `date` | `format` — `year-month` or `year` |
  * | `item_ref` | `options` (a schema's) → `section_uuid`; `entity_uuid` |
- * | `entity_ref` | `model` (a schema's) → `model_uuid`; `model_uuids`, `contains`, `readable_with` |
+ * | `entity_ref` | `model` (a schema's) → `model_uuid`; `model_uuids`, `contains`, `readable_with`, `sold_with` |
  * | `file` | `mime_types`, `max_size` |
  * | `json` | `format` |
  * | `bool` · `datetime` · `secret` | none |
@@ -38,7 +38,7 @@ const KIND_KEYS = {
   decimal: ['min', 'max'],
   date: ['format'],
   item_ref: ['entity_uuid'],
-  entity_ref: ['model_uuids', 'contains', 'readable_with'],
+  entity_ref: ['model_uuids', 'contains', 'readable_with', 'sold_with'],
   file: ['mime_types', 'max_size'],
   json: ['format'],
 }
