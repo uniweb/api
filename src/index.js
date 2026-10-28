@@ -24,6 +24,8 @@ export {
   isElevated,
   rolesInFull,
   readSignInOptions,
+  signInWithProvider,
+  signInAddress,
   signUp,
   requestPasswordReset,
   confirmPasswordReset,

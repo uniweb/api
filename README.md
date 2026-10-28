@@ -77,6 +77,14 @@ is open.
 per page and shared; `status` is `'absent'` with no backend. The answer comes as the
 backend gives it, with no defaults: draw a rule only when a field states it.
 
+**Signing in through a provider** — `signInWithProvider(id, { returnTo })` leaves for
+the provider's sign-in, with `id` taken from `options.providers`. It is a navigation, so
+call it from a button's handler and never render it as a link, which the site's router
+could take for one of its own pages. It comes back to `returnTo`, by default the page the
+viewer is on with its query kept, carrying one of `?auth=ok` (signed in; the session the
+page probes says so), `?link=<id>` (that address already has an account not linked to the
+provider) or `?error=<reason>` (for example `signup_by_invitation_only`).
+
 **Password reset** — `usePasswordReset().request({ email })` asks for one; the email's
 link lands on your site, where `useMailedLink` finishes it. **Second factor** — when
 `signIn` answers `{ ok: false, challenge: { kind: 'totp' } }`, finish with

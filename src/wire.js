@@ -171,6 +171,41 @@ export const SIGN_IN_OPTIONS = Object.freeze({
 })
 
 /**
+ * Sign-in through a provider — ⛔ **a navigation, never a fetch**:
+ * `GET /auth/oauth/{provider}/authorize?redirect_uri=&state=`.
+ *
+ * - `{provider}` — an `id` from `/auth/providers`, as listed.
+ * - `redirect_uri` — required and absolute, on an origin the backend allows; a site's own
+ *   origin is one. `state` — optional, ours, echoed back unchanged; the backend keeps its
+ *   own flow state. A browser-bound cookie set here makes the flow finish only in the
+ *   browser that started it; the browser carries it.
+ * - Refused before any provider, as a raw page: `400` — no `redirect_uri`, one on an
+ *   origin not allowed, or an unknown provider; `503` — the provider is not enabled.
+ *
+ * The way back is a `302` to `redirect_uri` with `state` (when sent) and then exactly one
+ * of `auth=ok` — signed in, the session cookie on that same redirect; a hint, so the
+ * session is probed again — `link={provider}` — the provider's verified address is an
+ * existing account not linked to it, and no session — or `error={reason}`, a token
+ * (`oauth_not_started_here`, `oauth_provider_refused`, `oauth_provider_failed`,
+ * `oauth_email_unverified`, `signup_by_invitation_only`, `oauth_sign_in_failed`, among
+ * others). The keys are appended with `&` when `redirect_uri` has a `?`, and nothing
+ * splits off a fragment — so a `redirect_uri` with `#` would carry them inside it, and
+ * this package never sends one.
+ *
+ * The authorize half is **MEASURED** on a local backend, 2026-10-28; the way back is the
+ * backend's statement, 2026-10-28.
+ */
+export const SIGN_IN_PROVIDER = Object.freeze({
+  byProvider: (provider) => `/auth/oauth/${segment(provider)}/authorize`,
+  redirect: 'redirect_uri',
+  state: 'state',
+  returned: 'auth',
+  ok: 'ok',
+  link: 'link',
+  error: 'error',
+})
+
+/**
  * The handoff's `403`, as sent — an account the administration does not admit.
  * **MEASURED** by backend, 2026-10-10. This package never reads it: the handoff is a
  * navigation, so the browser shows it. The mock answers it.

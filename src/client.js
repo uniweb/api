@@ -30,7 +30,7 @@ import {
   leaveAccessWith,
 } from './access.js'
 import { listUnitsWith } from './units.js'
-import { readSignInOptionsWith } from './sign-in-options.js'
+import { readSignInOptionsWith, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -1453,6 +1453,10 @@ export const lower = () => lowerWith(required())
 export const elevateWithProvider = (provider, options) => elevateWithProviderOf(required(), provider, options)
 /** What a sign-in or sign-up page draws from, read once per page — see `./sign-in-options.js` */
 export const readSignInOptions = () => readSignInOptionsWith(required())
+/** Sign in through a provider — a navigation; see `./sign-in-options.js` */
+export const signInWithProvider = (provider, options) => signInWithProviderOf(required(), provider, options)
+/** The address `signInWithProvider` navigates to, or `null` — never throws */
+export const signInAddress = (provider, options) => signInAddressOf(getClient(), provider, options)
 /** @see ApiClient#signUp */
 export const signUp = (fields) => required().signUp(fields)
 /** @see ApiClient#requestPasswordReset */

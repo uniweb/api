@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createUniweb } from '@uniweb/core'
-import { useSignInOptions, readSignInOptions } from '../src/index.js'
+import { useSignInOptions, readSignInOptions, signInWithProvider, signInAddress } from '../src/index.js'
 import { getClient } from '../src/client.js'
 import { createMockBackend } from '../src/mock/index.js'
 import { fetchStub, json, parse, WITH_BACKEND, WITHOUT_BACKEND, ME } from './helpers.js'
@@ -130,5 +130,49 @@ describe('sign-in options — against the mock', () => {
     const mock = createMockBackend({ onMail: null })
     const answer = await mock.fetch(new Request('http://site.test/_api/auth/providers?locale=en'))
     expect(answer.status).toBe(400)
+  })
+})
+
+describe('signInWithProvider — a navigation to the provider sign-in', () => {
+  const at = (href) => {
+    const u = new URL(href)
+    vi.stubGlobal('location', { href: u.href, origin: u.origin, pathname: u.pathname, search: u.search, hash: u.hash, assign: vi.fn() })
+  }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('navigates with `location.assign` to the base, back to this page — its query kept, no fragment', () => {
+    at('https://site.test/login?next=%2Fcourses#top')
+    const client = siteWith(() => undefined)
+    const address = signInWithProvider('google')
+    expect(globalThis.location.assign).toHaveBeenCalledWith(address)
+    expect(client.fetchFn).not.toHaveBeenCalled()
+    const u = parse(address)
+    expect(u.pathname).toBe('/_api/auth/oauth/google/authorize')
+    expect(u.searchParams.get('redirect_uri')).toBe('https://site.test/login?next=%2Fcourses')
+    expect(u.searchParams.has('state')).toBe(false)
+  })
+
+  it('leaves out the answer of an earlier attempt', () => {
+    at('https://site.test/login?next=%2Fx&error=oauth_provider_refused&link=google&auth=ok')
+    siteWith(() => undefined)
+    const u = parse(signInAddress('microsoft'))
+    expect(u.searchParams.get('redirect_uri')).toBe('https://site.test/login?next=%2Fx')
+  })
+
+  it('resolves `returnTo` against the page, absolute and without a fragment', () => {
+    at('https://site.test/a/b')
+    siteWith(() => undefined)
+    expect(parse(signInAddress('google', { returnTo: '/welcome#hi' })).searchParams.get('redirect_uri')).toBe('https://site.test/welcome')
+  })
+
+  it('is null with no backend or no provider, and navigates nowhere', () => {
+    at('https://site.test/login')
+    siteWith(() => undefined)
+    expect(signInAddress('')).toBeNull()
+    delete globalThis.uniweb
+    createUniweb(WITHOUT_BACKEND)
+    expect(signInAddress('google')).toBeNull()
+    expect(() => signInWithProvider('google')).not.toThrow()
+    expect(globalThis.location.assign).not.toHaveBeenCalled()
   })
 })

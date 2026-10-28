@@ -15,7 +15,8 @@
  */
 
 import { deriveCacheKey } from '@uniweb/core'
-import { AUTH } from './wire.js'
+import { AUTH, SIGN_IN_PROVIDER } from './wire.js'
+import { composeUrl } from './http.js'
 
 /**
  * What the answer is cached under. The viewer is not in it: the answer holds nothing
@@ -56,4 +57,66 @@ export function readSignInOptionsWith(client) {
  */
 export function forgetSignInOptionsWith(client) {
   client.website?.dataStore?.delete(SIGN_IN_OPTIONS_KEY)
+}
+
+/**
+ * Where a provider's sign-in comes back to, absolute and without a fragment — the backend
+ * appends its answer after `?` or `&` and splits off no `#`, so one would land inside it.
+ * The page the viewer is on by default, its query kept (a `?next=` survives) and the
+ * answer of an earlier attempt taken out.
+ */
+function returnAddress(returnTo) {
+  const here = globalThis.location
+  const from = here?.href && here.origin !== 'null' ? here.href : undefined
+  let url
+  try {
+    url = new URL(returnTo ?? from, from)
+  } catch {
+    return null
+  }
+  if (!returnTo) {
+    for (const key of [SIGN_IN_PROVIDER.returned, SIGN_IN_PROVIDER.link, SIGN_IN_PROVIDER.error]) url.searchParams.delete(key)
+  }
+  url.hash = ''
+  return url.href
+}
+
+/**
+ * The address of a sign-in through a provider, or `null`: no backend, no provider named,
+ * or no address to come back to.
+ *
+ * ⛔ **For a navigation, never a fetch** — and not an `<a href>` on the site's own origin
+ * either, which the site's router can take for a page of its own. `signInWithProvider`
+ * navigates.
+ *
+ * @param {object} client
+ * @param {string} provider - an `id` from `readSignInOptions().providers`
+ * @param {{ returnTo?: string }} [options] - where to come back to, resolved against the
+ *   page; the page the viewer is on by default
+ * @returns {string|null}
+ */
+export function signInAddressOf(client, provider, { returnTo } = {}) {
+  const base = client?.base ?? null
+  if (base === null || !provider) return null
+  const redirect = returnAddress(returnTo)
+  if (!redirect) return null
+  return composeUrl(base, SIGN_IN_PROVIDER.byProvider(provider), { [SIGN_IN_PROVIDER.redirect]: redirect })
+}
+
+/**
+ * Sign in through a provider — leave for its sign-in, and come back to `returnTo` with
+ * `?auth=ok`, `?link={provider}` or `?error={reason}` (`SIGN_IN_PROVIDER`). Nothing
+ * happens outside a browser, or with no address to go to (`signInAddressOf`).
+ *
+ * `auth=ok` is a hint, not a credential: the session the page probes on load is the answer.
+ *
+ * @param {object} client
+ * @param {string} provider
+ * @param {{ returnTo?: string }} [options]
+ * @returns {string|null} the address navigated to
+ */
+export function signInWithProviderOf(client, provider, options) {
+  const address = signInAddressOf(client, provider, options)
+  if (address && typeof globalThis.location?.assign === 'function') globalThis.location.assign(address)
+  return address
 }
