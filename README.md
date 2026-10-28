@@ -68,6 +68,14 @@ own answer.
 use. The account cannot sign in until the address is confirmed from the email the
 backend sends — its link lands on your site (below); until then `signIn` fails with
 `error.kind === 'unverified'`. A username already taken fails with status `409`.
+`canSignUp` (like `canSignIn`) says only that the site has a backend, not that sign-up
+is open.
+
+**What the page offers** — `useSignInOptions()` reads what the site's owner set:
+`options.providers` (`[{ id: 'google' }, …]`), `options.signup` (`'open'` or
+`'invite_only'`) and `options.email` (whether the backend delivers mail). It is read once
+per page and shared; `status` is `'absent'` with no backend. The answer comes as the
+backend gives it, with no defaults: draw a rule only when a field states it.
 
 **Password reset** — `usePasswordReset().request({ email })` asks for one; the email's
 link lands on your site, where `useMailedLink` finishes it. **Second factor** — when

@@ -115,6 +115,12 @@ export const AUTH = {
   logout: '/auth/logout',
   register: '/auth/register',
   /**
+   * `GET /auth/providers` — anonymous, no parameters (`?locale=` is a `400`): what a
+   * sign-in or sign-up page draws from, as the site's owner set it (`SIGN_IN_OPTIONS`).
+   * **MEASURED** on a local backend, 2026-10-28.
+   */
+  providers: '/auth/providers',
+  /**
    * `GET /auth/verify?token=` → `{ verified: true }`: the address is confirmed and the
    * member may sign in — it starts no session — and every offer sent to that address
    * binds to the account, its invitations waiting (`OFFERS`, `INVITATIONS`; MEASURED by
@@ -144,6 +150,25 @@ export const AUTH = {
    */
   elevate: '/auth/elevate',
 }
+
+/**
+ * `GET /auth/providers`'s answer — **MEASURED** on a local backend, 2026-10-28:
+ * `{ providers: [{ id: 'google' }, …], signup: 'open', email: true }`.
+ *
+ * - `providers` — the providers whose sign-in will start, each `{ id }`.
+ * - `signup` — `open` or `invite_only`.
+ * - `email` — whether the backend delivers mail.
+ *
+ * The backend says the answer grows by adding fields, each keeping its meaning, and holds
+ * nothing about the visitor (`sign-in-options-are-the-same-for-everyone`). This package
+ * passes it through as answered: a field it does not know is kept, and one the backend
+ * leaves out stays out — no default stands in for it.
+ */
+export const SIGN_IN_OPTIONS = Object.freeze({
+  providers: 'providers',
+  signup: 'signup',
+  email: 'email',
+})
 
 /**
  * The handoff's `403`, as sent — an account the administration does not admit.
@@ -982,6 +1007,15 @@ export const ASSUMPTIONS = [
       'the backend names the route, its two parameters and the two answers (2026-10-14), and says it works as step-up\'s provider flow does; what `state` must be, and how an answer joins a `redirect_uri` that has a query of its own, it does not say — a sign-in through a provider sends a fresh `state` per attempt and gets it back',
     breaks:
       "a backend that refuses a `state` it did not mint, or this site's origin as a `redirect_uri`, answers the navigation with a page of its own: the viewer is not elevated, and nothing else changes",
+  },
+  {
+    id: 'sign-in-options-are-the-same-for-everyone',
+    we:
+      "read `GET /auth/providers` once per page and share the answer with every caller, under a key not scoped to the viewer, so signing in or out does not read it again; `refresh` reads it again",
+    from:
+      "the backend's statement (2026-10-28) that the answer holds nothing per member or visitor — not measured from this package. The route answers `cache-control: no-store`, which is about HTTP caches, not a page's memory",
+    breaks:
+      "a backend whose answer changes with the session — or with the owner's settings while a page stays open — shows a page the answer it was given when the page was loaded, until `refresh`",
   },
   {
     id: 'unprojected-read-is-every-language',

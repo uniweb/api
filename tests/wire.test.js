@@ -41,9 +41,12 @@ describe('wire — the assumptions are a reviewable set', () => {
   // Since 2026-10-19 it also holds `unprojected-read-is-every-language` and
   // `language-chain-adds-base`: an editor's read in every language, and the base language a
   // read in a regional one walks — both the backend's design, neither measured from here.
+  // Since 2026-10-28 it also holds `sign-in-options-are-the-same-for-everyone`: the backend
+  // says `/auth/providers` holds nothing about the visitor, so a page reads it once.
   const EXPECTED = [
     'localized-json-is-a-locale-map',
     'elevation-by-provider',
+    'sign-in-options-are-the-same-for-everyone',
     'unprojected-read-is-every-language',
     'language-chain-adds-base',
   ]

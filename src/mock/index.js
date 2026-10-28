@@ -18,6 +18,7 @@ import {
   GUARDED_OPS,
   HANDOFF_REFUSAL,
   ELEVATION,
+  SIGN_IN_OPTIONS,
 } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED } from './seed.js'
@@ -310,6 +311,11 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       if (path === AUTH.elevate && method === 'DELETE') {
         if (!store.account) return unauthorized()
         return answer(store.lower())
+      }
+      if (path === AUTH.providers && method === 'GET') {
+        // The mock has no sign-in providers; its sign-up is open, and what it mails lands
+        // in its outbox.
+        return json(200, { [SIGN_IN_OPTIONS.providers]: [], [SIGN_IN_OPTIONS.signup]: 'open', [SIGN_IN_OPTIONS.email]: true })
       }
       if (path === AUTH.me && method === 'GET') {
         const viewer = store.viewer()

@@ -30,7 +30,8 @@
 import { describe, it, expect, afterEach, beforeAll } from 'vitest'
 import { createUniweb } from '@uniweb/core'
 import { getClient } from '../../src/client.js'
-import { AUTH, HANDOFF_REFUSAL } from '../../src/wire.js'
+import { AUTH, HANDOFF_REFUSAL, SIGN_IN_OPTIONS } from '../../src/wire.js'
+import { readSignInOptionsWith } from '../../src/sign-in-options.js'
 import { composeUrl } from '../../src/http.js'
 
 const BASE = process.env.UNIWEB_API_BASE
@@ -88,6 +89,14 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
   it('refuses to list for nobody — a 401, never an empty list', async () => {
     const err = await client().listEntities({ schema: MODEL || '@std/person' }).catch((e) => e)
     expect(err.kind).toBe('auth')
+  })
+
+  it('answers the sign-in options to nobody — providers as `{ id }`, sign-up open or by invitation', async () => {
+    const options = await readSignInOptionsWith(client())
+    expect(Array.isArray(options[SIGN_IN_OPTIONS.providers])).toBe(true)
+    for (const p of options[SIGN_IN_OPTIONS.providers]) expect(typeof p.id).toBe('string')
+    expect(['open', 'invite_only']).toContain(options[SIGN_IN_OPTIONS.signup])
+    expect(typeof options[SIGN_IN_OPTIONS.email]).toBe('boolean')
   })
 
   // A token no mail ever carried — so these spend nothing, whatever the backend holds.
