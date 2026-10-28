@@ -16,6 +16,9 @@ import { useAction } from './useAction.js'
  *
  * The credentials object goes to the backend as the request body, unchanged.
  * A refused credential is an `ApiError` with `kind: 'auth'`.
+ *
+ * `canSignIn` says whether the call can be made at all: the site declares a
+ * `backend` service. It says nothing about which ways of signing in the site offers.
  */
 export function useSignIn() {
   const client = getClient()

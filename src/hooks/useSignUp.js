@@ -9,6 +9,10 @@ import { useAction } from './useAction.js'
  * verifies it, so `status: 'success'` means "check your email", and that copy
  * is the foundation's to write.
  *
+ * `canSignUp` says whether the call can be made at all: the site declares a
+ * `backend` service. It does not say that sign-up is open; a site whose owner
+ * signs people up by invitation still answers `true`.
+ *
  * @returns {{ signUp: Function, status: string, error: Error|null, response: any, canSignUp: boolean, reset: Function }}
  */
 export function useSignUp() {
