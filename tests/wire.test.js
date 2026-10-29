@@ -49,6 +49,11 @@ describe('wire — the assumptions are a reviewable set', () => {
     'sign-in-options-are-the-same-for-everyone',
     'unprojected-read-is-every-language',
     'language-chain-adds-base',
+    'item-uuids-on-a-write',
+    'one-single-item-per-parent',
+    'cross-field-rules-on-a-write',
+    'definition-in-a-language',
+    'definition-in-declared-order',
   ]
 
   it('names exactly the assumptions we have handed over', () => {

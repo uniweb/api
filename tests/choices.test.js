@@ -129,10 +129,11 @@ describe('a Model\'s definition, as the backend answers it', () => {
     await signIn(client, 'attendee')
 
     const lists = (await get('/models/@acme/lists')).body
-    // Top-level sections first, then nested ones under their parent — each group by name.
-    expect(lists.sections.map((s) => s.name)).toEqual(['countries', 'disciplines', 'groups', 'head', 'subdivisions', 'inner'])
+    // In the order the schema declares them, depth first — a nested section after its parent.
+    // ⛔ Top-level sections first, each group by name, until 2026-10-29, as the backend listed them.
+    expect(lists.sections.map((s) => s.name)).toEqual(['head', 'countries', 'subdivisions', 'disciplines', 'groups', 'inner'])
     const at = (name) => lists.sections.find((s) => s.name === name)
-    expect(lists.sections.map((s) => s.kind)).toEqual(['multi', 'multi', 'binder', 'single', 'multi', 'multi'])
+    expect(lists.sections.map((s) => s.kind)).toEqual(['single', 'multi', 'multi', 'multi', 'binder', 'multi'])
     expect(at('subdivisions').parent_section_id).toBe(at('countries').id)
     expect(at('countries').other_data).toEqual({ label: 'Countries' })
     expect(at('disciplines').other_data).toEqual({ allow_self_nesting: true })

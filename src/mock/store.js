@@ -1,6 +1,7 @@
 import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
+import { uuidv7 } from '../uuid.js'
 
 /**
  * The mock's state — accounts, one session, Models with their sections, and
@@ -127,7 +128,8 @@ const GAP = 1_000_000
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const isUuid = (value) => typeof value === 'string' && UUID_RE.test(value)
 
-const newUuid = () => globalThis.crypto.randomUUID()
+// A UUIDv7, as the backend's store mints them. ⛔ v4 until 2026-10-29.
+const newUuid = () => uuidv7()
 
 /** A token that moves on every write — a timestamp with microseconds, as the backend writes one. */
 function makeClock() {
@@ -156,6 +158,8 @@ function canonical(value) {
   }
   return JSON.stringify(value ?? null)
 }
+
+const isPlainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 
 const isMulti = (section) => section?.multiple === true || section?.kind === 'multi'
 const shortName = (model) => String(model).split('/').pop() || String(model)
@@ -220,7 +224,10 @@ export class MockStore {
    * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, operator? }`.
    *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
    *   also marks the operator.)
-   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable? } }`.
+   * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable?, i18n? } }`.
+   *   `i18n` is the schema's labels in other languages, as a data schema declares it
+   *   (`{ fr: { 'model.label': …, 'section.<path>.field.<key>.label': … } }`): a definition read
+   *   with `?locale=` answers in them.
    *   Named as a call sends it, and matched exactly: your foundation's own types as `@/name`,
    *   which is how `uniweb dev` sends them, and any other in full — `@std/person` is not
    *   `@/person`. A built foundation sends its own in full, `@<scope>/name`, as a backend
@@ -759,18 +766,38 @@ export class MockStore {
    * `GET /models/@scope/name`, as the backend answers it (`SCHEMA` in `../wire.js`): each
    * field its stored declaration under `type.data` (`./definition.js`), an `enum` as its
    * section's `one_of` rule, a section's `label` and `description` in `other_data`, a
-   * nested section as a row naming its parent — top-level rows first, each group by name.
+   * nested section as a row naming its parent — in the order the schema declares them,
+   * depth first. ⛔ Top-level rows first, each group by name, until 2026-10-29, as the
+   * backend listed them before it kept declared order.
+   *
+   * ⭐ **In the reader's languages** — `locales`, the chain a `?locale=` read walks: each
+   * label and description (the Model's `label`, `plural` and `description`, a section's and a
+   * field's `label` and `description`) is the first of them the schema's `i18n` gives, else
+   * its own; a slot with neither stays absent. Nothing in the answer says which language it is.
    */
-  schemaOf(model) {
-    const data = { grantable: model.grantable }
-    for (const k of ['label', 'description', 'icon', 'plural']) {
-      if (typeof model.decl?.[k] === 'string') data[k] = model.decl[k]
+  schemaOf(model, { locales = null } = {}) {
+    const say = (path, own) => {
+      for (const language of locales || []) {
+        const text = model.decl?.i18n?.[language]?.[path]
+        if (typeof text === 'string') return text
+      }
+      return typeof own === 'string' ? own : undefined
     }
-    const byName = (a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-    const rows = [...model.sections].sort((a, b) => {
-      if ((a.parent == null) !== (b.parent == null)) return a.parent == null ? -1 : 1
-      return (a.parent ?? 0) - (b.parent ?? 0) || byName(a, b)
-    })
+    const data = { grantable: model.grantable }
+    if (typeof model.decl?.icon === 'string') data.icon = model.decl.icon
+    for (const k of ['label', 'description', 'plural']) {
+      const text = say(`model.${k}`, model.decl?.[k])
+      if (text !== undefined) data[k] = text
+    }
+    const rows = model.sections
+    const translated = (row, path) => {
+      for (const k of ['label', 'description']) {
+        const text = say(path(k), row[k])
+        if (text === undefined) delete row[k]
+        else row[k] = text
+      }
+      return row
+    }
     return {
       model: {
         id: model.id,
@@ -796,13 +823,15 @@ export class MockStore {
           kind: s.kind,
           is_brief: s.is_brief,
           parent_section_id: s.parent,
-          fields: Object.entries(s.fields || {}).map(([key, f]) =>
-            fieldRow(key, f, {
+          fields: Object.entries(s.fields || {}).map(([key, f]) => {
+            const row = fieldRow(key, f, {
               section: kindOf(f) === 'item_ref' ? this.choicesSection(f)?.uuid : null,
               model: kindOf(f) === 'entity_ref' ? this.model(f?.model)?.uuid : null,
-            }),
-          ),
-          other_data: otherDataOf(s.decl, { appendOnly: s.append_only, nests: s.nests }),
+            })
+            translated(row.type.data, (k) => `section.${s.path}.field.${key}.${k}`)
+            return row
+          }),
+          other_data: translated(otherDataOf(s.decl, { appendOnly: s.append_only, nests: s.nests }), (k) => `section.${s.path}.${k}`),
           constraints: rules.length ? { rules } : {},
         }
       }),
@@ -1088,11 +1117,11 @@ export class MockStore {
     }
   }
 
-  addItem(entity, section, { data, parent = null, position = null }) {
+  addItem(entity, section, { data, parent = null, position = null, uuid = null }) {
     const at = this.clock()
     const item = {
       id: (this.ids.item += 1),
-      uuid: newUuid(),
+      uuid: uuid ?? newUuid(),
       section_id: section.id,
       parent_item_id: parent,
       data,
@@ -1481,14 +1510,27 @@ export class MockStore {
   create(model, items, unit = null) {
     const entity = this.newEntity(model, this.account, unit?.id ?? SITE_UNIT)
     const staged = { ...entity, items: [] }
+    const identity = this.identityRefusal(
+      staged,
+      items.map((item) => ({ uuid: item[FIELD.uuid], parentUuid: item[FIELD.parentUuid], parentId: item[FIELD.parent] })),
+    )
+    if (identity) return identity
     for (const item of items) {
       const section = this.sectionNamed(model, item.section)
       if (!section) return refuse(404, 'Not Found', `section ${model.id}:${item.section} not found`, { kind: 'section', key: `${model.id}:${item.section}` })
-      const parent = item.parent_item_id ?? null
-      const refusal = this.parentRefusal(staged, model, section, parent) ?? this.admit(staged, model, section, item.data, null)
+      // A parent named by its uuid is an item created earlier in this create.
+      const parent =
+        item[FIELD.parentUuid] != null
+          ? (staged.items.find((i) => i.uuid === item[FIELD.parentUuid])?.id ?? null)
+          : (item[FIELD.parent] ?? null)
+      const refusal = this.parentRefusal(staged, model, section, parent) ?? this.admit(staged, model, section, item.data, null, parent)
       if (refusal) return refusal
-      this.addItem(staged, section, { data: this.stored(model, section, item.data), parent })
+      this.addItem(staged, section, { data: this.stored(model, section, item.data), parent, uuid: item[FIELD.uuid] ?? null })
     }
+    const counted = this.atMostOneRefusal(staged, model)
+    if (counted) return counted
+    // ⛔ The answer is the entry's row, and no more: no `results`, so an item's uuid never comes back
+    // — and no read carries one.
     Object.assign(entity, { items: staged.items, updated_at: staged.updated_at })
     this.entities.set(entity.uuid, entity)
     return { status: 201, body: this.row(entity) }
@@ -1505,15 +1547,110 @@ export class MockStore {
    * lands: a one-item section that already has its item, and content that does not
    * fit the section's declared fields.
    */
-  admit(entity, model, section, data, itemId) {
-    if (itemId == null && section.kind === 'single' && entity.items.some((i) => i.section_id === section.id)) {
+  admit(entity, model, section, data, itemId, parent = null) {
+    // ⭐ One item PER PARENT: a single section under a list holds one for each of the list's items
+    // (a degree's thesis), and one per entry at the top. ⛔ Until 2026-10-29 one per entry,
+    // wherever the section sat — the backend counted so until the day before.
+    const under = parent ?? null
+    if (
+      itemId == null &&
+      section.kind === 'single' &&
+      entity.items.some((i) => i.section_id === section.id && (i.parent_item_id ?? null) === under)
+    ) {
       return refuse(
         409,
         PROBLEM.schemaRule,
-        `section ${section.id} (kind=single) accepts at most one item — create it once, then update it`,
+        under == null
+          ? `section ${section.id} (kind=single) already has an item for entity ${entity.id} (design §5.3 cardinality)`
+          : `section ${section.id} (kind=single) already has an item under item ${under} (design §5.3 cardinality)`,
       )
     }
-    return this.shapeGuard(model, section, data)
+    return this.shapeGuard(model, section, data) ?? this.requiredWhenRefusal(section, data)
+  }
+
+  /**
+   * `required_when`: a field the rule names must be present — not absent, `null` or `''` —
+   * while another field holds a value. Checked on every write of an item's data, as the
+   * backend checks it. `show_when` is never evaluated on a write: it is the form's.
+   */
+  requiredWhenRefusal(section, data) {
+    const own = isPlainObject(data) ? data : {}
+    for (const rule of rulesOf(section.decl, section.fields)) {
+      if (rule?.kind !== 'required_when' || !rule.when) continue
+      if (canonical(own[rule.when.field]) !== canonical(rule.when.equals)) continue
+      const value = own[rule.field]
+      if (value === undefined || value === null || value === '') {
+        return refuse(
+          400,
+          'Validation',
+          `item.${rule.field} is required when ${rule.when.field} == ${JSON.stringify(rule.when.equals)} (required_when, §4.5)`,
+          { reason: 'invalid_field', rule: 'required_when' },
+        )
+      }
+    }
+    return null
+  }
+
+  /**
+   * `at_most_one_where`: at most one item of a section may hold `field == equals`. Counted after
+   * a write, the stored items with the written ones — once at a batch's end — per entry and
+   * section, never per parent item.
+   */
+  atMostOneRefusal(entity, model) {
+    for (const section of model.sections) {
+      for (const rule of rulesOf(section.decl, section.fields)) {
+        if (rule?.kind !== 'at_most_one_where') continue
+        const count = entity.items.filter(
+          (i) => i.section_id === section.id && canonical(i.data?.[rule.field]) === canonical(rule.equals),
+        ).length
+        if (count > 1) {
+          return refuse(
+            400,
+            'Validation',
+            `section has ${count} items with \`${rule.field}\`==\`${JSON.stringify(rule.equals)}\`, at_most_one_where allows 1 (§4.5)`,
+            { reason: 'invalid_field', rule: 'at_most_one_where' },
+          )
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * The refusals a write's item uuids meet, decided before anything is written — each create
+   * in order, the earliest refusal first, and none naming which one it was. A create may give
+   * its item a `uuid`, and name its parent by `parent_item_uuid`: one created earlier in the
+   * same write, or an item of this entry.
+   *
+   * @param {object} entity - as it stands before the write
+   * @param {Array<{ uuid?: string, parentUuid?: string, parentId?: number }>} creates
+   */
+  identityRefusal(entity, creates) {
+    const given = new Map()
+    creates.forEach((c, k) => {
+      if (c.uuid != null && !given.has(c.uuid)) given.set(c.uuid, k)
+    })
+    const seen = new Set()
+    for (const [k, c] of creates.entries()) {
+      if (c.parentId != null && c.parentUuid != null) {
+        return refuse(400, 'Validation', 'an item names its parent by `parent_item_id` or by `parent_item_uuid`, not both')
+      }
+      if (c.uuid != null) {
+        if (seen.has(c.uuid)) return refuse(400, 'Validation', `two items of one request are given the uuid ${c.uuid}`)
+        seen.add(c.uuid)
+        if (this.itemByUuid(c.uuid)) return refuse(409, 'Conflict', `an item already has the uuid ${c.uuid}`)
+      }
+      if (c.parentUuid != null) {
+        const at = given.get(c.parentUuid)
+        if (at != null && at >= k) {
+          return refuse(400, 'Validation', `an item names ${c.parentUuid} as its parent before the item given that uuid is created`)
+        }
+        if (at == null && !entity.items.some((i) => i.uuid === c.parentUuid)) {
+          return refuse(404, 'Not Found', `item ${c.parentUuid} not found`, { kind: 'item', key: c.parentUuid })
+        }
+      }
+    }
+    return null
   }
 
   /**
@@ -1554,15 +1691,24 @@ export class MockStore {
           ? refuse(409, PROBLEM.schemaRule, `section ${op[FIELD.section]} belongs to model ${other.id}, not the entity's model ${model.id}`)
           : refuse(404, 'Not Found', `section ${op[FIELD.section]} not found`, { kind: 'section', key: String(op[FIELD.section]) })
       }
-      const parent = op[FIELD.parent] ?? null
+      // A parent named by its uuid: an item of this entry, or one an earlier op of this write made.
+      const parent =
+        op[FIELD.parentUuid] != null
+          ? (entity.items.find((i) => i.uuid === op[FIELD.parentUuid])?.id ?? null)
+          : (op[FIELD.parent] ?? null)
       const misplaced = this.parentRefusal(entity, model, section, parent)
       if (misplaced) return misplaced
-      const refusal = this.admit(entity, model, section, op.data, null)
+      const refusal = this.admit(entity, model, section, op.data, null, parent)
       if (refusal) return refusal
       if (op.position != null && this.orderFor(entity, section.id, parent, op.position, null) == null) {
         return refuse(404, 'Not Found', `item ${op.position.after} not found`, { kind: 'item', key: String(op.position.after) })
       }
-      const made = this.addItem(entity, section, { data: this.stored(model, section, op.data), parent, position: op.position })
+      const made = this.addItem(entity, section, {
+        data: this.stored(model, section, op.data),
+        parent,
+        position: op.position,
+        uuid: op[FIELD.uuid] ?? null,
+      })
       return { result: { [FIELD.item]: made.id, [FIELD.itemUuid]: made.uuid, [FIELD.token]: made.updated_at } }
     }
 
@@ -1595,7 +1741,7 @@ export class MockStore {
       })
     }
     if (op.kind === OP.update) {
-      const refusal = this.shapeGuard(model, section, op.data)
+      const refusal = this.shapeGuard(model, section, op.data) ?? this.requiredWhenRefusal(section, op.data)
       if (refusal) return refusal
       // Whole-data replace, like the backend: round-trip what you do not edit. And
       // like the backend, an update that changes nothing is a no-op — the token stays,
@@ -1632,12 +1778,21 @@ export class MockStore {
       ...entity,
       items: entity.items.map((i) => ({ ...i, data: i.data })),
     }
+    const creates = ops.filter((op) => op?.kind === OP.create)
+    const identity = this.identityRefusal(
+      working,
+      creates.map((op) => ({ uuid: op[FIELD.uuid], parentUuid: op[FIELD.parentUuid], parentId: op[FIELD.parent] })),
+    )
+    if (identity) return identity
     const results = []
     for (const op of ops) {
       const outcome = this.applyOp(working, model, op)
       if (outcome.problem) return outcome
       results.push(outcome.result)
     }
+    // Counted once, at the batch's end, the stored items with the written ones.
+    const counted = this.atMostOneRefusal(working, model)
+    if (counted) return counted
     entity.items = working.items
     entity.updated_at = working.updated_at
     return { results }

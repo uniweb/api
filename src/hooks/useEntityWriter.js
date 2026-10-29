@@ -3,6 +3,7 @@ import { getClient } from '../client.js'
 import { hookTypeName } from '../types.js'
 import { ApiError } from '../errors.js'
 import { CREATE, FIELD, OP } from '../wire.js'
+import { identityOf } from '../item-identity.js'
 
 const IDLE = 'idle'
 const SAVING = 'saving'
@@ -108,15 +109,20 @@ export function useEntityWriter(target) {
        * interchangeable: a rule declared on one — insert-only above all — does not
        * reach an item that landed in another. Name it as the Model does; the client
        * resolves the name to the id the backend's item route takes. A section that
-       * holds one item takes one create, and is `update`d after that.
+       * holds one item takes one create, and is `update`d after that — one per item of
+       * the list above it, for a section under a list.
+       *
+       * Give it a `uuid` (`uuidv7()`) and a later create of the same `batch` can nest under
+       * it by naming that uuid as its `parent`.
        *
        * @param {object} data - the item's content
        * @param {object} opts
        * @param {string} opts.section - which section of the entity this belongs to
-       * @param {number} [opts.parent] - a parent item's id, for nested content
+       * @param {number|string} [opts.parent] - the item it nests under: its id, or its uuid
+       * @param {string} [opts.uuid] - the new item's uuid, a UUIDv7
        * @param {'first'|'last'|{after: number}} [opts.position] - default: last
        */
-      create: (data, { section, parent, position } = {}) => {
+      create: (data, { section, parent, uuid, position } = {}) => {
         if (!section) {
           return Promise.reject(
             ApiError.invalid(
@@ -125,11 +131,17 @@ export function useEntityWriter(target) {
             ),
           )
         }
+        let identity
+        try {
+          identity = identityOf({ uuid, parent }, 'create')
+        } catch (err) {
+          return Promise.reject(err)
+        }
         return send({
           kind: OP.create,
           [CREATE.sectionName]: section,
           data: data ?? {},
-          ...(parent != null ? { [FIELD.parent]: parent } : {}),
+          ...identity,
           ...(position != null ? { position } : {}),
         })
       },

@@ -583,14 +583,15 @@ export const PAGE = {
  *
  * | op | body | notes |
  * |---|---|---|
- * | `create` | `{ kind, section_id, data, parent_item_id?, position? }` | tokenless; `position` `'first'` · `'last'` · `{ after: <item_id> }`, default last. A second item in a one-item section is `409 Schema Rule Violation` |
+ * | `create` | `{ kind, section_id, data, parent_item_id?, uuid?, parent_item_uuid?, position? }` | tokenless; `position` `'first'` · `'last'` · `{ after: <item_id> }`, default last. A second item of a single section under one parent — one per entry at the top — is `409 Schema Rule Violation` (`ASSUMPTIONS`, `one-single-item-per-parent`). `uuid` and `parent_item_uuid`: `FIELD` |
  * | `update` | `{ kind, item_id, data, if_unmodified_since? }` | replaces the item's data WHOLE |
  * | `delete` | `{ kind, item_id, if_unmodified_since? }` | |
  * | `move` | `{ kind, item_id, position, parent_item_id?, if_unmodified_since? }` | `position` required. Allowed on an insert-only section |
  *
  * Ids are integers — `"3"` is a `400 … expected i64`. An array of ops is ONE
- * transaction, and **an op may not reference an item created earlier in the same
- * batch**. An absent token is last-writer-wins. ⚠️ An update that writes the data
+ * transaction, and **an op names an item created earlier in the same batch only by the
+ * `uuid` that op gave it** (`parent_item_uuid`; `ASSUMPTIONS`, `item-uuids-on-a-write`).
+ * An absent token is last-writer-wins. ⚠️ An update that writes the data
  * the item already holds is a no-op: the item's token does not move.
  */
 export const OP = {
@@ -624,6 +625,15 @@ export const FIELD = {
   /** Placement under another item, for nested content. */
   parent: 'parent_item_id',
   /**
+   * The uuid a create gives its new item — a UUIDv7 the caller mints (`uuidv7`), so a later
+   * create of the same write can name it as its parent before it exists. Any UUID passes; v7
+   * is the convention. A create may name its parent this way or by `parent`, never both — on
+   * `POST /entities`' `items[]` and on an item op alike (`ASSUMPTIONS`, `item-uuids-on-a-write`).
+   */
+  uuid: 'uuid',
+  /** Placement under an item named by its uuid — one created earlier in the same write. */
+  parentUuid: 'parent_item_uuid',
+  /**
    * The section an item-create op writes into — the numeric id. **MEASURED.**
    *
    * ⭐ **Two routes, two spellings, both MEASURED:** creating an entity names a
@@ -644,10 +654,15 @@ export const FIELD = {
 /**
  * The create body — `POST /entities?model=…`. **MEASURED.**
  *
- * `{ items: [{ section, data, parent_item_id? }] }`, each `section` a NAME (or a
- * `parent/child` path). The entity and its items commit together, and the answer
- * is `201` with the entity's row (the list's row shape, below). An unknown section
- * name is `404 { kind: 'section' }`; an empty body makes an empty entity.
+ * `{ items: [{ section, data, parent_item_id?, uuid?, parent_item_uuid? }] }`, each
+ * `section` a NAME (or a `parent/child` path). The entity and its items commit together,
+ * and the answer is `201` with the entity's row (the list's row shape, below). An unknown
+ * section name is `404 { kind: 'section' }`; an empty body makes an empty entity.
+ *
+ * An item given a `uuid` can be named by a later one as its `parent_item_uuid`, so an entry
+ * and the items under it are one create. ⛔ **No item uuid comes back**: the row carries no
+ * `results`, and no read carries an item's uuid — the uuids a create gives serve that write
+ * alone (`ASSUMPTIONS`, `item-uuids-on-a-write`).
  *
  * `unit` — a unit's uuid — lands the entity in that unit rather than where a create
  * lands by default (`UNITS`; stated by the backend 2026-10-15, not yet measured here).
@@ -751,9 +766,10 @@ export const LANGUAGE = {
  * - **each section** — `{ id, model_id, name, kind, is_brief, parent_section_id, fields,
  *   other_data, constraints }`. `kind` is `single`, `multi`, or `binder`: a section that
  *   holds only sections. A nested section is a row of its own, `parent_section_id`
- *   naming its parent; top-level rows come first, and each group by name. ⛔ **A
- *   section's uuid is not in the definition** — a field whose choices are a section's
- *   items names that section's uuid itself (below).
+ *   naming its parent; the rows come in the order the schema declares them, depth first
+ *   (`ASSUMPTIONS`, `definition-in-declared-order`). ⛔ *Top-level rows first, each group
+ *   by name, until 2026-10-28.* ⛔ **A section's uuid is not in the definition** — a field
+ *   whose choices are a section's items names that section's uuid itself (below).
  * - **`other_data`** — what the schema declares of the section: `label`, `description`,
  *   `append_only` (insert-only), `allow_self_nesting` (its items nest — `self_nesting:
  *   true` in a schema), `date_field`.
@@ -774,6 +790,14 @@ export const LANGUAGE = {
  *   `entity_uuid` when it pins the entry that holds them. Its choices are
  *   `ROUTES.sectionItems(section_uuid)`. A field of kind `entity_ref` carries the
  *   `model_uuid` it pins (read in the backend's source).
+ *
+ * ⭐ **In a language: `?locale=<tag>`.** Each label and description — the Model's `label`,
+ * `plural` and `description`, a section's in `other_data`, a field's in `type.data` — is the
+ * first language of the tag's chain (`languageChain`) the Model's `i18n` translates, else as
+ * the schema writes it; a slot with neither stays absent. Nothing in the answer says which
+ * language it is, so a reader keeps it under the language it asked in. An unknown tag matches
+ * nothing and falls through; an empty one is none (`ASSUMPTIONS`, `definition-in-a-language`).
+ * This package asks in the page's language alone (`_definitionLocale`).
  *
  * ⭐ **Readable by every signed-in account, whatever it may create** — closing a
  * Model gates creating its entries, never reading its definition (ruled 2026-10-14;
@@ -1069,5 +1093,50 @@ export const ASSUMPTIONS = [
       "the backend's design of its fallback chain: each tag the read names, then its base subtag, once each, in order. Its design, not measured from this package",
     breaks:
       "a backend that does not add the base language leaves a value held in `fr` out of a `fr-CA` read, where `inLanguage` and the mock show it",
+  },
+  {
+    id: 'item-uuids-on-a-write',
+    we:
+      "send a create's `uuid` and `parent_item_uuid` (`identityOf`), on `POST /entities`' `items[]` and on a `create` op, and read no item uuid back from a create of an entry — its answer is the entry's row, and no read carries one. The mock refuses as the backend says it does: both parent keys, a parent named before the item given its uuid, and one uuid given twice are `400 Validation`; a uuid that is no UUID is `400 Bad Request`; a uuid an item has is `409 Conflict`; a parent in another entry, or none, is `404` with `kind: 'item'` and the uuid as `key`. Each is decided before anything is written, the earliest create's first, and none names which create it was",
+    from:
+      "the backend's statement from its code, 2026-10-29 — any UUID passes, v7 is the store's convention — not measured from this package",
+    breaks:
+      "a backend that answers one of these with another status or title has a page treat a refusal as another kind; one that returns item uuids from a create of an entry leaves them unread",
+  },
+  {
+    id: 'one-single-item-per-parent',
+    we:
+      "have the mock refuse a second item of a single section under one parent item — one per entry at the top — with `409 Schema Rule Violation`, its detail alone naming the section",
+    from:
+      "the backend's statement from its code, 2026-10-29: its rule since 2026-10-28, the same refusal at both levels — not measured from this package",
+    breaks:
+      "a backend that still counts one per entry refuses the second thesis of a second degree, which the mock takes",
+  },
+  {
+    id: 'cross-field-rules-on-a-write',
+    we:
+      "have the mock enforce a section's `required_when` on every write of an item's data — the field present, not absent, `null` or `''`, while the condition holds — and its `at_most_one_where` once at a write's end, over the entry's stored and written items of that section, per entry and never per parent; both `400 Validation` with `reason: 'invalid_field'` and `rule`, and no `field` key. `show_when` is never checked on a write",
+    from:
+      "the backend's statement from its code, 2026-10-29 — not measured from this package",
+    breaks:
+      "a page that reads the field a rule names from a key finds none: it is in the detail. A backend that counts `at_most_one_where` per parent item takes a write the mock refuses",
+  },
+  {
+    id: 'definition-in-a-language',
+    we:
+      "read a definition with `?locale=` naming the page's language alone, and keep it per language; the mock answers each label and description — the Model's `label`, `plural` and `description`, a section's and a field's — in the first language of that tag's chain the Model's `i18n` translates, else as the schema writes it, and an unknown or empty tag as none",
+    from:
+      "the backend's statement from its code, 2026-10-29, of what `?locale=` translates on the definition (since 2026-10-28) — not measured from this package",
+    breaks:
+      "a backend that translates other slots, or none, shows a page a label in another language than the page's; one from before 2026-10-28 refuses the parameter, and every definition read with it",
+  },
+  {
+    id: 'definition-in-declared-order',
+    we:
+      "have the mock list a definition's sections in the order the schema declares them, depth first — a nested section after its parent",
+    from:
+      "the backend's statement, 2026-10-28, that a definition lists sections in declared order — not measured from this package",
+    breaks:
+      "a form built in definition order shows its sections in another order than a hosted site's",
   },
 ]

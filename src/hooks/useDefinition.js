@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
 import { hookTypeName } from '../types.js'
+import { readLanguages } from '../languages.js'
 
 const noSubscribe = () => () => {}
 const noSnapshot = () => null
@@ -19,8 +20,12 @@ const noSnapshot = () => null
  * section's rules (`readDefinition`). The rules a definition states are the rules every
  * write is checked against.
  *
+ * Its labels and descriptions are in the page's language when the Model translates them, and
+ * as the schema writes them otherwise (`readDefinition`). Cached under a key scoped to the
+ * viewer and the page's language, so a page in another language reads its own.
+ *
  * `absent` — no `backend` service, or nobody signed in: a definition is read by someone
- * signed in. Cached under a key scoped to the viewer.
+ * signed in.
  *
  * @param {string|null} type - the Model: `@/cv`, one of this foundation's own (named in full by
  *   this foundation's copy of the package: `types.js`), or any other in full; null to skip
@@ -39,7 +44,9 @@ export function useDefinition(type) {
   const { schema, refused } = hookTypeName(type, 'useDefinition')
   const wanted = !!(client && client.enabled && store && type && session?.status !== 'anonymous')
   const active = wanted && !refused
-  const spec = active ? { endpoint: '/models', schema } : null
+  // The page's language, the one the definition is read in (`readDefinition`).
+  const [language] = client ? readLanguages(client.website) : []
+  const spec = active ? { endpoint: '/models', schema, ...(language ? { locale: language } : {}) } : null
   const key = spec ? client.cacheKey(spec) : null
 
   const subscribe = useCallback((fn) => (key ? store.subscribe(key, fn) : noSubscribe()), [store, key])

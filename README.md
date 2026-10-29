@@ -289,9 +289,13 @@ Each field is its declaration as the backend stores it — `key`, `kind`, `requi
 `multi`, and what the schema declares: `label`, `description`, `localized`, `format`,
 `max_length`, `min`, `max`, and `enum`. Each section is `{ name, path, kind, brief,
 fields, rules }`, plus its `label` and `description`; `path` is the name a write takes,
-`parent/child` for a nested section. ⭐ **These are the rules every write is checked
-against**, so a form that reads them checks what the backend will. `readDefinition({
-schema })` is the same outside React.
+`parent/child` for a nested section. Sections come in the order the schema declares them. ⭐
+**These are the rules every write is checked against**, so a form that reads them checks
+what the backend will. `readDefinition({ schema })` is the same outside React.
+
+**In the page's language.** Labels and descriptions — the Model's, each section's, each
+field's — come in the page's language when the schema translates them (its `i18n`), and as
+the schema writes them otherwise. A page in another language reads its own.
 
 ### A field's choices
 
@@ -356,9 +360,10 @@ package resolves it to what the backend's item route takes.
   else changed the item first. A retry would *succeed*, by overwriting a change nobody
   looked at — so what happens next is your application's decision, and usually it is
   to tell the person.
-- A write the Model's rules refuse — an insert-only section, a second item in a one-item
-  section — is an error of `kind: 'rule'`, not a conflict: nobody else is involved, and
-  the same write fails the same way again.
+- A write the Model's rules refuse — an insert-only section, a second item of a one-item
+  section under one parent — is an error of `kind: 'rule'`, not a conflict: nobody else is
+  involved, and the same write fails the same way again. A one-item section under a list
+  holds one item for each of the list's: one thesis per degree.
 
 ⚠️ `update` replaces the item's data whole. Spread what you are not editing. A translated
 field is saved one language at a time — *Translated fields*, below.
@@ -370,6 +375,29 @@ import { createEntity } from '@uniweb/api/client'
 
 await createEntity({ schema: '@/course', items: [{ section: 'course', data: { title: 'Intro' } }] })
 ```
+
+**An entry and its nested items in one create.** Give an item a `uuid` — `uuidv7()` mints
+one — and a later item of the same create names it as its `parent`: a uuid names an item by
+its uuid, a number by its id. Items are created in the order given, so a parent comes first.
+
+```js
+import { createEntity, uuidv7 } from '@uniweb/api/client'
+
+const degree = uuidv7()
+await createEntity({
+  schema: '@/cv',
+  items: [
+    { section: 'identity', data: { name: 'Ada' } },
+    { section: 'degrees', uuid: degree, data: { title: 'PhD' } },
+    { section: 'degrees/thesis', parent: degree, data: { topic: 'Engines' } },
+  ],
+})
+```
+
+The uuids serve that one write: the answer is the entry, and no read carries an item's uuid
+— a read names items by `id`, and an item's `parent_item_id` holds the hierarchy. A writer's
+`create` takes `uuid` and `parent` the same way, so a `batch` can add an item and the items
+under it at once.
 
 **Where it lands.** Everything a member creates lands at the root of the organization the
 site's backend is founded with. A solution that uses units — a department, a program, a
@@ -539,7 +567,8 @@ field's own declaration is refused, since it names the section's fields:
 |---|---|
 | `{ kind: 'exclusive', fields: [...] }` | at most one of the fields set — "another organization" beside a picked one |
 | `{ kind: 'required_one_of', fields: [...] }` | at least one of them set |
-| `{ kind: 'required_when', field, when: { field, equals } }` | the field set whenever another field equals a value |
+| `{ kind: 'required_when', field, when: { field, equals } }` | the field set — not absent, `null` or `''` — whenever another field equals a value |
+| `{ kind: 'at_most_one_where', field, equals }` | at most one of an entry's items in the section holding the value: one primary address |
 | `{ kind: 'field_order', before, after }` | one date no later than another |
 | `{ kind: 'unique_field', field }`, `{ kind: 'unique_combination', fields }` | a value — or values together — once among an entry's items in the section |
 | `{ kind: 'max_items', value }`, `{ kind: 'min_items', value }` | how many items the section holds — `min_items` refuses a delete below it, and does not make anyone add one |
@@ -624,9 +653,11 @@ production, and nothing in your site's configuration changes between the two.
 refusals, for every route this package uses. It enforces what your schemas declare —
 which sections are insert-only, the fields a section takes and their rules (`required`,
 `max_length`, `min` and `max`, a date's form, an `enum`, the `email` and `url` formats, a
-`pattern`, a choice from a list), keeps a day and a `url` as the backend stores them, and it
-is as strict as the backend about requests, so a mistake fails here rather than in front of a
-user.
+`pattern`, a choice from a list), a section's `required_when` and `at_most_one_where`, one
+item of a one-item section per parent, and the uuids a create gives its items. It keeps a day
+and a `url` as the backend stores them, answers a definition in the page's language from a
+seed schema's `i18n`, and it is as strict as the backend about requests, so a mistake fails
+here rather than in front of a user.
 Everyone signed in reads and writes their own entities, and a member nothing of anyone
 else's (`memberFloor: 'read'` in the seed models a service set up to let members read
 each other's — or per Model, `memberFloor: { '@/course': 'read' }`, so the

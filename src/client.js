@@ -31,6 +31,9 @@ import {
 } from './access.js'
 import { listUnitsWith } from './units.js'
 import { readSignInOptionsWith, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
+import { identityOf } from './item-identity.js'
+
+export { uuidv7 } from './uuid.js'
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -384,6 +387,17 @@ export class ApiClient {
   _localeQuery() {
     const languages = readLanguages(this.website)
     return languages.length ? { [PARAM.locale]: languages.join(',') } : null
+  }
+
+  /**
+   * The language a definition is read in: the page's alone. ⛔ Not the content reads' list: a
+   * label the page's language lacks falls back to the schema's own words, and a Model's `i18n`
+   * never holds its own language — so with the list, an English page whose site also has French
+   * was answered in French, the first language of it the Model translates.
+   */
+  _definitionLocale() {
+    const [language] = readLanguages(this.website)
+    return language ? { [PARAM.locale]: language } : null
   }
 
   // ── The session ───────────────────────────────────────────────────────────
@@ -907,20 +921,31 @@ export class ApiClient {
     )
   }
 
-  /** Drop a Model's kept definition, so the next read asks the backend again. */
+  /** Drop a Model's kept definitions, in every language, so the next read asks the backend again. */
   forgetDefinition(schema) {
-    this._schemas.delete(schema)
+    for (const key of [...this._schemas.keys()]) {
+      if (key === schema || key.startsWith(`${schema}\n`)) this._schemas.delete(key)
+    }
   }
 
-  /** The definition as the backend answers it — read once per viewer, and kept. */
+  /**
+   * The definition as the backend answers it — read once per viewer and language, and kept.
+   *
+   * It asks in the page's language alone (`_definitionLocale`), so its labels and descriptions
+   * come back in that language where the Model translates them, else as the schema writes them;
+   * and it is kept per language, so a page in another language reads its own. *(Read with no
+   * language, and kept by Model alone, until 2026-10-29: a French page got English labels.)*
+   */
   _definition(schema, signal) {
-    const held = this._schemas.get(schema)
+    const query = this._definitionLocale()
+    const key = query ? `${schema}\n${query[PARAM.locale]}` : schema
+    const held = this._schemas.get(key)
     if (held) return held
-    const pending = this.request('GET', ROUTES.schema(schema), { signal })
-    this._schemas.set(schema, pending)
+    const pending = this.request('GET', ROUTES.schema(schema), { query: query ?? undefined, signal })
+    this._schemas.set(key, pending)
     // A failure is not kept: the next read asks again.
     pending.catch(() => {
-      if (this._schemas.get(schema) === pending) this._schemas.delete(schema)
+      if (this._schemas.get(key) === pending) this._schemas.delete(key)
     })
     return pending
   }
@@ -949,8 +974,10 @@ export class ApiClient {
    * them checks what will be checked. What a form does with them — how a field is edited,
    * what it shows — is the foundation's.
    *
-   * Read once per viewer and kept. Signed out, the backend answers `401` (`auth`); an
-   * unknown Model is `absent`.
+   * ⭐ **In the page's languages.** Each label and description — the Model's, a section's, a
+   * field's — is the first of the page's languages (`readLanguages`) the Model translates, else
+   * as the schema writes it. Read once per viewer and per that list, and kept. Signed out, the
+   * backend answers `401` (`auth`); an unknown Model is `absent`.
    *
    * @param {object} args
    * @param {string} args.schema - the Model, e.g. `@acme/cv`
@@ -1304,9 +1331,26 @@ export class ApiClient {
    * theirs edits, while the session is elevated. Any other is `absent`, as one that
    * does not exist.
    *
+   * **An entry and its nested items in one create.** An item a later item nests under gets a
+   * `uuid` (`uuidv7()`), and the later item names it as its `parent` — a uuid names an item by
+   * its uuid, a number by its id. Items are created in the order given, so a parent comes
+   * before its children.
+   *
+   * ```js
+   * const degree = uuidv7()
+   * await createEntity({
+   *   schema: '@/cv',
+   *   items: [
+   *     { section: 'identity', data: { name: 'Ada' } },
+   *     { section: 'degrees', uuid: degree, data: { title: 'PhD' } },
+   *     { section: 'degrees/thesis', parent: degree, data: { topic: 'Engines' } },
+   *   ],
+   * })
+   * ```
+   *
    * @param {object} args
    * @param {string} args.schema
-   * @param {Array<{ section: string, data?: object, parent?: number }>} [args.items]
+   * @param {Array<{ section: string, data?: object, uuid?: string, parent?: number|string }>} [args.items]
    * @param {string} [args.unit] - the uuid of the unit it lands in
    * @param {AbortSignal} [args.signal]
    * @returns {Promise<object>} the new entity's row — `{ uuid, brief, unit_id, … }`
@@ -1333,7 +1377,7 @@ export class ApiClient {
             [CREATE.items]: list.map((item) => ({
               [CREATE.sectionName]: item[CREATE.sectionName],
               data: item.data ?? {},
-              ...(item.parent != null ? { [FIELD.parent]: item.parent } : {}),
+              ...identityOf(item, 'createEntity'),
             })),
           }
         : {}),

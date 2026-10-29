@@ -237,9 +237,23 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
       if (p && typeof p === 'object' && Number.isInteger(p.after)) return null
       return `unknown variant ${JSON.stringify(p)}, expected one of \`first\`, \`last\`, \`after\``
     }
+    // A uuid a create gives its item, or names its parent by, is a UUID — any version passes.
+    const uuid = (name) => {
+      const v = raw[name]
+      if (v == null) return null
+      if (typeof v !== 'string') return `invalid type: ${JSON.stringify(v)}, expected a UUID`
+      return isUuid(v) ? null : `UUID parsing failed: ${v}`
+    }
     const checks =
       raw.kind === OP.create
-        ? [integer(FIELD.section, true), raw.data === undefined ? 'missing field `data`' : null, integer(FIELD.parent, false), position(false)]
+        ? [
+            integer(FIELD.section, true),
+            raw.data === undefined ? 'missing field `data`' : null,
+            integer(FIELD.parent, false),
+            uuid(FIELD.uuid),
+            uuid(FIELD.parentUuid),
+            position(false),
+          ]
         : raw.kind === OP.update
           ? [integer(FIELD.item, true), raw.data === undefined ? 'missing field `data`' : null]
           : raw.kind === OP.move
@@ -390,13 +404,13 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
 
     // ── A Model's definition ─────────────────────────────────────────────────
     if (path.startsWith(`${MODELS}/`) && method === 'GET') {
-      const bad = unexpected(q, [])
+      const bad = unexpected(q, [PARAM.locale])
       if (bad) return bad
       if (!store.account) return unauthorized()
       // Path segments are not percent-decoded — `%40scope` is not `@scope`, as on the backend.
       const name = path.slice(MODELS.length + 1)
       const model = store.model(name)
-      return model && store.maySeeSchema(model) ? json(200, store.schemaOf(model)) : notFound('model', name)
+      return model && store.maySeeSchema(model) ? json(200, store.schemaOf(model, { locales: locales(q) })) : notFound('model', name)
     }
 
     // ── A Section's items ────────────────────────────────────────────────────
@@ -551,6 +565,12 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         const items = b?.[CREATE.items] ?? []
         if (!Array.isArray(items) || items.some((i) => !i || typeof i[CREATE.sectionName] !== 'string')) {
           return badRequest('invalid create body: missing field `section`')
+        }
+        // An item's `uuid` and its `parent_item_uuid` are UUIDs — any version passes.
+        for (const item of items) {
+          for (const key of [FIELD.uuid, FIELD.parentUuid]) {
+            if (item[key] != null && !isUuid(item[key])) return badRequest(`invalid create body: UUID parsing failed: ${item[key]}`)
+          }
         }
         // A unit is a uuid, as the body's `uuid` is (a `uuid` that is not one is MEASURED;
         // `unit` is assumed to be refused the same way).
