@@ -227,7 +227,8 @@ export class MockStore {
    * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable?, i18n? } }`.
    *   `i18n` is the schema's labels in other languages, as a data schema declares it
    *   (`{ fr: { 'model.label': …, 'section.<path>.field.<key>.label': … } }`): a definition read
-   *   with `?locale=` answers in them.
+   *   with `?locale=` answers in them, and its `source_locale` — the language its own words are
+   *   in — answers at its place in the chain.
    *   Named as a call sends it, and matched exactly: your foundation's own types as `@/name`,
    *   which is how `uniweb dev` sends them, and any other in full — `@std/person` is not
    *   `@/person`. A built foundation sends its own in full, `@<scope>/name`, as a backend
@@ -772,12 +773,17 @@ export class MockStore {
    *
    * ⭐ **In the reader's languages** — `locales`, the chain a `?locale=` read walks: each
    * label and description (the Model's `label`, `plural` and `description`, a section's and a
-   * field's `label` and `description`) is the first of them the schema's `i18n` gives, else
-   * its own; a slot with neither stays absent. Nothing in the answer says which language it is.
+   * field's `label` and `description`) is the first of them the schema's `i18n` gives — the
+   * Model's own language (the seed's `source_locale`) answering at its place in the chain, with
+   * its own words — else its own; a slot with neither stays absent. So an `en` Model asked
+   * `en,fr` answers English. Nothing in the answer says which language it is. ⛔ Until 2026-10-29
+   * the own language answered only after every other, as the backend's did: `en,fr` was French.
    */
   schemaOf(model, { locales = null } = {}) {
+    const ownLanguage = model.decl?.source_locale ?? model.decl?.sourceLocale ?? null
     const say = (path, own) => {
       for (const language of locales || []) {
+        if (ownLanguage && language === ownLanguage) break
         const text = model.decl?.i18n?.[language]?.[path]
         if (typeof text === 'string') return text
       }

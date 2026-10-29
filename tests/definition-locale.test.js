@@ -20,6 +20,7 @@ const SCHEMAS = {
   '@acme/cv': {
     label: 'CV',
     plural: 'CVs',
+    source_locale: 'en',
     sections: {
       identity: { brief: true, label: 'Identity', fields: { name: { type: 'string', label: 'Name' }, born: { type: 'date', label: 'Born' } } },
       degrees: { multiple: true, fields: { title: { type: 'string' }, thesis: { type: 'section', fields: { topic: { type: 'string' } } } } },
@@ -109,10 +110,19 @@ describe('the mock’s definition — the languages a read walks', () => {
     const { client, mock } = stack()
     await client.signIn({ username: 'ada', password: 'ada' })
     expect((await read(mock, 'de,fr')).model.data.label).toBe('CV (fr)')
+    expect((await read(mock, 'fr,en')).model.data.label).toBe('CV (fr)')
     expect((await read(mock, 'fr-CA')).model.data.label).toBe('CV (fr)')
     expect((await read(mock, 'xx')).model.data.label).toBe('CV')
     expect((await read(mock, '')).model.data.label).toBe('CV')
     expect((await read(mock, null)).model.data.label).toBe('CV')
+  })
+
+  it('⭐ answers the Model’s own language at its place in the list — an `en` Model asked `en,fr` answers English', async () => {
+    const { client, mock } = stack()
+    await client.signIn({ username: 'ada', password: 'ada' })
+    expect((await read(mock, 'en,fr')).model.data.label).toBe('CV')
+    expect((await read(mock, 'de,en,fr')).model.data.label).toBe('CV')
+    expect((await read(mock, 'en-GB,fr')).model.data.label).toBe('CV')
   })
 })
 

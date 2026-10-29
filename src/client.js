@@ -390,10 +390,10 @@ export class ApiClient {
   }
 
   /**
-   * The language a definition is read in: the page's alone. ⛔ Not the content reads' list: a
-   * label the page's language lacks falls back to the schema's own words, and a Model's `i18n`
-   * never holds its own language — so with the list, an English page whose site also has French
-   * was answered in French, the first language of it the Model translates.
+   * The language a definition is read in: the page's alone. A label the page's language lacks
+   * falls back to the schema's own words. ⛔ Not the content reads' list: a backend from before
+   * 2026-10-29 answered a Model's own language only after every other, so an English page whose
+   * site also has French was answered in French.
    */
   _definitionLocale() {
     const [language] = readLanguages(this.website)

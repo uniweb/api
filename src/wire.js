@@ -793,8 +793,9 @@ export const LANGUAGE = {
  *
  * ⭐ **In a language: `?locale=<tag>`.** Each label and description — the Model's `label`,
  * `plural` and `description`, a section's in `other_data`, a field's in `type.data` — is the
- * first language of the tag's chain (`languageChain`) the Model's `i18n` translates, else as
- * the schema writes it; a slot with neither stays absent. Nothing in the answer says which
+ * first language of the tag's chain (`languageChain`) the Model's `i18n` translates — the
+ * Model's own language answering at its place in the chain, with its own words — else as the
+ * schema writes it; a slot with neither stays absent. Nothing in the answer says which
  * language it is, so a reader keeps it under the language it asked in. An unknown tag matches
  * nothing and falls through; an empty one is none (`ASSUMPTIONS`, `definition-in-a-language`).
  * This package asks in the page's language alone (`_definitionLocale`).
@@ -1124,9 +1125,9 @@ export const ASSUMPTIONS = [
   {
     id: 'definition-in-a-language',
     we:
-      "read a definition with `?locale=` naming the page's language alone, and keep it per language; the mock answers each label and description — the Model's `label`, `plural` and `description`, a section's and a field's — in the first language of that tag's chain the Model's `i18n` translates, else as the schema writes it, and an unknown or empty tag as none",
+      "read a definition with `?locale=` naming the page's language alone, and keep it per language; the mock answers each label and description — the Model's `label`, `plural` and `description`, a section's and a field's — in the first language of the tag's chain the Model's `i18n` translates, its own language (a seed's `source_locale`) answering at its place with its own words, else as the schema writes it, and an unknown or empty tag as none",
     from:
-      "the backend's statement from its code, 2026-10-29, of what `?locale=` translates on the definition (since 2026-10-28) — not measured from this package",
+      "the backend's statement from its code, 2026-10-29, of what `?locale=` translates on the definition (since 2026-10-28), and of its fix the same day: until then the own language answered after every other, so an `en` Model asked `en,fr` answered French — not measured from this package",
     breaks:
       "a backend that translates other slots, or none, shows a page a label in another language than the page's; one from before 2026-10-28 refuses the parameter, and every definition read with it",
   },
