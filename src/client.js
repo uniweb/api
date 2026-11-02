@@ -30,10 +30,24 @@ import {
   leaveAccessWith,
 } from './access.js'
 import { listUnitsWith } from './units.js'
-import { readSignInOptionsWith, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
+import { readSignInOptionsWith, returnedSignedIn, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
 import { identityOf } from './item-identity.js'
 
 export { uuidv7 } from './uuid.js'
+
+/**
+ * Report what only this client can see, with no code in the foundation: a sign-in, a
+ * sign-up. A host forwards these requests without reading them, and the runtime is not on
+ * their path. Automatic, so it asks `arms` as the runtime's automatic events do: a site's
+ * `emit` and its host's list both apply. Only the name crosses the wire.
+ *
+ * @param {'conversion'|'engagement'} event
+ * @param {string} name
+ */
+function report(event, name) {
+  const tracking = getUniweb()?.tracking
+  if (tracking?.arms?.(event)) tracking.track(event, { name })
+}
 
 /**
  * The site service this package reads its base from — the only name it owns.
@@ -417,7 +431,13 @@ export class ApiClient {
   ensureSession() {
     if (!this.enabled) return Promise.resolve(this.setSession(ANONYMOUS))
     if (this._session.status !== 'loading') return Promise.resolve(this._session)
-    return this._share(() => this._probe())
+    return this._share(async () => {
+      const session = await this._probe()
+      // The way back from a provider's sign-in is the one place that sign-in is seen. A
+      // reload of that address counts again, like any event of a new document load.
+      if (session.status === 'authenticated' && returnedSignedIn()) report('engagement', 'sign_in')
+      return session
+    })
   }
 
   /** Ask again who the viewer is — after a sign-in elsewhere, or on focus. */
@@ -481,8 +501,15 @@ export class ApiClient {
       return { ok: false, challenge: { kind: 'totp' } }
     }
     this._challenge = null
+    return this._signedIn()
+  }
+
+  /** Ask who the viewer is after a sign-in, and report it if they are someone. */
+  async _signedIn() {
     const session = await this._probe()
-    return { ok: session.status === 'authenticated', viewer: session.viewer }
+    const ok = session.status === 'authenticated'
+    if (ok) report('engagement', 'sign_in')
+    return { ok, viewer: session.viewer }
   }
 
   /**
@@ -500,8 +527,7 @@ export class ApiClient {
       onUnauthorized: 'ignore',
     })
     this._challenge = null
-    const session = await this._probe()
-    return { ok: session.status === 'authenticated', viewer: session.viewer }
+    return this._signedIn()
   }
 
   /**
@@ -561,8 +587,12 @@ export class ApiClient {
    * The account cannot sign in until the address is verified from the email the
    * backend sends. A taken username is refused (`409`).
    */
-  signUp(fields) {
-    return this.request('POST', AUTH.register, { body: fields, onUnauthorized: 'ignore' })
+  async signUp(fields) {
+    const answer = await this.request('POST', AUTH.register, { body: fields, onUnauthorized: 'ignore' })
+    // ⚖️ "Asked", not "a new account": the answer above is the same for a taken address,
+    // and the verification that makes the account comes later, often in another browser.
+    report('conversion', 'sign_up')
+    return answer
   }
 
   /** Ask for a password reset — `{ email }`. `202` whether or not the address is known. */

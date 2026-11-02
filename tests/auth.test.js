@@ -162,6 +162,92 @@ describe('sign in', () => {
   })
 })
 
+describe('what a sign-in and a sign-up report', () => {
+  /** A client on a site whose tracker is armed for `selected` events. */
+  function trackedClient(handler, selected = ['conversion', 'engagement']) {
+    const client = clientWith(WITH_BACKEND, handler)
+    const tracking = { arms: vi.fn((event) => selected.includes(event)), track: vi.fn() }
+    globalThis.uniweb.tracking = tracking
+    return { client, tracking }
+  }
+
+  const signedIn = (url, init) => (init?.method === 'POST' ? empty() : json(200, ME))
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('reports a sign-in as engagement, with nothing but its name', async () => {
+    const { client, tracking } = trackedClient(signedIn)
+    await client.signIn({ username: 'ada', password: 'secret-word' })
+    expect(tracking.track.mock.calls).toEqual([['engagement', { name: 'sign_in' }]])
+    expect(JSON.stringify(tracking.track.mock.calls)).not.toContain('ada')
+  })
+
+  it('reports a sign-in when the second factor finishes it, not before', async () => {
+    const { client, tracking } = trackedClient((url, init) => {
+      if (route(url, init) === 'POST /_api/auth/login') return json(200, { status: 'totp_required', challenge_token: 'ch-1' })
+      return init?.method === 'POST' ? empty() : json(200, ME)
+    })
+    const first = await client.signIn({ username: 'ada', password: 'x' })
+    expect(first.challenge).toBeTruthy()
+    expect(tracking.track).not.toHaveBeenCalled()
+    await client.completeChallenge('123456')
+    expect(tracking.track.mock.calls).toEqual([['engagement', { name: 'sign_in' }]])
+  })
+
+  it('reports nothing for a refused credential', async () => {
+    const { client, tracking } = trackedClient(() =>
+      json(401, { status: 401, title: 'Unauthorized', detail: 'no' })
+    )
+    await client.signIn({ username: 'ada', password: 'wrong' }).catch(() => {})
+    expect(tracking.track).not.toHaveBeenCalled()
+  })
+
+  it('reports a sign-up as a conversion, and nothing when it is refused', async () => {
+    const ok = trackedClient(() => json(202, { status: 'verification_required', email: 'a@b.c' }))
+    await ok.client.signUp({ username: 'ada', email: 'a@b.c', password: 'x' })
+    expect(ok.tracking.track.mock.calls).toEqual([['conversion', { name: 'sign_up' }]])
+    expect(JSON.stringify(ok.tracking.track.mock.calls)).not.toContain('a@b.c')
+
+    const taken = trackedClient(() => json(409, { status: 409, title: 'Conflict', detail: 'taken' }))
+    await taken.client.signUp({ username: 'ada', email: 'a@b.c', password: 'x' }).catch(() => {})
+    expect(taken.tracking.track).not.toHaveBeenCalled()
+  })
+
+  it('reports the way back from a provider, once a session stands behind it', async () => {
+    vi.stubGlobal('location', { search: '?next=%2Fx&auth=ok' })
+    const { client, tracking } = trackedClient(() => json(200, ME))
+    await client.ensureSession()
+    await client.ensureSession()
+    expect(tracking.track.mock.calls).toEqual([['engagement', { name: 'sign_in' }]])
+  })
+
+  it('takes `auth=ok` for a hint: with no session behind it, nothing is reported', async () => {
+    vi.stubGlobal('location', { search: '?auth=ok' })
+    const { client, tracking } = trackedClient(() => json(401, { status: 401, title: 'Unauthorized' }))
+    await client.ensureSession()
+    expect(tracking.track).not.toHaveBeenCalled()
+  })
+
+  it('reports nothing for a viewer who was simply already signed in', async () => {
+    vi.stubGlobal('location', { search: '?next=%2Fx' })
+    const { client, tracking } = trackedClient(() => json(200, ME))
+    await client.ensureSession()
+    expect(tracking.track).not.toHaveBeenCalled()
+  })
+
+  it('asks `arms` for each event, so a site or its host can narrow them away', async () => {
+    const { client, tracking } = trackedClient(signedIn, ['conversion'])
+    await client.signIn({ username: 'ada', password: 'x' })
+    expect(tracking.arms).toHaveBeenCalledWith('engagement')
+    expect(tracking.track).not.toHaveBeenCalled()
+  })
+
+  it('works on a site with no tracker at all', async () => {
+    const client = clientWith(WITH_BACKEND, signedIn)
+    await expect(client.signIn({ username: 'ada', password: 'x' })).resolves.toMatchObject({ ok: true })
+  })
+})
+
 describe('sign out', () => {
   it("posts to logout, turns the session anonymous and drops the viewer's entries", async () => {
     const client = clientWith(WITH_BACKEND, (url, init) => (route(url, init) === 'POST /_api/auth/logout' ? empty(204) : json(200, ME)))

@@ -104,6 +104,21 @@ export function signInAddressOf(client, provider, { returnTo } = {}) {
 }
 
 /**
+ * Whether this page is the way back from a provider's sign-in that succeeded (`?auth=ok`).
+ * A hint: only an authenticated session behind it says the viewer really signed in.
+ *
+ * @param {string} [search] - a query string; the page's own by default
+ * @returns {boolean}
+ */
+export function returnedSignedIn(search = globalThis.location?.search ?? '') {
+  try {
+    return new URLSearchParams(search).get(SIGN_IN_PROVIDER.returned) === SIGN_IN_PROVIDER.ok
+  } catch {
+    return false
+  }
+}
+
+/**
  * Sign in through a provider — leave for its sign-in, and come back to `returnTo` with
  * `?auth=ok`, `?link={provider}` or `?error={reason}` (`SIGN_IN_PROVIDER`). Nothing
  * happens outside a browser, or with no address to go to (`signInAddressOf`).

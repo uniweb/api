@@ -218,6 +218,14 @@ to hold. The link decides what to offer, not what is allowed: on the site, an
 administrator's session acts through their role only while elevated, and administering
 the backend happens at the other end of the link.
 
+### What a sign-in and a sign-up report
+
+On a site with tracking on, a sign-in reports an `engagement` named `sign_in`, including
+on the way back from a provider, and a sign-up a `conversion` named `sign_up`. Your
+foundation adds nothing and sends nothing else: neither carries an account's details. A
+sign-up says someone asked, since the backend answers the same for an address already
+taken. So don't report these again yourself.
+
 ## Reading
 
 ```jsx
