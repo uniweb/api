@@ -220,13 +220,18 @@ describe('the client against the mock — reading', () => {
 })
 
 describe('the client against the mock — writing', () => {
-  it('⭐ Models are open — a member creates their own; the ENTRY refuses them the organiser\'s', async () => {
+  it('⭐ every type starts closed — the organiser creates, a member what the blueprint opens; the ENTRY refuses them the organiser\'s', async () => {
     const { client } = stack()
 
     await signIn(client, 'attendee')
-    const mine = await client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'My notes' } }] })
-    expect(mine).toMatchObject({ model_name: '@/track', brief: { name: 'My notes' } })
-    // What protects the programme is who may edit an entry, never who may create one.
+    // A type no blueprint line opens: `403 use_model`, as a site backend answers (MEASURED).
+    await expect(
+      client.createEntity({ schema: '@/track', items: [{ section: 'track', data: { name: 'My notes' } }] }),
+    ).rejects.toMatchObject({ status: 403, kind: 'forbidden', extensions: { op: 'use_model' } })
+    // One the default seed's blueprint opens, `add: open`.
+    const mine = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Alex' } }] })
+    expect(mine).toMatchObject({ model_name: '@/attendance', brief: { who: 'Alex' } })
+    // And who may edit an entry is the entry's: the organiser's track is not the attendee's.
     await expect(
       client.writeItems({
         schema: '@/track',
@@ -243,7 +248,7 @@ describe('the client against the mock — writing', () => {
 
   it('⛔ refuses a seed that still declares creatable_by — it is retired', () => {
     expect(() => createMockBackend({ seed: { schemas: { '@/track': { creatable_by: 'unit_members' } } } })).toThrow(
-      /creatable_by is retired — Models are open/,
+      /creatable_by is retired — every type starts closed/,
     )
   })
 
@@ -406,7 +411,7 @@ describe('the client against the mock — writing', () => {
         '@/progress': { sections: { progress: { kind: 'single', brief: true, fields: { done: { type: 'int' } } } } },
       },
     }
-    const { client } = stack({ seed })
+    const { client } = stack({ seed, blueprint: { access: { '@/progress': { add: 'open' } } } })
     await signIn(client, 'organiser')
     const course = await client.createEntity({ schema: '@/course', items: [{ section: 'course', data: { title: 'Open Water' } }] })
     await client.signOut()
@@ -445,7 +450,8 @@ describe('the client against the mock — writing', () => {
       },
     })
 
-    const privately = stack({ seed: seed(undefined) }).client
+    const opened = { access: { '@/attendance': { add: 'open' } } }
+    const privately = stack({ seed: seed(undefined), blueprint: opened }).client
     await signIn(privately, 'ada')
     const adas = await privately.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await privately.signOut()
@@ -460,7 +466,7 @@ describe('the client against the mock — writing', () => {
     expect((await privately.readEntity({ schema: '@/attendance', uuid: adas.uuid })).entity.can_edit).toBe(false)
     delete globalThis.uniweb
 
-    const shared = stack({ seed: seed('read') }).client
+    const shared = stack({ seed: seed('read'), blueprint: opened }).client
     await signIn(shared, 'ada')
     const adas2 = await shared.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     await shared.signOut()

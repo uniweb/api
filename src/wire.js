@@ -171,6 +171,21 @@ export const SIGN_IN_OPTIONS = Object.freeze({
 })
 
 /**
+ * Who may create an account — the two values of `SIGN_IN_OPTIONS.signup`, set by the backend's
+ * owner: `open`, the default, or `invite_only`, an address someone invited to the app and no
+ * other. Signing in is never affected. Under `invite_only`, `POST /auth/register` for an address
+ * nobody invited is `403`, title `PROBLEM.invitationOnly`, `reason` `refused`, and no account is
+ * made. The modes and the refusal's status and reason are asserted by the backend's own test, its
+ * title and detail are its code (2026-10-14); the providers route's `signup` is MEASURED with it
+ * (2026-10-28).
+ */
+export const SIGNUP = Object.freeze({
+  open: 'open',
+  inviteOnly: 'invite_only',
+  refused: 'signup_by_invitation_only',
+})
+
+/**
  * Sign-in through a provider — ⛔ **a navigation, never a fetch**:
  * `GET /auth/oauth/{provider}/authorize?redirect_uri=&state=`.
  *
@@ -1029,6 +1044,8 @@ export const PROBLEM = {
   notVerified: 'Email Not Verified',
   appendOnly: 'Append-Only Section',
   schemaRule: 'Schema Rule Violation',
+  /** A sign-up refused while the backend admits new accounts by invitation only (`SIGNUP`). */
+  invitationOnly: 'Signup By Invitation Only',
 }
 
 /**
@@ -1050,6 +1067,15 @@ export const PROBLEM = {
  * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
 export const ASSUMPTIONS = [
+  {
+    id: 'team-access-to-every-entry',
+    we:
+      "have the mock let a team's `all` line from a backend blueprint reach every entry of its type placed at the home organization's root — `read` at once, `edit` once the session is elevated, never a delete — and name such a row `via: 'rbac'`, a role narrowed to one type",
+    from:
+      "the backend's statement in its blueprint design (2026-11-09): such a line is an entry grant held by the team at the home organization's root, reaching the entries placed there, and a team's `edit` answers as `read` until the session is elevated — the last measured through a site's `/_api` (2026-10-16); which `via` such a row names, nobody has said",
+    breaks:
+      "a backend that reaches an entry placed in a unit below the root answers a team member's read the mock refuses, and one that names the row otherwise hands a component that reads `via` another reason",
+  },
   {
     id: 'localized-json-is-a-locale-map',
     we:

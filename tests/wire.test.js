@@ -42,8 +42,11 @@ describe('wire — the assumptions are a reviewable set', () => {
   // `language-chain-adds-base`: an editor's read in every language, and the base language a
   // read in a regional one walks — both the backend's design, neither measured from here.
   // Since 2026-10-28 it also holds `sign-in-options-are-the-same-for-everyone`: the backend
-  // says `/auth/providers` holds nothing about the visitor, so a page reads it once.
+  // says `/auth/providers` holds nothing about the visitor, so a page reads it once. Since
+  // 2026-11-09 it also holds `team-access-to-every-entry`: what a blueprint's team line reaches,
+  // as the backend states it, for the mock to found itself from a blueprint.
   const EXPECTED = [
+    'team-access-to-every-entry',
     'localized-json-is-a-locale-map',
     'elevation-by-provider',
     'sign-in-options-are-the-same-for-everyone',

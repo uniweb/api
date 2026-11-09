@@ -6,7 +6,7 @@ import { useUnits, listUnits, createEntity } from '../src/index.js'
 import { getClient } from '../src/client.js'
 import { createMockBackend } from '../src/mock/index.js'
 import { HOME_ORG, SITE_UNIT } from '../src/mock/store.js'
-import { fetchStub, json, parse, WITH_BACKEND, WITHOUT_BACKEND } from './helpers.js'
+import { fetchStub, json, parse, WITH_BACKEND, WITHOUT_BACKEND, openEvery } from './helpers.js'
 
 /**
  * The units the viewer is placed in, and a create that lands in one — the wire the backend
@@ -75,7 +75,7 @@ const SCHOOL = {
 }
 
 function stack(options) {
-  const mock = createMockBackend({ onMail: null, seed: SCHOOL, ...options })
+  const mock = createMockBackend({ onMail: null, seed: SCHOOL, blueprint: openEvery(SCHOOL), ...options })
   createUniweb(WITH_BACKEND)
   const client = getClient()
   client.fetchFn = vi.fn((url, init) => mock.fetch(new Request(new URL(String(url), 'http://site.test'), init)))

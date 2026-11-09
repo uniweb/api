@@ -44,6 +44,16 @@ export function fetchStub(handler) {
   })
 }
 
+/**
+ * A backend blueprint that opens every type a seed names to every signed-in account — for a test
+ * about something else, whose members create entries. Every type starts closed, as a site backend's
+ * do (since 2026-11-09); until then the mock let anyone signed in create entries of any Model.
+ */
+export function openEvery(seed) {
+  const names = new Set([...Object.keys(seed?.schemas ?? {}), ...(seed?.entities ?? []).map((e) => e.model)])
+  return { access: Object.fromEntries([...names].map((name) => [name, { add: 'open' }])) }
+}
+
 /** Parse a request URL the client composed, absolute or relative. */
 export const parse = (url) => new URL(url, 'http://site.test')
 

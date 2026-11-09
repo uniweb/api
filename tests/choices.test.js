@@ -5,7 +5,7 @@ import { createUniweb } from '@uniweb/core'
 import { getClient } from '../src/client.js'
 import { useChoices, useDefinition } from '../src/index.js'
 import { createMockBackend } from '../src/mock/index.js'
-import { WITH_BACKEND } from './helpers.js'
+import { WITH_BACKEND, openEvery } from './helpers.js'
 
 afterEach(() => {
   delete globalThis.uniweb
@@ -108,7 +108,8 @@ const seed = (extra = {}) => ({
 })
 
 function stack(options = {}) {
-  const mock = createMockBackend({ onMail: null, seed: seed(), ...options })
+  const seeded = options.seed ?? seed()
+  const mock = createMockBackend({ onMail: null, blueprint: openEvery(seeded), ...options, seed: seeded })
   createUniweb(WITH_BACKEND)
   const client = getClient()
   client.fetchFn = (url, init) => mock.fetch(new Request(new URL(String(url), 'http://site.test'), init))

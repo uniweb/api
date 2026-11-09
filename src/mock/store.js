@@ -1,4 +1,4 @@
-import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM } from '../wire.js'
+import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 import { uuidv7 } from '../uuid.js'
@@ -49,6 +49,21 @@ import { uuidv7 } from '../uuid.js'
  *   the root, and a unit's own `floor` what lands in that unit, for the accounts placed
  *   in it or below it.
  *
+ * - ⭐ **Every type starts closed, as a site backend's do** (since 2026-11-09): an entry of
+ *   one is created by the operator — on a site backend, every type's owner of record — and
+ *   by whoever the backend's blueprint lets add it, and anyone else's create is `403`
+ *   `use_model` (MEASURED 2026-09-18, and through a site's `/_api` 2026-10-16). The
+ *   blueprint, as `blueprint.yml` holds it (`readBlueprint`, `@uniweb/build/blueprint`), says the
+ *   rest of how the backend begins: `signup`; its `teams`, each empty until a seeded account
+ *   names it (`teams: [sales]`), since who is in a team is never a blueprint's; for each
+ *   type, `add` — `open`, every signed-in account, or the teams that add it, who need no
+ *   elevation (MEASURED 2026-10-16) — and `all`, where `members` is that type's floor and a
+ *   team's line reaches every entry of the type at the root, its `edit` only once elevated
+ *   (`ASSUMPTIONS`, `team-access-to-every-entry`). Its `publicQueries` are not modelled:
+ *   under `uniweb dev` a site reads its records from its files. *(Until 2026-11-09 the mock
+ *   modelled no closed type: anyone signed in created entries of any Model, as on a
+ *   backend before its types started closed.)*
+ *
  * ⛔ **Seeded fixtures plus in-memory mutation, and deliberately not a database.**
  * A mock that grows a schema and migrations becomes a second implementation that
  * drifts and is believed anyway.
@@ -61,11 +76,11 @@ import { uuidv7 } from '../uuid.js'
  *   before.)*
  *
  * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
- * same read), a Model whose creation is closed, second factors —
+ * same read), second factors —
  * at a sign-in or an elevation, where a `code` is accepted and not checked —
  * sign-in providers, and so no elevation through one, roles other than the operator's
- * — so no reader or editor held at a unit, no entry grants, and no by person —
- * teams, step-up, a reference to an entity (an `entity_ref` value is stored unchecked,
+ * — so no reader or editor held at a unit, no entry grants but a blueprint's, and no by
+ * person — teams but a blueprint's, the capabilities read and a row's `can`, step-up, a reference to an entity (an `entity_ref` value is stored unchecked,
  * and its `readable_with` and `sold_with` open nothing), a section's own rules — `exclusive`,
  * `unique_field`, `min_items` and the rest are answered in the definition and not
  * applied; a field's `enum` is — password rules, an offer's grants (a count, sharing
@@ -110,6 +125,44 @@ const MAX_DEPTH = 3
  */
 function unknownPermission(permission, { title = 'Validation', prefix = '' } = {}) {
   return refuse(400, title, `${prefix}unknown permission \`${permission}\` (must be ${GRANT.levels.join('|')})`)
+}
+
+/** In a blueprint's `all`, every member of the home organization: the one name there that is not a team. */
+const MEMBERS = 'members'
+
+/** `read` < `edit`: the higher of two levels, or null when neither is set. */
+const higher = (a, b) => (a === 'edit' || b === 'edit' ? 'edit' : a === 'read' || b === 'read' ? 'read' : null)
+
+/**
+ * A backend blueprint, as `blueprint.yml` holds it, read into what the mock founds itself from:
+ * who may sign up, the teams, and each type's line. `null` founds the backend a blueprint does not
+ * describe — every type closed, sign-up open — as a site backend started without one begins. The
+ * build checks the file's shape at a build, a push and `uniweb dev`; this checks only what the mock
+ * reads.
+ */
+function foundFrom(blueprint) {
+  if (blueprint == null) return { signup: SIGNUP.open, teams: new Map(), access: {} }
+  if (typeof blueprint !== 'object' || Array.isArray(blueprint)) {
+    throw new Error('[uniweb/api mock] blueprint is the object blueprint.yml holds — read it with readBlueprint from @uniweb/build/blueprint')
+  }
+  const signup = blueprint.signup ?? SIGNUP.open
+  if (![SIGNUP.open, SIGNUP.inviteOnly].includes(signup)) {
+    throw new Error(`[uniweb/api mock] blueprint: signup is '${SIGNUP.open}' or '${SIGNUP.inviteOnly}' — got ${JSON.stringify(signup)}`)
+  }
+  const teams = new Map()
+  for (const [id, team] of Object.entries(blueprint.teams ?? {})) {
+    teams.set(id, { id, label: team?.label ?? id, members: new Set() })
+  }
+  const access = blueprint.access ?? {}
+  for (const [type, line] of Object.entries(access)) {
+    for (const team of Array.isArray(line?.add) ? line.add : []) {
+      if (!teams.has(team)) throw new Error(`[uniweb/api mock] blueprint: access.${type}.add names '${team}', which is not one of its teams`)
+    }
+    for (const who of Object.keys(line?.all ?? {})) {
+      if (who !== MEMBERS && !teams.has(who)) throw new Error(`[uniweb/api mock] blueprint: access.${type}.all names '${who}', which is not one of its teams`)
+    }
+  }
+  return { signup, teams, access }
 }
 
 /** A floor is `read` or `edit`, for every Model or per Model — or none. */
@@ -235,7 +288,8 @@ export class MockStore {
    *   holds them (`types.js`).
    *   `grantable: false`, as a data schema declares it, gives no access to an entry of it: a
    *   grant is refused `403` (`model_not_grantable`).
-   *   ⛔ No `creatable_by` — retired 2026-09-23, Models are open; a seed carrying it is refused.
+   *   ⛔ No `creatable_by` — retired 2026-09-23; a seed carrying it is refused. Who may create
+   *   entries of a type is the blueprint's `add`, and every type starts closed (`blueprint`).
    *   `sections` is the LOWERED sections map (`{ [name]: { kind | multiple, brief, append_only, fields } }`)
    *   as the framework's normalizer produces it; with it, writes are shape-checked
    *   (`./schema-shape.js`). Without it the sections are inferred: a one-item brief
@@ -264,10 +318,20 @@ export class MockStore {
    *   an address a seeded account holds is that account's from the start.
    * @param {object} [options]
    * @param {string} [options.signedInAs] - start with this account already signed in.
+   * @param {object|null} [options.blueprint] - how the backend begins, as `blueprint.yml` holds it:
+   *   `signup`, `teams`, and each type's `add` and `all` (`foundFrom`). A seeded account names the
+   *   teams it is in, `teams: [sales]`. Without one, every type is closed and sign-up is open.
    */
-  constructor(seed = {}, { signedInAs = null } = {}) {
+  constructor(seed = {}, { signedInAs = null, blueprint = null } = {}) {
     this.clock = makeClock()
     this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT }
+    const founded = foundFrom(blueprint)
+    /** Who may create an account: `open`, or `invite_only` (`SIGNUP`). */
+    this.signup = founded.signup
+    /** The blueprint's teams, by id: `{ id, label, members }`, `members` the ids of the accounts in it. */
+    this.teams = founded.teams
+    /** Each type's line from the blueprint's `access`, by the name a call sends: `{ add?, all? }`. */
+    this.lines = founded.access
     this.accounts = []
     for (const a of seed.accounts || []) this.addAccount(a, { verified: true })
 
@@ -275,7 +339,7 @@ export class MockStore {
     for (const [name, decl] of Object.entries(this.schemas)) {
       if (decl && (decl.creatable_by !== undefined || decl.creatableBy !== undefined)) {
         throw new Error(
-          `[uniweb/api mock] ${name}: creatable_by is retired — Models are open: anyone signed in may create entries of any Model, and who may see or edit an entry is decided by the entry. Remove it.`
+          `[uniweb/api mock] ${name}: creatable_by is retired — every type starts closed, as a site backend's do, and who else may create entries of one is the site's blueprint's \`add\` (blueprint.yml). Remove it.`
         )
       }
     }
@@ -369,7 +433,58 @@ export class MockStore {
       verified,
     }
     this.accounts.push(account)
+    // Who is in a team is the seed's, never the blueprint's: at a backend's start no account exists
+    // but its owner's.
+    for (const id of a.teams ?? []) {
+      const team = this.teams.get(id)
+      if (!team) {
+        const known = [...this.teams.keys()].join(', ') || '(none)'
+        throw new Error(`[uniweb/api mock] seed: '${a.username}' is in team '${id}', which the blueprint does not found. Its teams: ${known}`)
+      }
+      team.members.add(account.id)
+    }
     return account
+  }
+
+  /** The teams an account is in, by id. */
+  teamsOf(account) {
+    return account ? [...this.teams.values()].filter((t) => t.members.has(account.id)).map((t) => t.id) : []
+  }
+
+  /**
+   * Who may create an entry of this Model. ⭐ Every type starts closed: its owner of record — the
+   * operator — creates, and so do the teams its blueprint line's `add` lists, with no elevation;
+   * `add: open` lets every signed-in account.
+   */
+  mayCreate(model) {
+    const me = this.account
+    if (!me) return false
+    if (me.operator === true) return true
+    const add = this.lines[model.name]?.add
+    if (add === 'open') return true
+    return Array.isArray(add) && add.some((id) => this.teams.get(id)?.members.has(me.id))
+  }
+
+  /** A create of a closed type, by someone it does not admit — `403`, `op: 'use_model'` (MEASURED). */
+  useModelRefusal(model) {
+    return refuse(403, 'Forbidden', `use_model on model ${model.uuid} not permitted`, { op: 'use_model', target: `model ${model.uuid}` })
+  }
+
+  /**
+   * What the viewer's teams reach on this entry through the blueprint's `all`: `read`, `edit` or
+   * null. A team's line reaches the entries placed at the home organization's root (`ASSUMPTIONS`,
+   * `team-access-to-every-entry`).
+   */
+  teamReach(entity) {
+    if ((entity.unit_id ?? SITE_UNIT) !== SITE_UNIT) return null
+    const all = this.lines[entity.model]?.all ?? {}
+    return this.teamsOf(this.account).reduce((level, id) => higher(level, all[id] ?? null), null)
+  }
+
+  /** Whether one of the viewer's teams edits a type through the blueprint, which waits for elevation. */
+  teamEdits(account) {
+    const mine = this.teamsOf(account)
+    return Object.values(this.lines).some((line) => mine.some((id) => line?.all?.[id] === 'edit'))
   }
 
   get account() {
@@ -400,7 +515,12 @@ export class MockStore {
       // home org, which every account belongs to. Both null would mean a non-member.
       workspace: { ...HOME_ORG },
       capabilities: { admin_app: account.operator === true },
-      elevation: { available: account.operator === true, ...(elevated ? { until: this.session.elevatedUntil } : {}) },
+      // ⭐ Available to the operator, and to a member of a team that edits a type through the
+      // blueprint — an entry grant that answers more than `read` (MEASURED 2026-10-16).
+      elevation: {
+        available: account.operator === true || this.teamEdits(account),
+        ...(elevated ? { until: this.session.elevatedUntil } : {}),
+      },
     }
   }
 
@@ -441,6 +561,11 @@ export class MockStore {
   }
 
   register({ username, email, password }) {
+    // ⭐ By invitation only, an address nobody invited is refused, and nothing is created. An
+    // invitation is an offer to the address (`seed.offers`), mailed or claimed.
+    if (this.signup === SIGNUP.inviteOnly && ![...this.offers.values()].some((o) => o.email === email)) {
+      return refuse(403, PROBLEM.invitationOnly, 'this deployment admits new accounts by invitation only', { reason: SIGNUP.refused })
+    }
     if (this.accounts.some((a) => a.username === username)) {
       return refuse(409, 'Conflict', `account username already exists: ${JSON.stringify(username)}`)
     }
@@ -1170,11 +1295,13 @@ export class MockStore {
    */
   floorFor(entity) {
     const unit = this.unitById(entity.unit_id ?? SITE_UNIT)
-    if (!unit) return null
+    if (!unit || !this.belongsTo(this.account, unit)) return null
     const floor = unit.id === SITE_UNIT ? this.memberFloor : unit.floor
-    if (floor == null || !this.belongsTo(this.account, unit)) return null
-    if (typeof floor === 'string') return floor
-    return floor[entity.model] ?? null
+    const seeded = floor == null ? null : typeof floor === 'string' ? floor : (floor[entity.model] ?? null)
+    // ⭐ A blueprint's `members` line is a floor for one type, held at the root: it answers in full
+    // on every session, elevated or not.
+    const founded = unit.id === SITE_UNIT ? (this.lines[entity.model]?.all?.[MEMBERS] ?? null) : null
+    return higher(seeded, founded)
   }
 
   /** What the viewer was given on this entity — `read`, `edit`, `admin` — or null. */
@@ -1189,7 +1316,14 @@ export class MockStore {
    */
   mayRead(entity) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || me.operator === true || this.grantOf(entity) != null || this.floorFor(entity) != null)
+    return (
+      !!me &&
+      (entity.owner_id === me.id ||
+        me.operator === true ||
+        this.grantOf(entity) != null ||
+        this.floorFor(entity) != null ||
+        this.teamReach(entity) != null)
+    )
   }
 
   /**
@@ -1205,7 +1339,8 @@ export class MockStore {
         (me.operator === true && this.elevated) ||
         given === 'edit' ||
         given === 'admin' ||
-        this.floorFor(entity) === 'edit')
+        this.floorFor(entity) === 'edit' ||
+        (this.teamReach(entity) === 'edit' && this.elevated))
     )
   }
 
@@ -1233,6 +1368,9 @@ export class MockStore {
     if (entity.owner_id === me?.id) return 'owner'
     if (this.grantOf(entity) != null) return 'grant'
     if (me?.operator === true) return 'rbac'
+    // A team's line from the blueprint — a role narrowed to one type (`ASSUMPTIONS`,
+    // `team-access-to-every-entry`) — before the floor.
+    if (this.teamReach(entity) != null) return 'rbac'
     return 'unit_member'
   }
 

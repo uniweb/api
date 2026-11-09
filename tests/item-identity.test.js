@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest'
 import { createUniweb } from '@uniweb/core'
 import { getClient, uuidv7 } from '../src/client.js'
 import { createMockBackend } from '../src/mock/index.js'
-import { WITH_BACKEND } from './helpers.js'
+import { WITH_BACKEND, openEvery } from './helpers.js'
 
 const SCHEMAS = {
   '@acme/cv': {
@@ -43,6 +43,7 @@ async function stack() {
   const mock = createMockBackend({
     onMail: null,
     seed: { accounts: [{ username: 'ada', password: 'ada' }], schemas: SCHEMAS },
+    blueprint: openEvery({ schemas: SCHEMAS }),
   })
   createUniweb(WITH_BACKEND)
   const client = getClient()

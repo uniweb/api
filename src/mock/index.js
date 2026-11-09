@@ -21,7 +21,7 @@ import {
   SIGN_IN_OPTIONS,
 } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
-import { DEFAULT_SEED } from './seed.js'
+import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
 import { languageChain } from '../languages.js'
 
 /**
@@ -104,8 +104,9 @@ function adminPage(account) {
  * One operator (`operator: true` on a seeded account) and members; everyone signed
  * in — the operator too, as on a real site — reads and writes their own entities and
  * nothing of another's (unless the seed's `memberFloor` says the service lets them);
- * anyone signed in may create entries of any Model (Models are open); sign-up
- * leaves an account unverified until its address is confirmed. The operator is the
+ * ⭐ every type starts closed, as a site backend's do: the operator creates entries of
+ * it, and anyone else only where the site's backend blueprint lets them (`blueprint`);
+ * sign-up leaves an account unverified until its address is confirmed. The operator is the
  * account the backend's administration admits, so its Admin link answers — with a
  * redirect to a page of the mock's own, since the administration itself is not
  * modelled. An offer, claimed or bound by confirming its address, leaves its
@@ -125,8 +126,28 @@ function adminPage(account) {
  * own pages finish (`useMailedLink`). Each message is kept in `outbox` and, as it is
  * sent, handed to `onMail` — printed, by default, where the mock runs.
  *
+ * ## Founded from the site's blueprint
+ *
+ * `blueprint.yml`, beside `site.yml`, says how a backend started from the site begins, and the
+ * mock begins the same way: who may sign up (`signup`), its teams, and for each type who adds
+ * it (`add`) and who reads or edits every entry of it (`all`). Read it with the build's reader
+ * and pass it in; a seeded account names the teams it is in, `teams: ['sales']`:
+ *
+ * ```js
+ * import { fileURLToPath } from 'node:url'
+ * import { readBlueprint } from '@uniweb/build/blueprint'
+ * const blueprint = readBlueprint(fileURLToPath(new URL('..', import.meta.url)))
+ * export default createMockBackend({ seed, blueprint }).fetch
+ * ```
+ *
+ * Its types are named as a call sends them: under `uniweb dev`, a foundation's own as `@/name`.
+ * Its public queries are not modelled — in `uniweb dev` a site reads its records from its files.
+ *
  * @param {object} [options]
  * @param {object} [options.seed] - accounts, schemas, entities and offers to start from (see `MockStore`)
+ * @param {object|null} [options.blueprint] - how the backend begins, as `blueprint.yml` holds it.
+ *   Absent, every type is closed and sign-up is open; with the default seed, its own
+ *   (`DEFAULT_BLUEPRINT`), which lets the attendee record attending
  * @param {string} [options.signedInAs] - a seeded `username` to start signed in as. Throws if not seeded.
  * @param {string} [options.prefix] - the path the API is mounted under (default `/_api`), stripped when present
  * @param {string} [options.siteOrigin] - the site's origin, on which the mail's links land. By
@@ -137,8 +158,15 @@ function adminPage(account) {
  *   sends quietly
  * @returns {{ fetch: (request: Request) => Promise<Response>, store: MockStore, outbox: object[] }}
  */
-export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signedInAs = null, siteOrigin = null, onMail = printMail } = {}) {
-  const store = new MockStore(seed, { signedInAs })
+export function createMockBackend({
+  seed = DEFAULT_SEED,
+  blueprint = seed === DEFAULT_SEED ? DEFAULT_BLUEPRINT : null,
+  prefix = '/_api',
+  signedInAs = null,
+  siteOrigin = null,
+  onMail = printMail,
+} = {}) {
+  const store = new MockStore(seed, { signedInAs, blueprint })
 
   // Mail is delivered after the request that sent it, so its link can name that
   // request's origin. Mail the seed sent waits for the first request.
@@ -327,9 +355,9 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         return answer(store.lower())
       }
       if (path === AUTH.providers && method === 'GET') {
-        // The mock has no sign-in providers; its sign-up is open, and what it mails lands
-        // in its outbox.
-        return json(200, { [SIGN_IN_OPTIONS.providers]: [], [SIGN_IN_OPTIONS.signup]: 'open', [SIGN_IN_OPTIONS.email]: true })
+        // The mock has no sign-in providers; its sign-up is the blueprint's, open by default, and
+        // what it mails lands in its outbox.
+        return json(200, { [SIGN_IN_OPTIONS.providers]: [], [SIGN_IN_OPTIONS.signup]: store.signup, [SIGN_IN_OPTIONS.email]: true })
       }
       if (path === AUTH.me && method === 'GET') {
         const viewer = store.viewer()
@@ -578,14 +606,14 @@ export function createMockBackend({ seed = DEFAULT_SEED, prefix = '/_api', signe
         if (named != null && !isUuid(named)) return badRequest(`invalid create body: UUID parsing failed: ${named}`)
         const model = store.model(q.get(PARAM.model))
         if (!model) return notFound('model', q.get(PARAM.model))
+        // ⭐ Every type starts closed, as a site backend's do: a create is `403 use_model` for anyone
+        // but the operator and whoever the blueprint lets add it (`store.mayCreate`). ⛔ From
+        // 2026-09-23 to 2026-11-09 there was no gate here: Models were open, as on a backend whose
+        // types did not start closed.
+        if (!store.mayCreate(model)) return answer(store.useModelRefusal(model))
         // A unit the viewer may not land in is one answer with a unit that does not exist.
         const unit = named != null ? store.landing(named) : null
         if (named != null && !unit) return problem({ status: 404, title: 'Not Found', detail: `unit ${named} not found` })
-        // ⭐ No creation gate: the mock models no closing, so anyone signed in may create
-        // entries of any Model — as on the backend for an open one. A backend can close a
-        // Model's creation since 2026-10-10, and then a create is `403` for anyone but its
-        // owner, its `use` grantees and the holders of a role over it. Until 2026-09-23
-        // `creatable_by: unit_members` answered `403 use_model` here for a member.
         // Any other top-level key is ignored, exactly as the backend ignores it.
         return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} })), unit))
       }

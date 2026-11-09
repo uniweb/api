@@ -8,8 +8,9 @@
  * - **`accounts`** — `operator: true` marks the account that runs the site's
  *   service. Everyone else is a member. Seeded accounts are verified.
  * - **`schemas`** — per Model: `sections`, the Model's sections as the framework
- *   lowers them. With `sections`, writes are shape-checked. Models are open:
- *   anyone signed in may create entries of any of them.
+ *   lowers them. With `sections`, writes are shape-checked. Every type starts
+ *   closed, as a site backend's do: who else may create entries of one is the
+ *   blueprint's (`DEFAULT_BLUEPRINT`, below).
  * - **`entities`** — `uuid` must be a UUID, as it is on the wire; content is items,
  *   each naming its section. The entity's `brief` is derived from its brief
  *   section's item, as the backend derives it. An item may give its own `uuid`, so
@@ -72,3 +73,13 @@ export const DEFAULT_SEED = {
 }
 
 export default DEFAULT_SEED
+
+/**
+ * The default seed's blueprint — how its backend begins, as a site's `blueprint.yml` says it.
+ * Every type starts closed, so the organiser alone adds tracks; the attendee may record attending.
+ */
+export const DEFAULT_BLUEPRINT = {
+  access: {
+    '@/attendance': { add: 'open' },
+  },
+}
