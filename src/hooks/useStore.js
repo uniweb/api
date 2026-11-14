@@ -33,8 +33,7 @@ const QUIET = Object.freeze({ checking: null, checkoutError: null })
  *   its offerings, each with `owned` for the viewer. `entity` keeps only those that sell one
  *   record. `paymentsReady` is false until the site's owner has connected payments.
  * - `none` — the site sells nothing: the ordinary state of most sites. Draw nothing.
- * - `absent` — no backend, or nobody signed in. A visitor who is not signed in reads prices
- *   from the store's catalog through a public query the owner opens, never from here.
+ * - `absent` — no backend, or nobody signed in: the store is a signed-in member's to read.
  * - `checkout(offering, { successUrl, cancelUrl, coupon, navigate })` opens a payment and,
  *   by default, sends the buyer to it. A one-off at `price: 0` is taken at once: no page, and
  *   everything the viewer has read reads again. It answers `{ url, held }` and rejects as the

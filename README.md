@@ -567,8 +567,7 @@ function Buy({ uuid, href, words }) {
   resolved `currency`, `charge_kind`, the record it sells as `entry`, and `owned` for the
   viewer. `entity` keeps only the offerings that sell that record. `none` on a site that
   sells nothing — the ordinary case, so draw nothing. `absent` with no backend or nobody
-  signed in: a visitor who is not signed in reads prices from the store's catalog through
-  a public query the owner opens, as the site reads any records.
+  signed in, since the store is a signed-in member's to read.
 - **`offeringState(offering, store)`** — what to draw from that one read: `owned`, `take`
   (a one-off at `price: 0`, held at once with no payment), `not-ready` (the owner has not
   connected payments), or `buy`.
