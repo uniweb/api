@@ -205,7 +205,8 @@ export function createMockBackend({
   siteOrigin = null,
   onMail = printMail,
 } = {}) {
-  const store = new MockStore(seed, { signedInAs, blueprint })
+  // `let`: a demo's "start over" makes a new store from the seed (`MOCK_RESET`).
+  let store = new MockStore(seed, { signedInAs, blueprint })
 
   // Mail is delivered after the request that sent it, so its link can name that
   // request's origin. Mail the seed sent waits for the first request.
@@ -368,6 +369,14 @@ export function createMockBackend({
         title: PROBLEM.csrf,
         detail: 'a cookie-authenticated POST/PUT/DELETE/PATCH must also send the `X-Uniweb-Csrf` header (any value); the session cookie alone is refused',
       })
+    }
+
+    // ── The mock's own: start over ─────────────────────────────────────────
+    // Not a backend route: a demo's "start over" asks it, and only the mock answers it.
+    if (path === MOCK_RESET && method === 'POST') {
+      store = new MockStore(seed, { signedInAs, blueprint })
+      delivered = 0
+      return new Response(null, { status: 204 })
     }
 
     // ── Identity ────────────────────────────────────────────────────────────
@@ -955,15 +964,18 @@ export function createMockBackend({
   }
 
   return {
-    store,
-    /**
-     * The mail the backend would have sent — `{ to, subject, token, link }`, `link` a
-     * site-root link carrying the token (`/?verify=…`, `/?reset=…`, `/?offer=…`).
-     */
+    /** The mock's state — a new one after a reset (`MOCK_RESET`). */
+    get store() {
+      return store
+    },
     /** Members' feedback, newest last — what the backend's administrators read. */
     get feedback() {
       return store.feedback
     },
+    /**
+     * The mail the backend would have sent — `{ to, subject, token, link }`, `link` a
+     * site-root link carrying the token (`/?verify=…`, `/?reset=…`, `/?offer=…`, `/?signin=…`).
+     */
     get outbox() {
       return store.outbox
     },
@@ -983,5 +995,13 @@ export function createMockBackend({
 }
 
 export { MockStore } from './store.js'
+
+/**
+ * The mock's own route — `POST {base}/_mock/reset` — that makes its state the seed's again (and so
+ * signs the session out, unless `signedInAs` names one), for a demo's "start over" with no restart
+ * of `uniweb dev`. No backend answers it, so a page offers it only where a demo does, and reaches
+ * it through the client's `request`: `getClient().request('POST', '/_mock/reset')`.
+ */
+export const MOCK_RESET = '/_mock/reset'
 export { DEFAULT_SEED } from './seed.js'
 export { STORAGE, OUTCOME } from './schema-shape.js'

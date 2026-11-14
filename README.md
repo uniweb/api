@@ -946,7 +946,9 @@ and claiming it — or signing up with that address and confirming it — leaves
 invitation waiting. An offer to an address a seeded account holds waits for that account
 from the start.
 The operator's Admin link answers too, landing on a page of the mock's own — the backend's
-administration is not part of it. State is in memory: restart to reset.
+administration is not part of it. State is in memory: restart to reset — or, for a demo's
+"start over", `getClient().request('POST', '/_mock/reset')` makes it the seed's again; no
+backend answers that route.
 
 Whoever administers an entry gives people access to it and takes it back, as on the
 backend, and deleting an entry takes `admin` on it. A seeded entity can start with access
