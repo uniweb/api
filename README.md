@@ -868,6 +868,15 @@ access to an entry, `listAccess`, `listAccessCandidates`, `grantAccess`, `revoke
 `leaveAccess`, and for translated fields, `languagesOf`, `inLanguage` and `withLanguage` —
 `readEntity({ …, languages: 'all' })` reads every language.
 
+## When the backend offers something this package doesn't
+
+Every call above keeps your foundation out of the backend's routes. When the backend offers
+something this package has no call for yet, `getClient().request(method, path, { query, body })`,
+from `@uniweb/api/client`, sends it to the site's backend with the session and the header the
+backend asks of every write. Use it only when there is no call for what you need: a route you
+name this way is yours to keep up with as the backend changes, and when a call for it arrives
+here, move to the call.
+
 ## License
 
 Apache-2.0
