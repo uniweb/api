@@ -156,7 +156,8 @@ describe('signInWithProvider — a navigation to the provider sign-in', () => {
     const u = parse(address)
     expect(u.pathname).toBe('/_api/auth/oauth/google/authorize')
     expect(u.searchParams.get('redirect_uri')).toBe('https://site.test/login?next=%2Fcourses')
-    expect(u.searchParams.has('state')).toBe(false)
+    // Ours, echoed on the way back, so a page's `?error=` is read as the provider's only then.
+    expect(u.searchParams.get('state')).toBe('uw-signin')
   })
 
   it('leaves out the answer of an earlier attempt', () => {

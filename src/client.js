@@ -47,7 +47,16 @@ import {
   dismissNotificationWith,
   markAllNotificationsReadWith,
 } from './notifications.js'
-import { readSignInOptionsWith, returnedSignedIn, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
+import {
+  readSignInOptionsWith,
+  returnedSignedIn,
+  signInAddressOf,
+  signInWithProviderOf,
+  providerReturn,
+  forgetProviderReturn,
+  signInReturnPath,
+} from './sign-in-options.js'
+import { sendFeedbackWith } from './feedback.js'
 import {
   requestEmailCodeWith,
   confirmEmailCodeWith,
@@ -1604,6 +1613,10 @@ export const readSignInOptions = () => readSignInOptionsWith(required())
 export const signInWithProvider = (provider, options) => signInWithProviderOf(required(), provider, options)
 /** The address `signInWithProvider` navigates to, or `null` — never throws */
 export const signInAddress = (provider, options) => signInAddressOf(getClient(), provider, options)
+
+export { providerReturn, forgetProviderReturn, signInReturnPath }
+
+export const sendFeedback = (fields) => sendFeedbackWith(required(), fields)
 /** @see ApiClient#signUp */
 export const signUp = (fields) => required().signUp(fields)
 

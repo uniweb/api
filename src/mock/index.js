@@ -24,6 +24,7 @@ import {
   NOTIFICATIONS,
   NOTIFICATION,
   CAPABILITIES,
+  FEEDBACK,
 } from '../wire.js'
 import { MockStore, isUuid, refuse, EMAIL_SIGN_IN } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
@@ -624,6 +625,16 @@ export function createMockBackend({
     }
 
     // ── Entities ────────────────────────────────────────────────────────────
+    // ── A member's feedback ────────────────────────────────────────────────
+    if (path === FEEDBACK.route && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const b = await body(request)
+      if (!b || typeof b !== 'object' || Array.isArray(b)) return badRequest('expected `{"message": ...}`')
+      return answer(store.sendFeedback(b))
+    }
+
     // ── What the viewer may create ─────────────────────────────────────────
     if (path === CAPABILITIES.route && method === 'GET') {
       const bad = unexpected(q, [CAPABILITIES.models])
@@ -905,6 +916,10 @@ export function createMockBackend({
      * The mail the backend would have sent — `{ to, subject, token, link }`, `link` a
      * site-root link carrying the token (`/?verify=…`, `/?reset=…`, `/?offer=…`).
      */
+    /** Members' feedback, newest last — what the backend's administrators read. */
+    get feedback() {
+      return store.feedback
+    },
     get outbox() {
       return store.outbox
     },

@@ -26,6 +26,10 @@ export {
   readSignInOptions,
   signInWithProvider,
   signInAddress,
+  providerReturn,
+  forgetProviderReturn,
+  signInReturnPath,
+  sendFeedback,
   signUp,
   resendVerification,
   requestEmailCode,
@@ -85,6 +89,7 @@ export { useSignUp } from './hooks/useSignUp.js'
 export { useSignInOptions } from './hooks/useSignInOptions.js'
 export { useEmailSignIn } from './hooks/useEmailSignIn.js'
 export { useMayCreate } from './hooks/useMayCreate.js'
+export { useFeedback } from './hooks/useFeedback.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'
 export { useMailedLink } from './hooks/useMailedLink.js'
 export { useInvitations } from './hooks/useInvitations.js'

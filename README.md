@@ -126,9 +126,18 @@ member reads are yours. `ACCOUNT_REASON` in `@uniweb/api/wire` lists them:
 the provider's sign-in, with `id` taken from `options.providers`. It is a navigation, so
 call it from a button's handler and never render it as a link, which the site's router
 could take for one of its own pages. It comes back to `returnTo`, by default the page the
-viewer is on with its query kept, carrying one of `?auth=ok` (signed in; the session the
-page probes says so), `?link=<id>` (that address already has an account not linked to the
-provider) or `?error=<reason>` (for example `signup_by_invitation_only`).
+viewer is on with its query kept, and `useSignIn().returned` says what it came back with:
+`{ outcome: 'signed-in' }` (the session the page probes says who), `{ outcome: 'link',
+provider }` (that address already has an account here, not linked to the provider: sign in
+another way) or `{ outcome: 'error', reason }` (for example `signup_by_invitation_only`).
+Its parameters leave the address bar. Outside React: `providerReturn()` and
+`forgetProviderReturn()`.
+
+**Back where the visitor was** — a page that sends someone to sign in ("Sign in to buy")
+links to the sign-in page with `?next=<path>`, and once signed in that page goes to
+`signInReturnPath()`, or its own default when it is `null`. ⛔ It is only ever a path on this
+site: an address elsewhere is ignored, so a link cannot make your sign-in page send someone
+away.
 
 **Password reset** — `usePasswordReset().request({ email })` asks for one; the email's
 link lands on your site, where `useMailedLink` finishes it. **Second factor** — when
@@ -515,7 +524,16 @@ await createEntity({ schema: '@/submission', unit: course.unit, items: [...] })
 Every failure is an `ApiError` with a `kind`: `auth` (sign in), `unverified`, `absent`,
 `forbidden` (`error.extensions.op` names what was refused), `invalid`
 (`error.extensions.field` names a field the Model refused), `conflict`, `rule`,
-`rate-limited`, `unavailable`, `disabled`. Branch on `kind`; `detail` is prose.
+`rate-limited`, `unavailable`, `full`, `disabled`. Branch on `kind`; `detail` is prose.
+
+A site's backend is sold at a grade, and two refusals say the site has outgrown it — the
+site's state, never the visitor's mistake, and its owner's to change:
+
+- `unavailable` with `error.extensions.reason === 'allowance_exhausted'`: the month's
+  requests are spent, and nothing answers until it turns. ⛔ Don't retry before
+  `error.retryAfter` seconds, which may be days; say the site is unavailable for now.
+- `full` (`allowance_full`): the site's storage is full. A new entry, item or upload is
+  refused, and reading, editing and deleting still work.
 
 ## Translated fields
 
@@ -942,7 +960,8 @@ npx uniweb-api-mock --port 8787 --site http://localhost:3000
 ## Outside React
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
-React: `probeSession`, `signIn`, for an emailed code, `requestEmailCode`,
+React: `probeSession`, `signIn`, `providerReturn`, `forgetProviderReturn`, `signInReturnPath`,
+`sendFeedback`, for an emailed code, `requestEmailCode`,
 `confirmEmailCode`, `confirmEmailLink` and `forgetEmailCode`, `resendVerification`,
 `listEntities`, `mayDo`, `readMayCreate`, `readEntity`, `writeItems`,
 `createEntity`, `deleteEntity`, `adminHref`, for elevation, `elevate`, `lower`,
@@ -953,6 +972,19 @@ React: `probeSession`, `signIn`, for an emailed code, `requestEmailCode`,
 access to an entry, `listAccess`, `listAccessCandidates`, `grantAccess`, `revokeAccess` and
 `leaveAccess`, and for translated fields, `languagesOf`, `inLanguage` and `withLanguage` —
 `readEntity({ …, languages: 'all' })` reads every language.
+
+## A member's feedback
+
+A signed-in member can send the people who run the site's backend what they think, or what
+went wrong; they read it in the backend's administration, and there is nothing to read back.
+
+```jsx
+const { send, status } = useFeedback()
+send({ message, kind: 'problem', rating: 4 })   // kind: 'general' | 'idea' | 'problem'; rating: 1 to 5
+```
+
+`page` is sent as the path the member is on. A message holds 1 to 5,000 characters, and a
+member sends at most ten an hour (`kind: 'rate-limited'`). Outside React: `sendFeedback`.
 
 ## When the backend offers something this package doesn't
 

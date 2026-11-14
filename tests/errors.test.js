@@ -15,6 +15,16 @@ describe('kindOf', () => {
     expect(kindOf(418)).toBe('unknown')
   })
 
+  it("reads a backend past its grade's allowances as the site's state: unavailable for now, or full", () => {
+    // A month's allowance spent: nothing answers until the month turns — never retried before then.
+    expect(kindOf(429, 'Too Many Requests', { reason: 'allowance_exhausted', retry_after_seconds: 86400 })).toBe('unavailable')
+    const spent = new ApiError({ status: 429, title: 'Too Many Requests', extensions: { reason: 'allowance_exhausted', retry_after_seconds: 86400 } })
+    expect(spent).toMatchObject({ kind: 'unavailable', retryAfter: 86400 })
+    // Storage full: a new entry, item or upload is refused, and reading still works.
+    expect(kindOf(507, 'Insufficient Storage', { reason: 'allowance_full', larger: 'growth' })).toBe('full')
+    expect(kindOf(429, 'Too Many Requests', { reason: 'email_code_throttled' })).toBe('rate-limited')
+  })
+
   it('lets the self-describing titles refine a 403', () => {
     expect(kindOf(403, 'CSRF Header Required')).toBe('csrf')
     expect(kindOf(403, 'Step-Up Required')).toBe('step-up')

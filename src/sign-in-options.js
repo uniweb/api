@@ -76,6 +76,7 @@ function returnAddress(returnTo) {
   }
   if (!returnTo) {
     for (const key of [SIGN_IN_PROVIDER.returned, SIGN_IN_PROVIDER.link, SIGN_IN_PROVIDER.error]) url.searchParams.delete(key)
+    if (url.searchParams.get(SIGN_IN_PROVIDER.state) === RETURN_STATE) url.searchParams.delete(SIGN_IN_PROVIDER.state)
   }
   url.hash = ''
   return url.href
@@ -100,7 +101,84 @@ export function signInAddressOf(client, provider, { returnTo } = {}) {
   if (base === null || !provider) return null
   const redirect = returnAddress(returnTo)
   if (!redirect) return null
-  return composeUrl(base, SIGN_IN_PROVIDER.byProvider(provider), { [SIGN_IN_PROVIDER.redirect]: redirect })
+  return composeUrl(base, SIGN_IN_PROVIDER.byProvider(provider), {
+    [SIGN_IN_PROVIDER.redirect]: redirect,
+    [SIGN_IN_PROVIDER.state]: RETURN_STATE,
+  })
+}
+
+/**
+ * The `state` a sign-in through a provider carries, which the backend echoes on the way back
+ * — so this package reads a page's `?error=` as the provider's answer only on that way back.
+ */
+const RETURN_STATE = 'uw-signin'
+
+/**
+ * What a provider's sign-in came back with, on the page it returned to — or `null` on any
+ * other page:
+ *
+ * | `outcome` | means |
+ * |---|---|
+ * | `'signed-in'` | signed in: the session the page probes says who |
+ * | `'link'` | `provider`'s verified address is an account here not linked to it: sign in another way |
+ * | `'error'` | refused or failed: `reason`, such as `signup_by_invitation_only` or `oauth_provider_refused` |
+ *
+ * @param {string} [search] - a query string; the page's own by default
+ * @returns {{ outcome: 'signed-in'|'link'|'error', provider?: string, reason?: string } | null}
+ */
+export function providerReturn(search = globalThis.location?.search ?? '') {
+  let params
+  try {
+    params = new URLSearchParams(search)
+  } catch {
+    return null
+  }
+  if (params.get(SIGN_IN_PROVIDER.returned) === SIGN_IN_PROVIDER.ok) return Object.freeze({ outcome: 'signed-in' })
+  if (params.get(SIGN_IN_PROVIDER.state) !== RETURN_STATE) return null
+  const provider = params.get(SIGN_IN_PROVIDER.link)
+  if (provider) return Object.freeze({ outcome: 'link', provider })
+  const reason = params.get(SIGN_IN_PROVIDER.error)
+  return reason ? Object.freeze({ outcome: 'error', reason }) : null
+}
+
+/** Take a provider's answer off the address bar, the rest of the URL kept, as `forgetMailedLink` does. */
+export function forgetProviderReturn() {
+  const location = globalThis.location
+  const history = globalThis.history
+  if (!location || typeof history?.replaceState !== 'function') return
+  const params = new URLSearchParams(location.search)
+  const keys = [SIGN_IN_PROVIDER.returned, SIGN_IN_PROVIDER.link, SIGN_IN_PROVIDER.error]
+  if (!keys.some((k) => params.has(k)) && params.get(SIGN_IN_PROVIDER.state) !== RETURN_STATE) return
+  for (const key of keys) params.delete(key)
+  if (params.get(SIGN_IN_PROVIDER.state) === RETURN_STATE) params.delete(SIGN_IN_PROVIDER.state)
+  const query = params.toString()
+  history.replaceState(history.state, '', `${location.pathname}${query ? `?${query}` : ''}${location.hash}`)
+}
+
+/**
+ * Where a sign-in page goes once the member is in: the path its `?next=` names — "Sign in to
+ * buy" sends `/login?next=/courses/42` — or `null`. ⛔ Only a path on this site: an absolute
+ * or protocol-relative address is ignored, so a link cannot make the page send someone
+ * elsewhere.
+ *
+ * @param {string} [search] - a query string; the page's own by default
+ * @param {string} [param] - the parameter that carries it
+ * @returns {string|null}
+ */
+export function signInReturnPath(search = globalThis.location?.search ?? '', param = 'next') {
+  let next
+  try {
+    next = new URLSearchParams(search).get(param) || ''
+  } catch {
+    return null
+  }
+  if (!next.startsWith('/') || next.startsWith('//') || next.startsWith('/\\')) return null
+  try {
+    // Resolved against a placeholder origin: a path that leaves it is not one of this site's.
+    return new URL(next, 'https://site.invalid').origin === 'https://site.invalid' ? next : null
+  } catch {
+    return null
+  }
 }
 
 /**

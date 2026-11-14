@@ -911,6 +911,52 @@ export const CAPABILITIES = Object.freeze({
   most: 100,
 })
 
+/**
+ * A site's backend past its grade's allowances — **stated by backend**
+ * (`kb/backend/api-package-contract.md` §3.16, 2026-10-17); not yet measured here. Either can
+ * reach any call, whoever is signed in; both are the site's state, which only its owner
+ * changes, and never the visitor's mistake.
+ *
+ * | answer | `reason` | means |
+ * |---|---|---|
+ * | `429` | `allowance_exhausted` | the month's requests or bytes are spent: nothing answers until the month turns or the owner moves to a larger grade. ⛔ Never retried before `retry_after_seconds`, which counts to the month's end and may be days (`kind: 'unavailable'`) |
+ * | `507` | `allowance_full` | the database or the files are full: a new entry, a new item or an upload is refused, and a read, an edit or a delete is not. `larger` names the grade with room, the owner's to buy (`kind: 'full'`) |
+ */
+export const ALLOWANCE = Object.freeze({
+  exhausted: 'allowance_exhausted',
+  full: 'allowance_full',
+  larger: 'larger',
+})
+
+/**
+ * A member's feedback to the people who run the site's backend — **stated by backend**
+ * (`kb/backend/api-package-contract.md` §3.18, 2026-11-01), measured by its `serve_feedback`
+ * test; not yet measured here.
+ *
+ * `POST /feedback { message, kind?, rating?, page?, app_version?, language? }` → `201 { id }`.
+ * `message` is required, 1 to 5,000 characters once trimmed; `kind` is `general` (the
+ * default), `idea` or `problem`; `rating` a whole number from 1 to 5; `page` the path the
+ * member was on, `language` the one to answer in, `app_version` a version the site knows.
+ * `400` for a body those refuse · `401` with no session · `429 feedback_throttled`
+ * (`retry_after_seconds`) past ten an hour for one account · `507 allowance_full`. Any
+ * signed-in member may send it, elevated or not, and there is nothing to read back: the
+ * backend's administrators read it, in the admin app.
+ */
+export const FEEDBACK = Object.freeze({
+  route: '/feedback',
+  message: 'message',
+  kind: 'kind',
+  kinds: Object.freeze(['general', 'idea', 'problem']),
+  rating: 'rating',
+  page: 'page',
+  appVersion: 'app_version',
+  language: 'language',
+  id: 'id',
+  most: 5000,
+  perHour: 10,
+  throttled: 'feedback_throttled',
+})
+
 /** An entry's `can`, and its verbs (`CAPABILITIES`). */
 export const CAN = Object.freeze({
   field: 'can',

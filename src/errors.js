@@ -31,12 +31,17 @@
  *                 a bug, not a state to handle
  *   step-up       the credential must be re-proven for this mutation
  *   rate-limited  `retryAfter` says when to try again
- *   unavailable   the backend could not be reached, or failed
+ *   unavailable   the backend could not be reached, or failed — or has spent its
+ *                 month's allowance (`extensions.reason === 'allowance_exhausted'`),
+ *                 when `retryAfter` may be days: never retry before it
+ *   full          the site's storage is full: a new entry, item or upload is
+ *                 refused, and reading, editing and deleting still work.
+ *                 `extensions.larger` names the grade with room — the owner's
  *   disabled      this site declares no backend at all
  *   unknown       none of the above
  */
 
-import { FIELD, PROBLEM } from './wire.js'
+import { ALLOWANCE, FIELD, PROBLEM } from './wire.js'
 
 const TITLE_KINDS = {
   [PROBLEM.csrf]: 'csrf',
@@ -68,7 +73,8 @@ export function kindOf(status, title, extensions) {
   if (status === 404) return 'absent'
   if (status === 400 || status === 422) return 'invalid'
   if (status === 409) return extensions?.[FIELD.conflictToken] != null ? 'conflict' : 'rule'
-  if (status === 429) return 'rate-limited'
+  if (status === 429) return extensions?.reason === ALLOWANCE.exhausted ? 'unavailable' : 'rate-limited'
+  if (status === 507) return 'full'
   if (status === 0 || status >= 500) return 'unavailable'
   return 'unknown'
 }

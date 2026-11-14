@@ -1,4 +1,4 @@
-import { ACCOUNT_REASON, CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON } from '../wire.js'
+import { ACCOUNT_REASON, CLAIM, FEEDBACK, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 import { uuidv7 } from '../uuid.js'
@@ -442,6 +442,8 @@ export class MockStore {
     this.codeLinks = new Map()
     /** When each address asked for a code at each door, in this last hour. */
     this.codeAsks = new Map()
+    /** Members' feedback, as the backend's administrators would read it: `{ id, account, message, kind, rating, page, app_version, language, created_at }`. */
+    this.feedback = []
     /** Offers by token: `{ email, invitations, grants, claimed }`. */
     this.offers = new Map()
     /** Invitations: `{ id, unit, invitedBy, to, status, createdAt, resolvedAt }` — `to` an account id. */
@@ -745,6 +747,47 @@ export class MockStore {
     // A reset revokes the account's sessions.
     if (this.session?.account === account) this.session = null
     return { body: { reset: true } }
+  }
+
+  // ── A member's feedback ─────────────────────────────────────────────────────
+
+  /**
+   * `POST /feedback` — kept, with the signed-in account. The backend's rules: a message of 1 to
+   * 5,000 characters once trimmed, `kind` one of three, `rating` a whole number from 1 to 5, and
+   * at most ten an hour for one account (`FEEDBACK` in `../wire.js`).
+   */
+  sendFeedback(fields, now = Date.now()) {
+    const message = typeof fields?.message === 'string' ? fields.message.trim() : ''
+    if (!message || [...message].length > FEEDBACK.most) {
+      return refuse(400, 'Bad Request', `a message holds 1 to ${FEEDBACK.most} characters`, { field: FEEDBACK.message })
+    }
+    const kind = fields.kind ?? 'general'
+    if (!FEEDBACK.kinds.includes(kind)) return refuse(400, 'Bad Request', `kind is one of ${FEEDBACK.kinds.join(', ')}`, { field: FEEDBACK.kind })
+    const rating = fields.rating ?? null
+    if (rating !== null && !(Number.isInteger(rating) && rating >= 1 && rating <= 5)) {
+      return refuse(400, 'Bad Request', 'a rating is a whole number from 1 to 5', { field: FEEDBACK.rating })
+    }
+    const hour = 3600 * 1000
+    const mine = this.feedback.filter((f) => f.account === this.account.id && now - Date.parse(f.created_at) < hour)
+    if (mine.length >= FEEDBACK.perHour) {
+      return refuse(429, 'Too Many Requests', 'too much feedback this hour', {
+        reason: FEEDBACK.throttled,
+        retry_after_seconds: Math.max(1, Math.ceil((Date.parse(mine[0].created_at) + hour - now) / 1000)),
+      })
+    }
+    const row = {
+      id: this.feedback.length + 1,
+      account: this.account.id,
+      message,
+      kind,
+      rating,
+      page: fields.page ?? null,
+      app_version: fields.app_version ?? null,
+      language: fields.language ?? null,
+      created_at: new Date(now).toISOString(),
+    }
+    this.feedback.push(row)
+    return { status: 201, body: { id: row.id } }
   }
 
   // ── Emailed codes ───────────────────────────────────────────────────────────
