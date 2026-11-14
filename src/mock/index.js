@@ -23,6 +23,7 @@ import {
   STORE_FIELD,
   NOTIFICATIONS,
   NOTIFICATION,
+  CAPABILITIES,
 } from '../wire.js'
 import { MockStore, isUuid, refuse, EMAIL_SIGN_IN } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
@@ -623,6 +624,17 @@ export function createMockBackend({
     }
 
     // ── Entities ────────────────────────────────────────────────────────────
+    // ── What the viewer may create ─────────────────────────────────────────
+    if (path === CAPABILITIES.route && method === 'GET') {
+      const bad = unexpected(q, [CAPABILITIES.models])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const names = [...new Set((q.get(CAPABILITIES.models) || '').split(',').map((n) => n.trim()).filter(Boolean))]
+      if (!names.length) return badRequest('`models` names no type')
+      if (names.length > CAPABILITIES.most) return badRequest(`\`models\` names more than ${CAPABILITIES.most} types`)
+      return json(200, { [CAPABILITIES.types]: store.capabilities(names) })
+    }
+
     if (path === ENTITIES || path.startsWith(`${ENTITIES}/`)) {
       const rest = path.slice(ENTITIES.length)
 

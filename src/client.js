@@ -14,7 +14,7 @@
 import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
-import { withTypeName } from './types.js'
+import { typeName, withTypeName } from './types.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
@@ -39,6 +39,7 @@ import {
 } from './access.js'
 import { listUnitsWith } from './units.js'
 import { readStoreWith, checkoutWith, listEntitlementsWith, listHoldersWith } from './store.js'
+import { readMayCreateWith, mayDo } from './may.js'
 import {
   listNotificationsWith,
   countNotificationsWith,
@@ -1666,6 +1667,16 @@ export const createEntity = async (args) => required().createEntity(withTypeName
 export const deleteEntity = async (args) => required().deleteEntity(withTypeName(args, 'deleteEntity'))
 /** The Admin link for the current viewer, or `null` — never throws; see `adminHrefOf`. */
 export const adminHref = () => adminHrefOf(getClient())
+
+export { mayDo }
+
+/** May the viewer create an entry of each type — keyed by the names given, `@/x` included. */
+export const readMayCreate = async ({ schemas, signal } = {}) => {
+  const given = Array.isArray(schemas) ? schemas : []
+  const full = given.map((s) => typeName(s, 'readMayCreate'))
+  const answers = await readMayCreateWith(required(), { schemas: full, signal })
+  return Object.fromEntries(given.map((g, i) => [g, answers[typeof full[i] === 'string' ? full[i].trim() : full[i]] ?? null]))
+}
 
 /** @see ApiClient#readStore — on any instance, an older copy's too */
 export const readStore = async (options) => readStoreWith(required(), options)

@@ -17,6 +17,7 @@
 import { ApiError } from './errors.js'
 import { composeUrl } from './http.js'
 import { ACCOUNT_REASON, AUTH, ELEVATION, EMAIL_CODE } from './wire.js'
+import { answersBySession } from './may.js'
 
 /** A yes or no the backend stated, or `null` where it said nothing. */
 const told = (value) => (typeof value === 'boolean' ? value : null)
@@ -69,8 +70,12 @@ export function rolesInFull(viewer, now = Date.now()) {
   return viewer.elevation === null || isElevated(viewer, now)
 }
 
-/** Whether a cached read is one entity's — whose `can_edit` is the session's answer. */
-const isEntityRead = (spec) => spec?.uuid != null
+/**
+ * The reads whose answer is the session's — an entry's `can`, each list row's `can`, the
+ * types' `create` (`answersBySession` in `./may.js`). *(Until 2026-11-14 a list was kept: its
+ * rows carried nothing the session answered.)*
+ */
+const isEntityRead = answersBySession
 
 /**
  * Ask the backend again who the viewer is, after anything already asking: a probe that
@@ -324,6 +329,8 @@ export function watchLapse(client) {
   // A second past `until`, and never longer than a timer can wait.
   const timer = setTimeout(() => {
     client._lapse = null
+    // What the viewer may do was answered for the elevated session: read it again.
+    client.invalidate?.(isEntityRead)
     client.refresh?.()
   }, Math.min(wait + 1000, 2 ** 31 - 1))
   timer?.unref?.()

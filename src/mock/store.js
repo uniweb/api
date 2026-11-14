@@ -1638,17 +1638,17 @@ export class MockStore {
    * The owner — or the operator while its session is elevated — or whoever was given
    * `edit` or `admin`, or any member the floor lets edit.
    */
-  mayEdit(entity) {
+  mayEdit(entity, elevated = this.elevated) {
     const me = this.account
     const given = this.grantOf(entity)
     return (
       !!me &&
       (entity.owner_id === me.id ||
-        (me.operator === true && this.elevated) ||
+        (me.operator === true && elevated) ||
         given === 'edit' ||
         given === 'admin' ||
         this.floorFor(entity) === 'edit' ||
-        (this.teamReach(entity) === 'edit' && this.elevated))
+        (this.teamReach(entity) === 'edit' && elevated))
     )
   }
 
@@ -1657,9 +1657,38 @@ export class MockStore {
    * or the operator while its session is elevated. A floor never does, as on the backend,
    * where a floor is `read` or `edit` and deleting takes `admin`.
    */
-  mayAdminister(entity) {
+  mayAdminister(entity, elevated = this.elevated) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || this.grantOf(entity) === 'admin' || (me.operator === true && this.elevated))
+    return !!me && (entity.owner_id === me.id || this.grantOf(entity) === 'admin' || (me.operator === true && elevated))
+  }
+
+  /**
+   * What the viewer may do to an entry, now and once elevated — `can` on a read and on each
+   * list row (`CAPABILITIES`): `edit`; `delete`, which hiding is too, and `share`, both
+   * administering it. Where elevating changes nothing, the two answers are equal.
+   */
+  canOf(entity) {
+    const at = (elevated) => {
+      const administers = this.mayAdminister(entity, elevated)
+      return { edit: this.mayEdit(entity, elevated), delete: administers, share: administers }
+    }
+    return { ...at(this.elevated), if_elevated: at(true) }
+  }
+
+  /**
+   * `GET /capabilities` — for each type named, by name or uuid: may the viewer create one now,
+   * and once elevated. A name no type bears is left out. Creating takes no elevation here: the
+   * operator and the teams a blueprint lets add create as they are (`mayCreate`).
+   */
+  capabilities(names) {
+    const types = {}
+    for (const name of names) {
+      const model = this.model(name) ?? [...this.models.values()].find((m) => m.uuid === name) ?? null
+      if (!model) continue
+      const create = this.mayCreate(model)
+      types[name] = { create, create_if_elevated: create }
+    }
+    return types
   }
 
   /**
@@ -2205,12 +2234,13 @@ export class MockStore {
   }
 
   /** A list row, a create's answer: the Model's identity, then the row. */
-  row(entity, { via = false, locales } = {}) {
+  row(entity, { via = false, can = false, locales } = {}) {
     const model = this.model(entity.model)
     return {
       model_uuid: model.uuid,
       model_name: model.name,
       ...(via ? { via: this.via(entity) } : {}),
+      ...(can ? { can: this.canOf(entity) } : {}),
       ...this.core(entity, locales),
     }
   }
@@ -2241,7 +2271,7 @@ export class MockStore {
     return {
       model_uuid: model.uuid,
       model_name: model.name,
-      ...(canEdit ? { can_edit: this.mayEdit(entity) } : {}),
+      ...(canEdit ? { can_edit: this.mayEdit(entity), can: this.canOf(entity) } : {}),
       hydrated: { entity: this.core(entity, locales), items },
     }
   }
@@ -2253,7 +2283,7 @@ export class MockStore {
       .sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : b.id - a.id))
     const page = paginate ? rows.slice(offset, offset + limit) : rows
     // `matched` counts the rows in THIS answer — the page, when paging.
-    return { entities: page.map((e) => this.row(e, { via: true, locales })), matched: page.length }
+    return { entities: page.map((e) => this.row(e, { via: true, can: true, locales })), matched: page.length }
   }
 
   /** A create, landing in `unit` — a unit `landing` let through — or at the root. */

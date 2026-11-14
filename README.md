@@ -59,9 +59,9 @@ in on it reads what their role reaches — the operator reads every member's con
 and changes nothing through the role until they confirm it is them (*Acting as an
 administrator*, below). Their own content they edit, delete and share as always. An
 ordinary member holds no role (`[]`). `viewer.workspace` — the site service's home org,
-`{ handle: 'home', … }` — is the same for everyone. To decide whether to show an edit
-control for a particular record, read that record: `entity.can_edit` is the backend's
-own answer.
+`{ handle: 'home', … }` — is the same for everyone. To decide whether to show a control
+for a particular record, ask the record: `mayDo(entity, 'edit')` (*What the viewer may do*,
+below) reads the backend's own answer.
 
 **Signing up** — `useSignUp().signUp({ email, password })` answers
 `{ status: 'verification_required', email }`, the same answer for an address already in
@@ -240,8 +240,8 @@ function AdminMode() {
 - It lasts as long as the backend decides; `until` says when it ends. `elevated` turns
   false by itself then, and the session is asked again. Elevating again starts the time
   again; nothing extends it on its own. `lower()` ends it early.
-- While it lasts, `viewer.roles` names the role, and every record read before is read
-  again — `entity.can_edit` is the record's answer for the session as it is now.
+- While it lasts, `viewer.roles` names the role, and every record and list read before is
+  read again — `mayDo(entity, …)` is the record's answer for the session as it is now.
 - `rolesInFull` — draw controls that act through a role from this: true while elevated,
   and always on a backend that asks for no elevation.
 - `ways` — `{ password, emailCode }`: whether the password, and an emailed code, elevate
@@ -311,7 +311,7 @@ full (`limit`, default 50); `matched` counts the records in this answer, not a t
 const { status, entity } = useEntity({ schema: '@/lesson', uuid, via: course.uuid })
 // entity.hydrated.items — the content: { id, section, section_id, data, … } each
 // entity.hydrated.entity.brief — the summary
-// entity.can_edit — whether this viewer may write to it
+// mayDo(entity, 'edit') — whether this viewer may change it: below
 
 const sessions = entity.hydrated.items.filter((item) => item.section === 'sessions')
 ```
@@ -390,6 +390,34 @@ const provinces = useChoices(country ? { schema: '@/cv', field: 'province', pare
 
 `listChoices` is the same outside React, and `listSectionItems({ section })` reads a
 section by its uuid.
+
+### What the viewer may do
+
+Offer an action only to the people it will succeed for — *New lesson* to the teachers,
+*Grade* to whoever may change a submission — by asking, never by guessing from `roles`.
+
+```jsx
+import { mayDo, useMayCreate } from '@uniweb/api'
+
+const { may } = useMayCreate({ schemas: ['@/lesson'] })
+// may['@/lesson']: 'now' | 'once-elevated' | 'no' | null (a name no type bears)
+
+mayDo(entity, 'edit')     // a single read's entity, or a row of a list: 'edit' | 'delete' | 'share'
+```
+
+| answer | draw |
+|---|---|
+| `'now'` | the control, and act |
+| `'once-elevated'` | the control; on its click, confirm it is them first (`useElevation`, below), then act |
+| `'no'` | nothing |
+| `null` | not told: the control, and let the backend decide |
+
+Each answer is the rule the action's own route applies, so the two cannot disagree; the
+route still decides, so a refusal is still handled. Every entry and every list row carries
+its answer, and they are read again by themselves when the session elevates, lowers, or its
+elevation runs out. `delete` covers hiding an entry too. `useMayCreate` answers `absent`
+with nobody signed in; `refresh()` reads again after a create is refused. Outside React:
+`readMayCreate({ schemas })`.
 
 ## Writing
 
@@ -916,7 +944,7 @@ npx uniweb-api-mock --port 8787 --site http://localhost:3000
 `@uniweb/api/client` carries the same operations as plain functions and imports no
 React: `probeSession`, `signIn`, for an emailed code, `requestEmailCode`,
 `confirmEmailCode`, `confirmEmailLink` and `forgetEmailCode`, `resendVerification`,
-`listEntities`, `readEntity`, `writeItems`,
+`listEntities`, `mayDo`, `readMayCreate`, `readEntity`, `writeItems`,
 `createEntity`, `deleteEntity`, `adminHref`, for elevation, `elevate`, `lower`,
 `elevateWithProvider`, `requestElevationCode`, `elevateWithCode`, `isElevated` and
 `rolesInFull`, for the links the backend mails,

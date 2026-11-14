@@ -129,17 +129,23 @@ describe('elevate — POST /auth/elevate', () => {
     expect(isElevated(client.session.viewer)).toBe(true)
   })
 
-  it('⭐ drops every entity read — what the viewer may do to an entity is its own answer — and keeps the lists', async () => {
+  it('⭐ drops every read the session answers — an entry, a list (its rows carry `can`), the types — and keeps the rest', async () => {
     const { client } = site()
     await client.ensureSession()
     const store = client.website.dataStore
     const entityKey = client.cacheKey({ endpoint: `/entities/${E1}`, schema: '@acme/track' })
     const listKey = client.cacheKey({ endpoint: '/entities', schema: '@acme/track' })
+    const typesKey = client.cacheKey({ endpoint: '/capabilities', models: '@acme/track' })
+    const unitsKey = client.cacheKey({ endpoint: '/unit/mine' })
     await client.load(entityKey, async () => ({ status: 'ready', entity: { can_edit: false } }), { schema: '@acme/track', uuid: E1 })
     await client.load(listKey, async () => ({ records: [] }), { endpoint: '/entities', schema: '@acme/track' })
+    await client.load(typesKey, async () => ({ '@acme/track': 'once-elevated' }), { endpoint: '/capabilities', models: '@acme/track' })
+    await client.load(unitsKey, async () => ({ units: [] }), { endpoint: '/unit/mine' })
     await client.elevate({ password: 'pw' })
     expect(store.has(entityKey)).toBe(false)
-    expect(store.has(listKey)).toBe(true)
+    expect(store.has(listKey)).toBe(false)
+    expect(store.has(typesKey)).toBe(false)
+    expect(store.has(unitsKey)).toBe(true)
   })
 
   it('⛔ waits for a probe already asking — it would answer for the session as it was', async () => {

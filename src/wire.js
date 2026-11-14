@@ -890,6 +890,37 @@ export const READ = {
 }
 
 /**
+ * What the viewer may do — **stated by backend** (`kb/backend/api-package-contract.md` §3.15,
+ * 2026-10-16), measured by its `serve_capabilities` test; not yet measured here.
+ *
+ * | | |
+ * |---|---|
+ * | `GET /capabilities?models=@acme/course,@acme/lesson` | `200 { types: { '@acme/lesson': { create, create_if_elevated }, … } }` — for each type named, by `@scope/name` or uuid, comma-separated, at most 100: may the viewer create an entry of it now, and once elevated. Keyed by the string sent, trimmed; a name no type bears is absent, never `false`. An empty list is `400` |
+ * | `GET /entities/{uuid}?model=` and each row of `GET /entities?model=` | carry `can: { edit, delete, share, if_elevated: { edit, delete, share } }` — all six booleans when present. `delete` covers hiding too. A reply with no `can` means *not told*, never *denied*. `can_edit` stays on a single read, equal to `can.edit`, until its readers have moved |
+ *
+ * A hint, not a guard: the action's route still decides. The answers hold for the session as
+ * it is — read them again after elevating or lowering, when the elevation runs out, and after
+ * a `403`. They name verbs, never the team, role or grant that allows them.
+ */
+export const CAPABILITIES = Object.freeze({
+  route: '/capabilities',
+  models: 'models',
+  types: 'types',
+  create: 'create',
+  createIfElevated: 'create_if_elevated',
+  most: 100,
+})
+
+/** An entry's `can`, and its verbs (`CAPABILITIES`). */
+export const CAN = Object.freeze({
+  field: 'can',
+  edit: 'edit',
+  delete: 'delete',
+  share: 'share',
+  ifElevated: 'if_elevated',
+})
+
+/**
  * A translated value's languages. A `localized` field holds a per-language map,
  * `{ en: 'Hello', fr: 'Bonjour' }`, or one plain value, which is the value in every
  * language; `@` in a map is the value's own metadata, not a language (MEASURED
