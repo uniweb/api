@@ -7,6 +7,7 @@
     ".": "./src/index.js",
     "./client": "./src/client.js",
     "./wire": "./src/wire.js",
+    "./rich-text": "./src/rich-text/index.js",
     "./mock": "./src/mock/index.js",
     "./mock/node": "./src/mock/node.js"
   },
@@ -38,14 +39,37 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@uniweb/content-reader": "workspace:~",
     "@uniweb/core": "workspace:~",
     "@uniweb/schemas": "workspace:~"
   },
   "peerDependencies": {
+    "@tiptap/core": "^3.0.0",
+    "@tiptap/pm": "^3.0.0",
+    "@tiptap/react": "^3.0.0",
+    "@tiptap/starter-kit": "^3.0.0",
     "react": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@tiptap/core": {
+      "optional": true
+    },
+    "@tiptap/pm": {
+      "optional": true
+    },
+    "@tiptap/react": {
+      "optional": true
+    },
+    "@tiptap/starter-kit": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
+    "@tiptap/core": "^3.32.0",
+    "@tiptap/pm": "^3.32.0",
+    "@tiptap/react": "^3.32.0",
+    "@tiptap/starter-kit": "^3.32.0",
     "jsdom": "^25.0.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -535,6 +535,45 @@ site's state, never the visitor's mistake, and its owner's to change:
 - `full` (`allowance_full`): the site's storage is full. A new entry, item or upload is
   refused, and reading, editing and deleting still work.
 
+## Rich text a member writes
+
+A rich-text field holds a document in the framework's stored vocabulary — the same a page's
+content is read into — and the backend keeps every save to it. `@uniweb/api/rich-text` gives a
+TipTap editor whose document model is that vocabulary, so what it makes is what is stored:
+
+```jsx
+import { useRichTextEditor, RichTextContent } from '@uniweb/api/rich-text'
+
+function BodyEditor({ value, onChange, labels }) {
+  const editor = useRichTextEditor({ value, onChange })
+  return (
+    <>
+      <button type="button" aria-pressed={editor?.isActive('bold')} onClick={() => editor?.chain().focus().toggleBold().run()}>
+        {labels.bold}
+      </button>
+      <RichTextContent editor={editor} className="prose" />
+    </>
+  )
+}
+```
+
+- **TipTap is an optional peer.** Install it in the foundation that edits rich text —
+  `@tiptap/core`, `@tiptap/pm`, `@tiptap/react` and `@tiptap/starter-kit` (3.x) — and load the
+  editor lazily (`React.lazy`), so public pages carry none of it.
+- **It edits** paragraphs, headings, bold, italic, strike, code, links, lists, quotes, code
+  blocks, line breaks and a divider (`setDivider()`, or `---` on its own line), with TipTap's
+  commands and keys. Underline is off: a stored text has none.
+- **It keeps** everything else a stored text may hold — an image, an inset, a formula, a table —
+  loaded and saved as it was.
+- **`onChange`** gets each change as a backend stores it. `value` is read when the editor starts:
+  give it a new `key` to load another document. `isEmptyRichText(doc)` tells an empty field from
+  one with something in it.
+- The toolbar, its words and its icons are yours.
+
+The mock keeps rich text to the vocabulary as the backend does, and prints in its terminal what
+it left out — so an editor of your own that writes what a stored text can't hold shows at your
+desk, not after a member's save.
+
 ## Translated fields
 
 A field the Model declares `localized` holds a map of languages, `{ en: 'Hello', fr: 'Bonjour' }`,

@@ -18,6 +18,8 @@
  * mock's `diagnostics` (`UNRESOLVED_REASON`, `ENFORCEMENT`) — a list no seed kept any more.*
  */
 
+import { cleanToVocabulary } from '@uniweb/content-reader/vocabulary'
+
 /** Where a written section lives, and therefore what we are entitled to do about it. */
 export const STORAGE = {
   /**
@@ -493,16 +495,39 @@ function storedData(fields, data) {
   return out ?? data
 }
 
+/**
+ * Whether a field holds rich text — a document in the stored vocabulary: `richtext` as a seed
+ * writes it, or `json` with `format: richtext` as the schema is lowered.
+ */
+const isRichText = (field) => field?.type === 'richtext' || (field?.type === 'json' && field?.format === 'richtext')
+
+/**
+ * A rich-text document as a backend stores it: cleaned to the stored vocabulary
+ * (`@uniweb/content-reader/vocabulary`), what a stored text can't hold left out — an underline,
+ * a mark or node an editor added — and said in the terminal where the mock runs, so the loss
+ * shows at the developer's desk. The same object when nothing is removed.
+ */
+function storedRichText(doc) {
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc) || doc.type !== 'doc') return doc
+  const { document, removed } = cleanToVocabulary(doc)
+  if (!removed.length) return doc
+  const what = removed.map((r) => `${r.found ?? r.rule} at ${r.path}`).join(', ')
+  console.warn(`[uniweb/api mock] rich text: left out what a stored text can't hold — ${what}`)
+  return document
+}
+
 function storedValue(field, value) {
   if (field.fields && value && typeof value === 'object' && !Array.isArray(value)) return storedData(field.fields, value)
   const leaf = (v) => {
+    if (isRichText(field)) return storedRichText(v)
     if (typeof v !== 'string' || v === '') return v
     if (field.type === 'date' && !field.format) return storedDay(v)
     if (TEXT_TYPES.has(field.type) && field.format === 'url') return storedUrl(v) ?? v
     return v
   }
-  // A localized value's languages, each on its own; `@` is the object's metadata.
-  if (field.localized === true && value && typeof value === 'object' && !Array.isArray(value)) {
+  // A localized value's languages, each on its own; `@` is the object's metadata. A rich text's one
+  // document for every language is a document, not a map of languages.
+  if (field.localized === true && value && typeof value === 'object' && !Array.isArray(value) && value.type !== 'doc') {
     let out = null
     for (const [lang, v] of Object.entries(value)) {
       const stored = lang === '@' ? v : leaf(v)
