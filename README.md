@@ -519,6 +519,30 @@ await createEntity({ schema: '@/submission', unit: course.unit, items: [...] })
 - Landing changes where the entity is, not who may open it: that is still the
   organization's rules — what its units' members may read, and the roles it gives.
 
+**A unit's staff.** A unit's administrator — a course's, a program's — appoints its staff from
+your own screens, and archives the unit when its use ends. Every call answers only once their
+session is elevated, and is `absent` before, the same as a unit that does not exist:
+
+```jsx
+import { useUnitStaff, useUnitEntryGrants } from '@uniweb/api'
+
+const staff = useUnitStaff({ unit: course.unit })
+staff.give({ account: ta.uuid, role: 'content_editor' })   // content_reader | content_editor | unit_admin
+staff.archive()                                            // its content reads, and changes for no one
+
+const grading = useUnitEntryGrants({ unit: course.unit, schema: '@/submission' })
+grading.give({ to: { team: 'tas' }, permission: 'edit' })  // or { account }, or { members: true }
+```
+
+- A role, and an entry grant, reach the unit's entries — and the units below it — once their
+  holder elevates; until then they read. `mayDo` on an entry says which.
+- A `unit_admin` goes only to someone placed in the unit, with a second factor: otherwise
+  `error.extensions.reason === 'not_an_org_member'`, or the title `Two-Factor Required`.
+- In an archived unit a write is `kind: 'rule'`, `error.extensions.reason === 'unit_archived'`,
+  and the unit leaves its members' `useUnits()`. `restore()` brings it back.
+- Outside React: `listUnitRoles`, `giveUnitRole`, `takeUnitRole`, `listUnitEntryGrants`,
+  `giveUnitEntryGrant`, `takeUnitEntryGrant`, `archiveUnit`, `restoreUnit`.
+
 ### Errors
 
 Every failure is an `ApiError` with a `kind`: `auth` (sign in), `unverified`, `absent`,

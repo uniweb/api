@@ -46,6 +46,14 @@ export {
   acceptInvitation,
   declineInvitation,
   listUnits,
+  listUnitRoles,
+  giveUnitRole,
+  takeUnitRole,
+  listUnitEntryGrants,
+  giveUnitEntryGrant,
+  takeUnitEntryGrant,
+  archiveUnit,
+  restoreUnit,
   listAccess,
   listAccessCandidates,
   grantAccess,
@@ -90,6 +98,8 @@ export { useSignInOptions } from './hooks/useSignInOptions.js'
 export { useEmailSignIn } from './hooks/useEmailSignIn.js'
 export { useMayCreate } from './hooks/useMayCreate.js'
 export { useFeedback } from './hooks/useFeedback.js'
+export { useUnitStaff } from './hooks/useUnitStaff.js'
+export { useUnitEntryGrants } from './hooks/useUnitEntryGrants.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'
 export { useMailedLink } from './hooks/useMailedLink.js'
 export { useInvitations } from './hooks/useInvitations.js'

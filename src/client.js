@@ -41,6 +41,16 @@ import { listUnitsWith } from './units.js'
 import { readStoreWith, checkoutWith, listEntitlementsWith, listHoldersWith } from './store.js'
 import { readMayCreateWith, mayDo } from './may.js'
 import {
+  listUnitRolesWith,
+  giveUnitRoleWith,
+  takeUnitRoleWith,
+  listUnitEntryGrantsWith,
+  giveUnitEntryGrantWith,
+  takeUnitEntryGrantWith,
+  archiveUnitWith,
+  restoreUnitWith,
+} from './unit-admin.js'
+import {
   listNotificationsWith,
   countNotificationsWith,
   markNotificationReadWith,
@@ -1649,6 +1659,22 @@ export const acceptInvitation = (id) => acceptInvitationWith(required(), id)
 export const declineInvitation = (id) => declineInvitationWith(required(), id)
 /** @see ApiClient#listUnits — on any instance, an older copy's too */
 export const listUnits = (options) => listUnitsWith(required(), options)
+
+export const listUnitRoles = (args) => listUnitRolesWith(required(), args)
+
+export const giveUnitRole = (args) => giveUnitRoleWith(required(), args)
+
+export const takeUnitRole = (args) => takeUnitRoleWith(required(), args)
+
+export const listUnitEntryGrants = async (args) => listUnitEntryGrantsWith(required(), withTypeName(args, 'listUnitEntryGrants'))
+
+export const giveUnitEntryGrant = async (args) => giveUnitEntryGrantWith(required(), withTypeName(args, 'giveUnitEntryGrant'))
+
+export const takeUnitEntryGrant = async (args) => takeUnitEntryGrantWith(required(), withTypeName(args, 'takeUnitEntryGrant'))
+
+export const archiveUnit = (args) => archiveUnitWith(required(), args)
+
+export const restoreUnit = (args) => restoreUnitWith(required(), args)
 // ⭐ A call that names a type names it in full HERE, in the calling foundation's copy of this
 // code — `@/x` in its own scope (`types.js`). The client a call reaches is shared by every
 // foundation on the page, so its methods take a name as given.

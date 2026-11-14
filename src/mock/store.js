@@ -1,4 +1,4 @@
-import { ACCOUNT_REASON, CLAIM, FEEDBACK, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON } from '../wire.js'
+import { ACCOUNT_REASON, CLAIM, FEEDBACK, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON, UNIT_ADMIN } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 import { uuidv7 } from '../uuid.js'
@@ -157,6 +157,10 @@ const MEMBERS = 'members'
 
 /** `read` < `edit`: the higher of two levels, or null when neither is set. */
 const higher = (a, b) => (a === 'edit' || b === 'edit' ? 'edit' : a === 'read' || b === 'read' ? 'read' : null)
+
+/** The higher of two grants, `admin` above `edit` above `read`. */
+const LEVELS = [null, 'read', 'edit', 'admin']
+const higherGrant = (a, b) => (LEVELS.indexOf(a) >= LEVELS.indexOf(b) ? a : b)
 
 /**
  * A backend blueprint, as `blueprint.yml` holds it, read into what the mock founds itself from:
@@ -444,6 +448,10 @@ export class MockStore {
     this.codeAsks = new Map()
     /** Members' feedback, as the backend's administrators would read it: `{ id, account, message, kind, rating, page, app_version, language, created_at }`. */
     this.feedback = []
+    /** Roles held at a unit, appointed by its administrators: `{ unit, account, role }` by id. */
+    this.unitRoles = []
+    /** A type's entries at a unit, given to an account, a team or the unit's members. */
+    this.unitEntryGrants = []
     /** Offers by token: `{ email, invitations, grants, claimed }`. */
     this.offers = new Map()
     /** Invitations: `{ id, unit, invitedBy, to, status, createdAt, resolvedAt }` — `to` an account id. */
@@ -492,6 +500,9 @@ export class MockStore {
       handle: a.handle ?? a.username,
       operator: a.operator ?? (Array.isArray(a.units) && a.units.length > 0),
       verified,
+      // A unit's administrator needs a second factor (`UNIT_ADMIN`); the mock checks none, but holds
+      // the fact so appointing one answers as the backend does.
+      twoFactor: a.twoFactor === true,
     }
     this.accounts.push(account)
     // Who is in a team is the seed's, never the blueprint's: at a backend's start no account exists
@@ -579,7 +590,11 @@ export class MockStore {
       // ⭐ Available to the operator, and to a member of a team that edits a type through the
       // blueprint — an entry grant that answers more than `read` (MEASURED 2026-10-16).
       elevation: {
-        available: account.operator === true || this.teamEdits(account),
+        available:
+          account.operator === true ||
+          this.teamEdits(account) ||
+          this.unitRoles.some((r) => r.account === account.id && r.role !== 'content_reader') ||
+          this.unitEntryGrants.some((g) => g.permission !== 'read' && ((g.holder === 'account' && g.account_id === account.id) || (g.holder === 'team' && this.teamsOf(account).includes(g.team_id)))),
         has_password: typeof account.password === 'string',
         email_code: this.elevatesByCode(account),
         ...(elevated ? { until: this.session.elevatedUntil } : {}),
@@ -1027,7 +1042,10 @@ export class MockStore {
    * root is every account's primary unit.
    */
   unitsOf(account) {
-    const placed = this.units.filter((u) => this.placedIn(account, u)).sort((a, b) => a.depth - b.depth || a.id - b.id)
+    // An archived unit, and every unit below it, leaves the list: nothing new lands there.
+    const placed = this.units
+      .filter((u) => this.placedIn(account, u) && !this.archivedAbove(u))
+      .sort((a, b) => a.depth - b.depth || a.id - b.id)
     return {
       units: placed.map((u) => ({
         unit: u.uuid,
@@ -1673,8 +1691,185 @@ export class MockStore {
         this.grantOf(entity) != null ||
         this.floorFor(entity) != null ||
         this.teamReach(entity) != null ||
+        this.unitReach(entity) != null ||
         this.holds(entity))
     )
+  }
+
+  // ── A unit's staff ──────────────────────────────────────────────────────────
+
+  /** The units from this one up to the root. */
+  unitAndAbove(unit) {
+    const out = []
+    const seen = new Set()
+    for (let at = unit; at && !seen.has(at.id); at = this.unitById(at.parent)) {
+      out.push(at)
+      seen.add(at.id)
+    }
+    return out
+  }
+
+  /** The highest role an account holds at this unit, or one above it — or null. */
+  roleAt(account, unit) {
+    if (!account || !unit) return null
+    const reach = new Set(this.unitAndAbove(unit).map((u) => u.id))
+    const held = this.unitRoles.filter((r) => r.account === account.id && reach.has(r.unit)).map((r) => r.role)
+    const order = ['content_reader', 'content_editor', 'unit_admin']
+    return held.sort((a, b) => order.indexOf(b) - order.indexOf(a))[0] ?? null
+  }
+
+  /** The highest entry grant at this unit or above that reaches the viewer for an entry's type. */
+  unitGrantAt(account, unit, modelName) {
+    if (!account || !unit) return null
+    const reach = new Set(this.unitAndAbove(unit).map((u) => u.id))
+    const mine = this.teamsOf(account)
+    return this.unitEntryGrants
+      .filter((g) => reach.has(g.unit) && g.model === modelName)
+      .filter((g) => (g.holder === 'account' && g.account_id === account.id) || (g.holder === 'team' && mine.includes(g.team_id)) || (g.holder === 'members' && this.belongsTo(account, this.unitById(g.unit))))
+      .reduce((level, g) => higherGrant(level, g.permission), null)
+  }
+
+  /**
+   * What a unit's roles and entry grants reach on an entry, before elevating: `read`, as every
+   * role and grant on a site's session answers until it is elevated — or null. ⚠️ An entry grant
+   * to the unit's `members` waiting for elevation too is not measured.
+   */
+  unitReach(entity) {
+    const unit = this.unitById(entity.unit_id ?? SITE_UNIT)
+    return this.roleAt(this.account, unit) != null || this.unitGrantAt(this.account, unit, entity.model) != null ? 'read' : null
+  }
+
+  /** What a unit's roles and entry grants let the viewer do to an entry once elevated: `edit`, `admin`, or null. */
+  unitElevated(entity) {
+    const unit = this.unitById(entity.unit_id ?? SITE_UNIT)
+    const role = this.roleAt(this.account, unit)
+    const grant = this.unitGrantAt(this.account, unit, entity.model)
+    const byRole = role === 'unit_admin' ? 'admin' : role === 'content_editor' ? 'edit' : null
+    return higherGrant(byRole, grant === 'read' ? null : grant)
+  }
+
+  /** Whether the viewer administers this unit now — the operator, or its `unit_admin` — on an elevated session. */
+  administers(unit) {
+    const me = this.account
+    if (!me || !unit || !this.elevated) return false
+    return me.operator === true || this.roleAt(me, unit) === 'unit_admin'
+  }
+
+  /** The unit a route names, if the viewer administers it — or null, one answer with a unit that does not exist. */
+  administered(uuid) {
+    const unit = this.unitByUuid(uuid)
+    return unit && this.administers(unit) ? unit : null
+  }
+
+  unitRolesOf(unit) {
+    return {
+      roles: this.unitRoles
+        .filter((r) => r.unit === unit.id)
+        .map((r) => {
+          const a = this.accounts.find((x) => x.id === r.account)
+          return { account: a.uuid, account_id: a.id, handle: a.handle, role: r.role }
+        }),
+    }
+  }
+
+  /** `PUT /unit/{uuid}/roles/{account}/{role}`. */
+  giveUnitRole(unit, accountUuid, role) {
+    if (!UNIT_ADMIN.levels.includes(role)) return refuse(400, 'Bad Request', `role is one of ${UNIT_ADMIN.levels.join(', ')}`)
+    const account = this.accounts.find((a) => a.uuid === accountUuid)
+    if (!account) return refuse(404, 'Not Found', `account ${accountUuid} not found`)
+    if (role === 'unit_admin') {
+      if (!this.placedIn(account, unit) || !this.units.some((u) => u.id === unit.id)) {
+        return refuse(409, 'Conflict', 'a unit_admin is someone placed in the unit', { reason: UNIT_ADMIN.notAMember })
+      }
+      if (!account.twoFactor) return refuse(403, 'Two-Factor Required', 'a unit_admin needs a second factor')
+    }
+    if (!this.unitRoles.some((r) => r.unit === unit.id && r.account === account.id && r.role === role)) {
+      this.unitRoles.push({ unit: unit.id, account: account.id, role })
+    }
+    return { status: 204 }
+  }
+
+  /** `DELETE /unit/{uuid}/roles/{account}/{role}`. */
+  takeUnitRole(unit, accountUuid, role) {
+    const account = this.accounts.find((a) => a.uuid === accountUuid)
+    if (account) this.unitRoles = this.unitRoles.filter((r) => !(r.unit === unit.id && r.account === account.id && r.role === role))
+    return { status: 204 }
+  }
+
+  unitEntryGrantsOf(unit, model) {
+    return { entry_grants: this.unitEntryGrants.filter((g) => g.unit === unit.id && g.model === model.name).map((g) => this.unitGrantRow(g)) }
+  }
+
+  unitGrantRow(g) {
+    const unit = this.unitById(g.unit)
+    return {
+      model: g.model,
+      unit: unit.uuid,
+      ...(unit.name ? { unit_name: unit.name } : {}),
+      holder: g.holder,
+      ...(g.holder === 'account' ? { account_id: g.account_id } : {}),
+      ...(g.holder === 'team' ? { team_id: g.team_id } : {}),
+      permission: g.permission,
+      granted_by: g.granted_by,
+      granted_at: g.granted_at,
+    }
+  }
+
+  /** `PUT /unit/{uuid}/entry-grants/{to}?model=` — `to` is `{ account }`, `{ team }` or `{ members: true }`. */
+  giveUnitEntryGrant(unit, model, to, permission) {
+    if (!GRANT.levels.includes(permission)) return refuse(400, 'Bad Request', `permission is one of ${GRANT.levels.join(', ')}`)
+    let match
+    if (to.account != null) {
+      const account = this.accounts.find((a) => a.uuid === to.account)
+      if (!account) return refuse(404, 'Not Found', `account ${to.account} not found`)
+      match = { holder: 'account', account_id: account.id }
+    } else if (to.team != null) {
+      if (!this.teams.has(to.team)) return refuse(404, 'Not Found', `team ${to.team} not found`)
+      match = { holder: 'team', team_id: to.team }
+    } else {
+      match = { holder: 'members' }
+    }
+    const same = (g) => g.unit === unit.id && g.model === model.name && g.holder === match.holder && g.account_id === match.account_id && g.team_id === match.team_id
+    this.unitEntryGrants = this.unitEntryGrants.filter((g) => !same(g))
+    const row = { unit: unit.id, model: model.name, ...match, permission, granted_by: this.account.id, granted_at: new Date().toISOString() }
+    this.unitEntryGrants.push(row)
+    return { body: this.unitGrantRow(row) }
+  }
+
+  /** `DELETE /unit/{uuid}/entry-grants/{to}?model=`. */
+  takeUnitEntryGrant(unit, model, to) {
+    const account = to.account != null ? this.accounts.find((a) => a.uuid === to.account) : null
+    this.unitEntryGrants = this.unitEntryGrants.filter(
+      (g) =>
+        !(
+          g.unit === unit.id &&
+          g.model === model.name &&
+          ((to.account != null && g.holder === 'account' && g.account_id === account?.id) ||
+            (to.team != null && g.holder === 'team' && g.team_id === to.team) ||
+            (to.account == null && to.team == null && g.holder === 'members'))
+        ),
+    )
+    return { status: 204 }
+  }
+
+  // ── An archived unit ────────────────────────────────────────────────────────
+
+  /** The archived unit an entry or a create's unit lies in — itself, or one above it — or null. */
+  archivedAbove(unit) {
+    return (unit && this.unitAndAbove(unit).find((u) => u.archived)) ?? null
+  }
+
+  /** A change to content in an archived unit: `409 unit_archived`, naming the unit — or null. */
+  archivedRefusal(unit) {
+    const archived = this.archivedAbove(unit)
+    return archived ? refuse(409, 'Conflict', `unit ${archived.uuid} is archived`, { reason: UNIT_ADMIN.isArchived, unit: archived.uuid }) : null
+  }
+
+  /** `PUT /unit/{uuid}/archive`, `DELETE` to restore — it and every unit below it. */
+  archiveUnit(unit, archived) {
+    unit.archived = archived
+    unit.archivedAt = archived ? new Date().toISOString() : null
+    return { body: archived ? { archived: true, archived_at: unit.archivedAt } : { archived: false } }
   }
 
   /**
@@ -1684,6 +1879,7 @@ export class MockStore {
   mayEdit(entity, elevated = this.elevated) {
     const me = this.account
     const given = this.grantOf(entity)
+    const byUnit = elevated ? this.unitElevated(entity) : null
     return (
       !!me &&
       (entity.owner_id === me.id ||
@@ -1691,7 +1887,9 @@ export class MockStore {
         given === 'edit' ||
         given === 'admin' ||
         this.floorFor(entity) === 'edit' ||
-        (this.teamReach(entity) === 'edit' && elevated))
+        (this.teamReach(entity) === 'edit' && elevated) ||
+        byUnit === 'edit' ||
+        byUnit === 'admin')
     )
   }
 
@@ -1702,7 +1900,13 @@ export class MockStore {
    */
   mayAdminister(entity, elevated = this.elevated) {
     const me = this.account
-    return !!me && (entity.owner_id === me.id || this.grantOf(entity) === 'admin' || (me.operator === true && elevated))
+    return (
+      !!me &&
+      (entity.owner_id === me.id ||
+        this.grantOf(entity) === 'admin' ||
+        (me.operator === true && elevated) ||
+        (elevated && this.unitElevated(entity) === 'admin'))
+    )
   }
 
   /**

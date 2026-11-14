@@ -23,8 +23,8 @@ export const maySpec = (names) => ({ endpoint: CAPABILITIES.route, models: [...n
 
 /**
  * Whether a cached read is one the session's elevation answers for: an entry's (its `can`), a
- * list's (each row's `can`), or the types' (`create`). These are read again when the session
- * elevates, lowers, or its elevation runs out.
+ * list's (each row's `can`), the types' (`create`), or a unit's staff and its entry grants. These
+ * are read again when the session elevates, lowers, or its elevation runs out.
  *
  * @param {object} spec
  * @returns {boolean}
@@ -33,7 +33,13 @@ export function answersBySession(spec) {
   if (spec?.uuid != null) return true
   const endpoint = spec?.endpoint
   if (typeof endpoint !== 'string') return false
-  return endpoint === ENTITIES || endpoint.startsWith(`${ENTITIES}/`) || endpoint === CAPABILITIES.route
+  return (
+    endpoint === ENTITIES ||
+    endpoint.startsWith(`${ENTITIES}/`) ||
+    endpoint === CAPABILITIES.route ||
+    // A unit's staff and its entry grants answer only an elevated session (`UNIT_ADMIN`).
+    /^\/unit\/[^/]+\/(roles|entry-grants)$/.test(endpoint)
+  )
 }
 
 /**

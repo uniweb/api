@@ -1360,6 +1360,51 @@ export const UNIT = {
 }
 
 /**
+ * A unit's administrator staffs it, and archives it — **stated by backend**
+ * (`kb/backend/api-package-contract.md` §3.13 and §3.14, 2026-10-15), measured by its
+ * `serve_delegation` and `serve_archive` tests; not yet measured here. Every route answers only
+ * an elevated session of whoever administers the unit; to anyone else, and before elevating,
+ * it is `404`, as for a unit that does not exist.
+ *
+ * | | |
+ * |---|---|
+ * | `GET /unit/{uuid}/roles` | `200 { roles: [{ account, account_id, handle?, role }] }` — the roles held at this unit; one held above it reaches it too, and is listed at its own unit |
+ * | `PUT` · `DELETE /unit/{uuid}/roles/{account}/{role}` | `204` — `content_reader`, `content_editor` or `unit_admin`, to an account by uuid; giving one held, or taking one not held, changes nothing |
+ * | `GET /unit/{uuid}/entry-grants?model=` | `200 { entry_grants: [{ model, unit, holder, account_id? \| team_id?, permission, granted_by, granted_at, … }] }` — a type's entries at this unit, given to an account, a team, or the unit's members |
+ * | `PUT` · `DELETE /unit/{uuid}/entry-grants/accounts/{account}?model=` · `…/teams/{id}?model=` · `…/members?model=` | `PUT { permission: 'read' \| 'edit' \| 'admin' }` → `200` with the grant; `DELETE` → `204` |
+ * | `PUT` · `DELETE /unit/{uuid}/archive` | `200 { archived: true, archived_at }` · `200 { archived: false }` — it and every unit below it |
+ *
+ * - **Never above the unit:** a role at a unit the administrator does not administer is `404`;
+ *   `system_admin`, or a role held deployment-wide, is `403 role_not_yours_to_grant`.
+ * - **The holder:** `unit_admin` goes only to someone placed in the unit, and the other roles to a
+ *   member of its organization — `409 not_an_org_member` otherwise; `unit_admin` for someone with
+ *   no second factor is `403 Two-Factor Required`.
+ * - **An archived unit's content reads, and changes for no one:** a write, or a create naming it,
+ *   is `409 unit_archived`, with `unit`. It leaves `/unit/mine`.
+ */
+export const UNIT_ADMIN = Object.freeze({
+  roles: (uuid) => `/unit/${segment(uuid)}/roles`,
+  role: (uuid, account, role) => `/unit/${segment(uuid)}/roles/${segment(account)}/${segment(role)}`,
+  entryGrants: (uuid) => `/unit/${segment(uuid)}/entry-grants`,
+  entryGrantTo: (uuid, to) =>
+    to.account != null
+      ? `/unit/${segment(uuid)}/entry-grants/accounts/${segment(to.account)}`
+      : to.team != null
+        ? `/unit/${segment(uuid)}/entry-grants/teams/${segment(to.team)}`
+        : `/unit/${segment(uuid)}/entry-grants/members`,
+  archive: (uuid) => `/unit/${segment(uuid)}/archive`,
+  rolesList: 'roles',
+  grantsList: 'entry_grants',
+  permission: 'permission',
+  archived: 'archived',
+  archivedAt: 'archived_at',
+  levels: Object.freeze(['content_reader', 'content_editor', 'unit_admin']),
+  notYours: 'role_not_yours_to_grant',
+  notAMember: 'not_an_org_member',
+  isArchived: 'unit_archived',
+})
+
+/**
  * Refusals this package branches on. **MEASURED.** Problem-JSON:
  * `{ status, title, detail?, …extensions }` — `title` is the stable discriminator.
  *

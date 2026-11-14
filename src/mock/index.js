@@ -25,8 +25,9 @@ import {
   NOTIFICATION,
   CAPABILITIES,
   FEEDBACK,
+  UNIT_ADMIN,
 } from '../wire.js'
-import { MockStore, isUuid, refuse, EMAIL_SIGN_IN } from './store.js'
+import { MockStore, isUuid, refuse, EMAIL_SIGN_IN, SITE_UNIT } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
 import { languageChain } from '../languages.js'
 
@@ -548,6 +549,43 @@ export function createMockBackend({
       return json(200, { ...rest, next_cursor: next ? encodeCursor(next) : null })
     }
 
+    // ── A unit's staff, its access, its archive ────────────────────────────
+    const staffed = path.match(/^\/unit\/([^/]+)\/(roles|entry-grants|archive)(?:\/(.*))?$/)
+    if (staffed && isUuid(staffed[1])) {
+      const [, uuid, what, rest = null] = staffed
+      if (!store.account) return unauthorized()
+      // Only an elevated session of whoever administers the unit; anyone else, one answer with no unit.
+      const unit = store.administered(uuid)
+      if (!unit) return notFound('unit', uuid)
+      if (what === 'roles') {
+        const bad = unexpected(q, [])
+        if (bad) return bad
+        if (rest == null && method === 'GET') return json(200, store.unitRolesOf(unit))
+        const one = rest?.match(/^([^/]+)\/([^/]+)$/)
+        if (one && method === 'PUT') return answer(store.giveUnitRole(unit, one[1], one[2]))
+        if (one && method === 'DELETE') return answer(store.takeUnitRole(unit, one[1], one[2]))
+      }
+      if (what === 'entry-grants') {
+        const bad = unexpected(q, [PARAM.model])
+        if (bad) return bad
+        const model = store.model(q.get(PARAM.model))
+        if (!model) return q.get(PARAM.model) ? notFound('model', q.get(PARAM.model)) : badRequest('Missing required parameter: model')
+        if (rest == null && method === 'GET') return json(200, store.unitEntryGrantsOf(unit, model))
+        const to = rest?.match(/^accounts\/([^/]+)$/) ? { account: rest.split('/')[1] } : rest?.match(/^teams\/([^/]+)$/) ? { team: rest.split('/')[1] } : rest === 'members' ? { members: true } : null
+        if (to && method === 'PUT') {
+          const b = await body(request)
+          return fields(b, [UNIT_ADMIN.permission], '{"permission": ...}') ?? answer(store.giveUnitEntryGrant(unit, model, to, b.permission))
+        }
+        if (to && method === 'DELETE') return answer(store.takeUnitEntryGrant(unit, model, to))
+      }
+      if (what === 'archive' && rest == null) {
+        const bad = unexpected(q, [])
+        if (bad) return bad
+        if (method === 'PUT') return answer(store.archiveUnit(unit, true))
+        if (method === 'DELETE') return answer(store.archiveUnit(unit, false))
+      }
+    }
+
     // ── The units the viewer is placed in ───────────────────────────────────
     if (path === UNITS.mine && method === 'GET') {
       const bad = unexpected(q, [])
@@ -709,6 +747,8 @@ export function createMockBackend({
         // A unit the viewer may not land in is one answer with a unit that does not exist.
         const unit = named != null ? store.landing(named) : null
         if (named != null && !unit) return problem({ status: 404, title: 'Not Found', detail: `unit ${named} not found` })
+        const archived = unit ? store.archivedRefusal(unit) : null
+        if (archived) return answer(archived)
         // Any other top-level key is ignored, exactly as the backend ignores it.
         return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} })), unit))
       }
@@ -763,6 +803,8 @@ export function createMockBackend({
         if (!store.mayEdit(entity)) {
           return problem({ status: 403, title: 'Forbidden', detail: `edit on entity ${entity.uuid} not permitted`, op: 'edit', target: `entity ${entity.uuid}` })
         }
+        const archived = store.archivedRefusal(store.unitById(entity.unit_id ?? SITE_UNIT))
+        if (archived) return answer(archived)
         const before = store.core(entity)
         const outcome = store.applyOps(entity, model, parsed.map((p) => p.op))
         if (outcome.problem) return answer(outcome)
@@ -809,6 +851,8 @@ export function createMockBackend({
         if (!store.mayAdminister(entity)) {
           return problem({ status: 403, title: 'Forbidden', detail: `delete on entity ${entity.uuid} not permitted`, op: 'delete', target: `entity ${entity.uuid}` })
         }
+        const archived = store.archivedRefusal(store.unitById(entity.unit_id ?? SITE_UNIT))
+        if (archived) return answer(archived)
         store.remove(entity)
         return new Response(null, { status: 204 })
       }
