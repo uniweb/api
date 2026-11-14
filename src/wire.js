@@ -131,8 +131,25 @@ export const AUTH = {
    * route.)*
    */
   verify: '/auth/verify',
+  /**
+   * `POST /auth/verify/request { username, password }` — mail the confirmation link again.
+   * Keyed on the credentials, never an address (`username` may be the username, the
+   * `@handle` or the address), and always `202 { status: 'verification_requested' }`,
+   * whatever happened, so it says nothing about which accounts exist. Stated by backend
+   * (`kb/backend/api-package-contract.md` §3.10, 2026-10-19), asserted by its `serve_auth`
+   * tests; not yet measured here.
+   */
+  verifyRequest: '/auth/verify/request',
   resetRequest: '/auth/reset/request',
   resetConfirm: '/auth/reset/confirm',
+  /** Sign-in, and sign-up, by an emailed code (`EMAIL_CODE`). */
+  emailCodeRequest: '/auth/email-code/request',
+  emailCodeConfirm: '/auth/email-code/confirm',
+  /** The same, by the link the code's mail carries (`LINK.signin`). */
+  emailLinkConfirm: '/auth/email-link/confirm',
+  /** Elevation by an emailed code (`ELEVATION`), for an account with no password. */
+  elevateCodeRequest: '/auth/elevate/email-code/request',
+  elevateCodeConfirm: '/auth/elevate/email-code/confirm',
   /**
    * `GET /auth/member-handoff` — the Admin link (`adminHref` in `./client.js`).
    * ⛔ **A navigation, never a fetch.** For an account the backend's administration
@@ -158,6 +175,15 @@ export const AUTH = {
  * - `providers` — the providers whose sign-in will start, each `{ id }`.
  * - `signup` — `open` or `invite_only`.
  * - `email` — whether the backend delivers mail.
+ * - `email_sign_in` — whether the owner offers signing in by email at all, by password or by
+ *   code. False, every email door answers `403 email_sign_in_off`; the providers still work.
+ * - `password` — `{ min_length }`, **present only while password sign-in is offered**, and
+ *   `min_length` the shortest password sign-up and reset take.
+ * - `email_code` — `{ length, lifetime_minutes }`, **present only while sign-in by an emailed
+ *   code is offered and mail is delivered**: the digits a code has and how long it lives.
+ *
+ * The last three are stated by backend (`kb/frontend/contracts/sign-in-settings.md` §4.2,
+ * 2026-10-28), pinned by its `backend_config` tests; not yet measured here.
  *
  * The backend says the answer grows by adding fields, each keeping its meaning, and holds
  * nothing about the visitor (`sign-in-options-are-the-same-for-everyone`). This package
@@ -168,6 +194,101 @@ export const SIGN_IN_OPTIONS = Object.freeze({
   providers: 'providers',
   signup: 'signup',
   email: 'email',
+  emailSignIn: 'email_sign_in',
+  password: 'password',
+  minLength: 'min_length',
+  emailCode: 'email_code',
+  codeLength: 'length',
+  codeLifetime: 'lifetime_minutes',
+})
+
+/**
+ * Sign-in, and sign-up, by a code mailed to the address typed — one door for new and returning
+ * people, answered alike whatever the address holds, so a page never learns whether an account
+ * exists. Offered where `/auth/providers` carries `email_code` (`SIGN_IN_OPTIONS`). Stated by
+ * backend (`kb/backend/api-package-contract.md` §3.17, 2026-10-25, the CMS app's
+ * `email-code-sign-in.md` §5 unchanged through `/_api/`), asserted by its `serve_auth` tests;
+ * not yet measured here.
+ *
+ * | step | request | answer |
+ * |---|---|---|
+ * | ask | `POST /auth/email-code/request { email }` | `202 { challenge_token, expires_at, resend_after_seconds }` for every address · `429 email_code_throttled` with `retry_after_seconds` |
+ * | finish, in the asking tab | `POST /auth/email-code/confirm { challenge_token, code }` | what `/auth/login` answers — the cookie alone on a site's backend — or `{ status: 'totp_required', challenge_token }`, finished at `/auth/login/challenge` · `400 email_code_wrong` (`tries_left`) · `email_code_exhausted` · `email_code_expired` · `403 signup_by_invitation_only` |
+ * | finish, by the link | `POST /auth/email-link/confirm { token }` | the same · `400 email_link_invalid` |
+ *
+ * - **A code is bound to the request that asked for it**: confirmed with that request's
+ *   `challenge_token`, so a code read elsewhere does nothing without it. Each request is its
+ *   own; a second cancels nothing.
+ * - **The numbers are the owner's** (`SIGN_IN_OPTIONS.emailCode`): eight digits and ten minutes
+ *   by default, five tries. Asking again for one address waits `resend_after_seconds`; ten
+ *   wrong codes a day throttle its codes, never its link.
+ * - **A new address's account is made on the step that finishes**, and that step verifies its
+ *   address. Its username is internal; its handle comes from the address.
+ * - **The link** lands on the site, `/?signin=<token>` (`LINK.signin`), and is finished on the
+ *   member's click — ⛔ never on load, since whatever opens a link first, a prefetch included,
+ *   would spend it.
+ */
+export const EMAIL_CODE = Object.freeze({
+  email: 'email',
+  challenge: 'challenge_token',
+  code: 'code',
+  token: 'token',
+  expiresAt: 'expires_at',
+  resendAfter: 'resend_after_seconds',
+  secondFactor: 'two_factor_code',
+})
+
+/**
+ * The reasons an account's step is refused, and what each carries — the backend's
+ * `extensions.reason` (a refusal's `reason` is the one thing to branch on; `title` is a coarse
+ * class and `detail` developer English: `kb/backend/problem-reasons.md` §1). The words a member
+ * reads are the foundation's; the values ride beside the reason. Stated by backend
+ * (`kb/backend/api-package-contract.md` §3.10, §3.11, §3.17; `kb/frontend/contracts/sign-in-settings.md`
+ * §4.2; `kb/frontend/contracts/error-messages.md` § Changes), each asserted by a named backend
+ * test; not yet measured here.
+ *
+ * | reason | status | from | carries |
+ * |---|---|---|---|
+ * | `username_taken` | 409 | sign-up | `username` |
+ * | `password_too_short` | 400 | sign-up, reset — refused before a reset link is spent | `min_length` |
+ * | `signup_by_invitation_only` | 403 | sign-up, a code's or a link's first sign-in, a provider's way back (`?error=`) | |
+ * | `email_not_verified` | 403 | sign-in with the right password, the address not yet confirmed | |
+ * | `email_already_verified_elsewhere` | 409 | confirming an address another account has confirmed | |
+ * | `email_sign_in_off` | 403 | every email door, while the owner has email sign-in off | |
+ * | `password_sign_in_off` | 403 | sign-in, sign-up and reset by password, while it is off | |
+ * | `email_code_sign_in_off` | 403 | the code and link doors, while sign-in by code is off | |
+ * | `reset_link_invalid` | 400 | a reset link used, expired or never valid | |
+ * | `two_factor_code_invalid` | 400 | a reset, or an elevation by code, with a wrong second factor — it spends the code | |
+ * | `email_code_wrong` | 400 | a code that is not its request's | `tries_left` |
+ * | `email_code_exhausted` | 400 | a code that has had its tries: ask for a new one | |
+ * | `email_code_expired` | 400 | a code past its lifetime, used, or never asked | |
+ * | `email_link_invalid` | 400 | a sign-in link used, expired or never mailed | |
+ * | `email_code_throttled` | 429 | asking again too soon, or too many wrong codes today | `retry_after_seconds` |
+ */
+export const ACCOUNT_REASON = Object.freeze({
+  usernameTaken: 'username_taken',
+  passwordTooShort: 'password_too_short',
+  invitationOnly: 'signup_by_invitation_only',
+  emailNotVerified: 'email_not_verified',
+  verifiedElsewhere: 'email_already_verified_elsewhere',
+  emailSignInOff: 'email_sign_in_off',
+  passwordSignInOff: 'password_sign_in_off',
+  emailCodeSignInOff: 'email_code_sign_in_off',
+  resetLinkInvalid: 'reset_link_invalid',
+  secondFactorInvalid: 'two_factor_code_invalid',
+  codeWrong: 'email_code_wrong',
+  codeExhausted: 'email_code_exhausted',
+  codeExpired: 'email_code_expired',
+  linkInvalid: 'email_link_invalid',
+  codeThrottled: 'email_code_throttled',
+})
+
+/** The values `ACCOUNT_REASON`'s refusals carry beside their reason. */
+export const ACCOUNT_REASON_VALUE = Object.freeze({
+  username: 'username',
+  minLength: 'min_length',
+  triesLeft: 'tries_left',
+  retryAfter: 'retry_after_seconds',
 })
 
 /**
@@ -241,7 +362,7 @@ export const HANDOFF_REFUSAL = Object.freeze({
  * |---|---|---|
  * | login | `{ username, password }` | `200 { expires_at, account }` + the session cookie · `200 { status: 'totp_required', challenge_token }` · `401` wrong credential · `403 Email Not Verified` |
  * | challenge | `{ challenge_token, code }` | as login's `200`; a bad token or code is `401` |
- * | register | `{ username, email, password }` | `202 { status: 'verification_required', email }` — the same answer for an address already taken; a taken **username** is `409` |
+ * | register | `{ email, password, username? }` — without `username` the account is named for its address, its username internal (since 2026-10-25, `api-package-contract.md` §3.10) | `202 { status: 'verification_required', email }` — the same answer for an address already taken; a taken **username** is `409 username_taken` (`ACCOUNT_REASON`) |
  * | reset request | `{ email }` | `202 { status: 'reset_requested' }` whether or not the address is known |
  * | reset confirm | `{ token, new_password, code? }` | `200 { reset: true }`, and every other session of the account ends; a bad token is `400 Validation`; `code` is required when a second factor is enrolled. A password the rule refuses is `400` with `reason: 'password_too_short'` and `min_length` — refused BEFORE the token is spent, so the same link works again (RULED by backend, 2026-10-11) |
  * | logout | none | `204`; with no session to end, `401` |
@@ -256,15 +377,21 @@ export const HANDOFF_REFUSAL = Object.freeze({
 export const AUTH_BODY = {
   login: ['username', 'password'],
   challenge: ['challenge_token', 'code'],
-  register: ['username', 'email', 'password'],
+  register: ['email', 'password', 'username?'],
+  verifyRequest: ['username', 'password'],
   resetRequest: ['email'],
   resetConfirm: ['token', 'new_password', 'code?'],
   elevate: ['password', 'code?'],
+  emailCodeRequest: ['email'],
+  emailCodeConfirm: ['challenge_token', 'code'],
+  emailLinkConfirm: ['token'],
+  elevateCodeRequest: [],
+  elevateCodeConfirm: ['challenge_token', 'code', 'two_factor_code?'],
 }
 
 /**
- * Elevation. **Stated by the backend, 2026-10-14, and measured by its own end-to-end
- * test; not yet measured here.**
+ * Elevation. **Stated by the backend, 2026-10-14 (by an emailed code, 2026-10-25: `kb/backend/api-package-contract.md`
+ * §3.11), and measured by its own end-to-end tests; not yet measured here.**
  *
  * On a site's backend, a session signed in on the site holds each of the account's
  * roles as `content_reader`, at the same scope, until it is ELEVATED: it reads wherever
@@ -274,8 +401,10 @@ export const AUTH_BODY = {
  *
  * | route | body | answer |
  * |---|---|---|
- * | `GET /auth/me` | none | carries `elevation: { available, until? }` on such a session — `available` when the account holds a role that answers more than `read`; `until`, an ISO time, while elevated. A backend no site reaches sends no `elevation`: its roles answer in full |
+ * | `GET /auth/me` | none | carries `elevation: { available, has_password, email_code, until? }` on such a session — `available` when the account holds a role that answers more than `read`; `has_password` and `email_code` (since 2026-10-25) whether the password and an emailed code elevate it, neither meaning the provider's sign-in; `until`, an ISO time, while elevated. A backend no site reaches sends no `elevation`: its roles answer in full |
  * | `POST /auth/elevate` | `{ password, code? }` — `code` when a second factor is live | `200 { elevated_until }`. A wrong password or code is `401`, one answer — and so is no session at all |
+ * | `POST /auth/elevate/email-code/request` | none | for an account `email_code` names, such as one made by a code: a code to its own verified address, for this session alone. `202 { challenge_token, expires_at, resend_after_seconds }` · `429 email_code_throttled` (`retry_after_seconds`) · `400` for an account with no verified address |
+ * | `POST /auth/elevate/email-code/confirm` | `{ challenge_token, code, two_factor_code? }` | elevates, as the password does: `200 { elevated_until }` · `400 email_code_wrong` (`tries_left`), `email_code_exhausted`, `email_code_expired` — a step-up's code and another session's among them — and `two_factor_code_invalid`, which spends the code |
  * | `DELETE /auth/elevate` | none | `200 { elevated_until: null }` |
  * | `GET /auth/elevate/{provider}/authorize?redirect_uri=&state=` | — | ⛔ **a navigation**, for an account with no password: the provider's sign-in, then back to `redirect_uri` with `?elevate=ok`, or `?error=oauth_step_up_not_linked` when the identity that came back is not the account's |
  *
@@ -290,9 +419,11 @@ export const AUTH_BODY = {
  *   `can_edit` on a read (`READ`), so a read made before elevating is read again.
  */
 export const ELEVATION = {
-  /** `/auth/me`'s field, and its two keys. */
+  /** `/auth/me`'s field, and its keys. */
   me: 'elevation',
   available: 'available',
+  hasPassword: 'has_password',
+  emailCode: 'email_code',
   until: 'until',
   /** The answer of `POST` and `DELETE /auth/elevate`: an ISO time, or `null`. */
   answer: 'elevated_until',
@@ -320,6 +451,7 @@ export const ELEVATION = {
  * | `verify` | confirm a new account's address | `GET /auth/verify?token=` |
  * | `reset` | choose a new password — and give a code, with a second factor | `POST /auth/reset/confirm` |
  * | `offer` | take up an invitation sent to this address | `POST /offers/claim`, signed in |
+ * | `signin` | sign in by the link an emailed code's mail carries — on the member's click, never on load | `POST /auth/email-link/confirm` (`EMAIL_CODE`; stated by backend, `api-package-contract.md` §3.17, 2026-10-25) |
  *
  * The root with none — a notice, such as a password changed or an invitation waiting —
  * has no step to finish: the member signs in. The names are the ones all of the
@@ -332,6 +464,7 @@ export const LINK = {
   verify: 'verify',
   reset: 'reset',
   offer: 'offer',
+  signin: 'signin',
 }
 
 /**
@@ -1210,6 +1343,15 @@ export const PROBLEM = {
  * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
 export const ASSUMPTIONS = [
+  {
+    id: 'email-code-elevates-an-account-with-no-password',
+    we:
+      "read `/auth/me`'s `elevation.email_code` as whether an emailed code elevates the session, and have the mock offer it to an account with a confirmed address and no password, as one made by a code is — and to no other",
+    from:
+      "backend's contract for this package (`api-package-contract.md` §3.11, 2026-10-25): the code pair is \"for an account `email_code` names, such as one made by a code, with no password and no provider\". Which other accounts it names, it does not say; not measured from here",
+    breaks:
+      "if the backend names accounts with a password too, the mock hides a way to elevate that production offers them; if it names fewer, the mock offers one it refuses. A foundation that draws the code from `ways.emailCode` is right either way",
+  },
   {
     id: 'a-member-reads-their-inbox-through-the-site',
     we:

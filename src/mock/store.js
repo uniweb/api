@@ -1,4 +1,4 @@
-import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON } from '../wire.js'
+import { ACCOUNT_REASON, CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 import { uuidv7 } from '../uuid.js'
@@ -121,6 +121,21 @@ export const HOME_ORG = Object.freeze({
  * backend states it. The client never assumes it; it reads `until`.
  */
 export const ELEVATION_WINDOW = 15 * 60 * 1000
+
+/**
+ * Email sign-in's numbers, at the backend's defaults (`kb/frontend/contracts/sign-in-settings.md`
+ * §4.2, `email-code-sign-in.md` §5.3): the shortest password sign-up and reset take, a code's
+ * digits, lifetime and tries, and how often one address may ask. The owner may raise them on a
+ * real backend; the mock keeps the defaults, and says them on `/auth/providers`.
+ */
+export const EMAIL_SIGN_IN = Object.freeze({
+  passwordMin: 8,
+  codeDigits: 8,
+  codeMinutes: 10,
+  codeTries: 5,
+  resendAfterSeconds: 60,
+  asksPerHour: 5,
+})
 
 /** The operator's role, as `/auth/me` names it — MEASURED 2026-09-18. */
 const OPERATOR_ROLE = Object.freeze({ role: 'system_admin', scope_unit_id: null })
@@ -417,6 +432,16 @@ export class MockStore {
      */
     this.outbox = []
     this.pending = { verify: new Map(), reset: new Map() }
+    /**
+     * Emailed codes by challenge token: `{ email, code, expires, tries, link, door, accountId }` —
+     * `door` is `sign-in` or `elevate`, and each door takes only its own codes. `code` is null for
+     * a request answered with no code mailed (an address nobody invited, on a site by invitation).
+     */
+    this.codes = new Map()
+    /** A sign-in code's link token → its challenge token. */
+    this.codeLinks = new Map()
+    /** When each address asked for a code at each door, in this last hour. */
+    this.codeAsks = new Map()
     /** Offers by token: `{ email, invitations, grants, claimed }`. */
     this.offers = new Map()
     /** Invitations: `{ id, unit, invitedBy, to, status, createdAt, resolvedAt }` — `to` an account id. */
@@ -553,6 +578,8 @@ export class MockStore {
       // blueprint — an entry grant that answers more than `read` (MEASURED 2026-10-16).
       elevation: {
         available: account.operator === true || this.teamEdits(account),
+        has_password: typeof account.password === 'string',
+        email_code: this.elevatesByCode(account),
         ...(elevated ? { until: this.session.elevatedUntil } : {}),
       },
     }
@@ -580,48 +607,121 @@ export class MockStore {
     return { uuid: account.uuid, username: account.username, handle: account.handle }
   }
 
-  signIn({ username, password }) {
-    const account = this.accounts.find((a) => a.username === username)
-    if (!account || account.password !== password) return refuse(401, 'Unauthorized')
-    if (!account.verified) return refuse(403, PROBLEM.notVerified, 'verify your email address before signing in')
+  /**
+   * The accounts a sign-in's `username` names: its username, its `@handle`, or its address.
+   * An address an account has confirmed names that account alone; one no account has
+   * confirmed names the accounts that hold it unconfirmed, and the password picks among them
+   * (`email-code-sign-in.md` §5.9 M2).
+   */
+  accountsNamed(name) {
+    if (typeof name !== 'string' || !name) return []
+    const byName = this.accounts.filter((a) => a.username === name || `@${a.handle}` === name)
+    if (byName.length) return byName
+    const holding = this.accounts.filter((a) => a.email === name)
+    const confirmed = holding.find((a) => a.verified)
+    return confirmed ? [confirmed] : holding
+  }
+
+  /** What a sign-in answers: the session, and `{ expires_at, account }` — no `token`. */
+  openSession(account) {
     this.session = { account, elevatedUntil: null }
     const expires = new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString()
     // No `token`: a site's backend answers a sign-in with the session cookie alone.
     return { body: { expires_at: expires, account: this.identity(account) } }
   }
 
+  signIn({ username, password }) {
+    const account = this.accountsNamed(username).find((a) => typeof a.password === 'string' && a.password === password)
+    if (!account) return refuse(401, 'Unauthorized')
+    if (!account.verified) {
+      return refuse(403, PROBLEM.notVerified, 'verify your email address before signing in', { reason: ACCOUNT_REASON.emailNotVerified })
+    }
+    return this.openSession(account)
+  }
+
   signOut() {
     this.session = null
+  }
+
+  /** A password the rule refuses — `400 password_too_short` with `min_length` — or null. */
+  passwordRefusal(password) {
+    if (typeof password === 'string' && [...password].length >= EMAIL_SIGN_IN.passwordMin) return null
+    return refuse(400, 'Bad Request', `a password needs at least ${EMAIL_SIGN_IN.passwordMin} characters`, {
+      reason: ACCOUNT_REASON.passwordTooShort,
+      min_length: EMAIL_SIGN_IN.passwordMin,
+    })
+  }
+
+  /** Whether an invitation waits for an address: an offer sent to it. */
+  invited(email) {
+    return [...this.offers.values()].some((o) => o.email === email)
+  }
+
+  /** A handle made from an address — its part before `@` — that no account has yet. */
+  handleFor(email) {
+    const stem = String(email).split('@')[0].toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'member'
+    let handle = stem
+    for (let n = 2; this.accounts.some((a) => a.handle === handle); n += 1) handle = `${stem}${n}`
+    return handle
   }
 
   register({ username, email, password }) {
     // ⭐ By invitation only, an address nobody invited is refused, and nothing is created. An
     // invitation is an offer to the address (`seed.offers`), mailed or claimed.
-    if (this.signup === SIGNUP.inviteOnly && ![...this.offers.values()].some((o) => o.email === email)) {
+    if (this.signup === SIGNUP.inviteOnly && !this.invited(email)) {
       return refuse(403, PROBLEM.invitationOnly, 'this deployment admits new accounts by invitation only', { reason: SIGNUP.refused })
     }
-    if (this.accounts.some((a) => a.username === username)) {
-      return refuse(409, 'Conflict', `account username already exists: ${JSON.stringify(username)}`)
+    const short = this.passwordRefusal(password)
+    if (short) return short
+    const named = typeof username === 'string' && username !== ''
+    if (named && this.accounts.some((a) => a.username === username)) {
+      return refuse(409, 'Conflict', `account username already exists: ${JSON.stringify(username)}`, {
+        reason: ACCOUNT_REASON.usernameTaken,
+        username,
+      })
     }
-    // A taken address answers exactly like a fresh one, so sign-up never confirms
-    // who has an account — and nothing is created.
-    if (!this.accounts.some((a) => a.email === email)) {
-      const account = this.addAccount({ username, email, password }, { verified: false })
-      const token = newUuid()
-      this.pending.verify.set(token, account)
-      this.outbox.push({ to: email, subject: 'Confirm your email address', token, link: linkTo(LINK.verify, token) })
-    }
+    // ⭐ An address in use is never refused here: the account is made, unconfirmed, and the
+    // second account to confirm an address is refused at `verify`. So the answer is the same
+    // whatever the address holds, and nobody can lock its owner out by claiming it first.
+    // Without a username the account is named for its address: its username internal, its
+    // handle from the address (`api-package-contract.md` §3.10).
+    const account = this.addAccount(
+      { username: named ? username : newUuid(), handle: named ? undefined : this.handleFor(email), email, password },
+      { verified: false },
+    )
+    const token = newUuid()
+    this.pending.verify.set(token, account)
+    this.outbox.push({ to: email, subject: 'Confirm your email address', token, link: linkTo(LINK.verify, token) })
     return { status: 202, body: { status: 'verification_required', email } }
   }
 
   verify(token) {
     const account = this.pending.verify.get(token)
     if (!account) return refuse(400, 'Validation', 'invalid or expired verification token')
+    if (this.accounts.some((a) => a !== account && a.verified && a.email === account.email)) {
+      return refuse(409, 'Conflict', 'that address is confirmed on another account: sign in with that account, or reset its password', {
+        reason: ACCOUNT_REASON.verifiedElsewhere,
+      })
+    }
     this.pending.verify.delete(token)
     account.verified = true
     // Every offer sent to the address it confirmed is the account's now — and its token spent.
     for (const offer of this.offers.values()) if (!offer.claimed && offer.email === account.email) this.bind(offer, account)
     return { body: { verified: true } }
+  }
+
+  /**
+   * `POST /auth/verify/request` — the confirmation link again, for the credentials of an
+   * account not yet confirmed. The same `202` whatever happened.
+   */
+  requestVerification({ username, password }) {
+    const account = this.accountsNamed(username).find((a) => !a.verified && typeof a.password === 'string' && a.password === password)
+    if (account) {
+      const token = newUuid()
+      this.pending.verify.set(token, account)
+      this.outbox.push({ to: account.email, subject: 'Confirm your email address', token, link: linkTo(LINK.verify, token) })
+    }
+    return { status: 202, body: { status: 'verification_requested' } }
   }
 
   requestReset(email) {
@@ -636,12 +736,184 @@ export class MockStore {
 
   confirmReset({ token, new_password: password }) {
     const account = this.pending.reset.get(token)
-    if (!account) return refuse(400, 'Validation', 'invalid or expired reset token')
+    if (!account) return refuse(400, 'Validation', 'invalid or expired reset token', { reason: ACCOUNT_REASON.resetLinkInvalid })
+    // A password the rule refuses is refused before the token is spent, so the link works again.
+    const short = this.passwordRefusal(password)
+    if (short) return short
     this.pending.reset.delete(token)
     account.password = password
     // A reset revokes the account's sessions.
     if (this.session?.account === account) this.session = null
     return { body: { reset: true } }
+  }
+
+  // ── Emailed codes ───────────────────────────────────────────────────────────
+
+  /**
+   * Whether an emailed code elevates this account. ⚠️ ASSUMED (`wire.js` → `ASSUMPTIONS`,
+   * `email-code-elevates-an-account-with-no-password`): backend's contract names an account
+   * made by a code, with no password and no provider; the mock offers it to exactly those.
+   */
+  elevatesByCode(account) {
+    return !!account && account.verified === true && typeof account.password !== 'string'
+  }
+
+  /**
+   * Count an address's request for a code at a door: `429 email_code_throttled`, with
+   * `retry_after_seconds`, when it asked within the resend wait or too often this hour.
+   * ⚠️ Counted per door — sign-in, elevation — which backend's contract does not say.
+   */
+  throttle(email, door, now) {
+    const hour = 3600 * 1000
+    const key = `${door}:${email}`
+    const asks = (this.codeAsks.get(key) ?? []).filter((t) => now - t < hour)
+    const last = asks[asks.length - 1]
+    let wait = 0
+    if (last != null && now - last < EMAIL_SIGN_IN.resendAfterSeconds * 1000) wait = EMAIL_SIGN_IN.resendAfterSeconds * 1000 - (now - last)
+    else if (asks.length >= EMAIL_SIGN_IN.asksPerHour) wait = asks[0] + hour - now
+    if (wait > 0) {
+      return refuse(429, 'Too Many Requests', 'too many codes asked for this address', {
+        reason: ACCOUNT_REASON.codeThrottled,
+        retry_after_seconds: Math.ceil(wait / 1000),
+      })
+    }
+    asks.push(now)
+    this.codeAsks.set(key, asks)
+    return null
+  }
+
+  /** A new code's challenge: kept, and answered as the backend answers a request. */
+  issueCode({ email, door, accountId = null, mailed }, now) {
+    const challenge = newUuid()
+    const expires = now + EMAIL_SIGN_IN.codeMinutes * 60 * 1000
+    const code = mailed ? String(Math.floor(Math.random() * 10 ** EMAIL_SIGN_IN.codeDigits)).padStart(EMAIL_SIGN_IN.codeDigits, '0') : null
+    const link = mailed && door === 'sign-in' ? newUuid() : null
+    this.codes.set(challenge, { email, code, expires, tries: 0, link, door, accountId })
+    if (link) this.codeLinks.set(link, challenge)
+    return {
+      status: 202,
+      body: {
+        challenge_token: challenge,
+        expires_at: new Date(expires).toISOString(),
+        resend_after_seconds: EMAIL_SIGN_IN.resendAfterSeconds,
+      },
+      code,
+      link,
+    }
+  }
+
+  /**
+   * `POST /auth/email-code/request` — answered alike for every address. An address that may
+   * sign in, or sign up, is mailed a code and a link; one nobody invited, on a site by
+   * invitation, a mail that says so, with neither.
+   */
+  requestEmailCode(email, now = Date.now()) {
+    if (typeof email !== 'string' || !/^[^@\s]+@[^@\s]+$/.test(email)) return refuse(400, 'Bad Request', 'expected an email address')
+    const throttled = this.throttle(email, 'sign-in', now)
+    if (throttled) return throttled
+    const known = this.accounts.some((a) => a.email === email && a.verified)
+    const mayJoin = known || this.signup !== SIGNUP.inviteOnly || this.invited(email)
+    const { status, body, code, link } = this.issueCode({ email, door: 'sign-in', mailed: mayJoin }, now)
+    if (mayJoin) {
+      this.outbox.push({ to: email, subject: `${code} is your sign-in code`, code, token: link, link: linkTo(LINK.signin, link) })
+    } else {
+      this.outbox.push({ to: email, subject: 'This site is by invitation', token: null, link: '/' })
+    }
+    return { status, body }
+  }
+
+  /**
+   * A code checked at its door — the outcome, `{ entry }` for a right code, or a refusal:
+   * `email_code_expired` (unknown, used, past its time, another door's), `email_code_exhausted`,
+   * `email_code_wrong` with `tries_left`. ⚠️ The fifth wrong code answers `email_code_wrong`
+   * with `tries_left: 0`, and the next try `email_code_exhausted` — that edge is not measured.
+   */
+  checkCode(challenge, code, door, now) {
+    const entry = this.codes.get(challenge)
+    if (!entry || entry.door !== door || entry.code == null || entry.expires <= now) {
+      return { problem: refuse(400, 'Bad Request', 'that code has expired or was not asked for', { reason: ACCOUNT_REASON.codeExpired }).problem }
+    }
+    if (entry.tries >= EMAIL_SIGN_IN.codeTries) {
+      return { problem: refuse(400, 'Bad Request', 'that code has had its tries', { reason: ACCOUNT_REASON.codeExhausted }).problem }
+    }
+    if (String(code).trim() !== entry.code) {
+      entry.tries += 1
+      return {
+        problem: refuse(400, 'Bad Request', 'that code is not right', {
+          reason: ACCOUNT_REASON.codeWrong,
+          tries_left: Math.max(0, EMAIL_SIGN_IN.codeTries - entry.tries),
+        }).problem,
+      }
+    }
+    return { entry }
+  }
+
+  /** Spend a code and its link. */
+  spendCode(challenge) {
+    const entry = this.codes.get(challenge)
+    if (entry?.link) this.codeLinks.delete(entry.link)
+    this.codes.delete(challenge)
+  }
+
+  /**
+   * Sign in by an address a code or a link proved: its confirmed account — or, for an
+   * address with none, a new one, named for the address, confirmed by this step, and handed
+   * the offers waiting for it.
+   */
+  signInByAddress(email) {
+    let account = this.accounts.find((a) => a.email === email && a.verified)
+    if (!account) {
+      if (this.signup === SIGNUP.inviteOnly && !this.invited(email)) {
+        return refuse(403, PROBLEM.invitationOnly, 'this deployment admits new accounts by invitation only', { reason: SIGNUP.refused })
+      }
+      account = this.addAccount({ username: newUuid(), handle: this.handleFor(email), email, password: null }, { verified: true })
+      for (const offer of this.offers.values()) if (!offer.claimed && offer.email === email) this.bind(offer, account)
+    }
+    return this.openSession(account)
+  }
+
+  /** `POST /auth/email-code/confirm`. */
+  confirmEmailCode({ challenge_token: challenge, code }, now = Date.now()) {
+    const checked = this.checkCode(challenge, code, 'sign-in', now)
+    if (checked.problem) return { problem: checked.problem }
+    this.spendCode(challenge)
+    return this.signInByAddress(checked.entry.email)
+  }
+
+  /** `POST /auth/email-link/confirm` — the link the code's mail carries. */
+  confirmEmailLink(token, now = Date.now()) {
+    const challenge = this.codeLinks.get(token)
+    const entry = challenge ? this.codes.get(challenge) : null
+    if (!entry || entry.expires <= now) {
+      return refuse(400, 'Bad Request', 'that sign-in link has expired or was already used', { reason: ACCOUNT_REASON.linkInvalid })
+    }
+    this.spendCode(challenge)
+    return this.signInByAddress(entry.email)
+  }
+
+  /** `POST /auth/elevate/email-code/request` — a code to the account's own address, for this session. */
+  requestElevationCode(now = Date.now()) {
+    const account = this.account
+    if (!this.elevatesByCode(account)) {
+      return refuse(400, 'Bad Request', 'this account elevates with its password, or has no confirmed address')
+    }
+    const throttled = this.throttle(account.email, 'elevate', now)
+    if (throttled) return throttled
+    const { status, body, code } = this.issueCode({ email: account.email, door: 'elevate', accountId: account.id, mailed: true }, now)
+    this.outbox.push({ to: account.email, subject: `${code} is your code to confirm it's you`, code, token: null, link: '/' })
+    return { status, body }
+  }
+
+  /** `POST /auth/elevate/email-code/confirm` — elevates, as the password does. */
+  confirmElevationCode({ challenge_token: challenge, code }, now = Date.now()) {
+    const checked = this.checkCode(challenge, code, 'elevate', now)
+    if (checked.problem) return { problem: checked.problem }
+    if (checked.entry.accountId !== this.account?.id) {
+      return refuse(400, 'Bad Request', 'that code has expired or was not asked for', { reason: ACCOUNT_REASON.codeExpired })
+    }
+    this.spendCode(challenge)
+    this.session.elevatedUntil = new Date(now + ELEVATION_WINDOW).toISOString()
+    return { body: { elevated_until: this.session.elevatedUntil } }
   }
 
   // ── Units ───────────────────────────────────────────────────────────────────

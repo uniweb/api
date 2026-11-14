@@ -46,8 +46,11 @@ describe('wire — the assumptions are a reviewable set', () => {
   // 2026-11-09 it also holds `team-access-to-every-entry`: what a blueprint's team line reaches,
   // as the backend states it, for the mock to found itself from a blueprint. Since 2026-11-14,
   // `a-member-reads-their-inbox-through-the-site`: the inbox a site's member reads through its
-  // `/_api`, on the backend's contract with its own app.
+  // `/_api`, on the backend's contract with its own app; and
+  // `email-code-elevates-an-account-with-no-password`: which accounts an emailed code elevates,
+  // beyond one made by a code, the backend's contract does not say.
   const EXPECTED = [
+    'email-code-elevates-an-account-with-no-password',
     'a-member-reads-their-inbox-through-the-site',
     'team-access-to-every-entry',
     'localized-json-is-a-locale-map',
@@ -141,8 +144,8 @@ describe('wire — the lane', () => {
     expect(VIEWER.elevation).toBe('elevation')
   })
 
-  it('names the three steps a mailed link starts, by the parameters the backend mails', () => {
-    expect(LINK).toEqual({ verify: 'verify', reset: 'reset', offer: 'offer' })
+  it('names the four steps a mailed link starts, by the parameters the backend mails', () => {
+    expect(LINK).toEqual({ verify: 'verify', reset: 'reset', offer: 'offer', signin: 'signin' })
   })
 
   it('encodes a uuid into the path rather than trusting it', () => {

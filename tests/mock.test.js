@@ -481,30 +481,30 @@ describe('the client against the mock — writing', () => {
 describe('the client against the mock — accounts', () => {
   it('signs a new member up, refuses them until verified, then lets them in', async () => {
     const { client, mock } = stack()
-    await expect(client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })).resolves.toEqual({
+    await expect(client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })).resolves.toEqual({
       status: 'verification_required',
       email: 'newbie@example.test',
     })
-    await expect(client.signIn({ username: 'newbie', password: 'pw' })).rejects.toMatchObject({ kind: 'unverified' })
+    await expect(client.signIn({ username: 'newbie', password: 'newbie-pass' })).rejects.toMatchObject({ kind: 'unverified' })
 
     // The link lands on the site's root, and the site's page finishes it.
     const mail = mock.outbox.find((m) => m.to === 'newbie@example.test')
     expect(mail.link).toBe(`/?verify=${mail.token}`)
     await expect(client.verifyEmail(linkOf(mail).token)).resolves.toEqual({ verified: true })
 
-    const result = await client.signIn({ username: 'newbie', password: 'pw' })
+    const result = await client.signIn({ username: 'newbie', password: 'newbie-pass' })
     expect(result.ok).toBe(true)
     expect(client.session.viewer).toMatchObject({ username: 'newbie', roles: [], workspace: { unitUuid: HOME_ORG.unit_uuid, handle: 'home' } })
   })
 
   it('answers a taken address exactly like a fresh one, and a taken username with 409', async () => {
     const { client } = stack()
-    await client.signUp({ username: 'one', email: 'same@example.test', password: 'pw' })
-    await expect(client.signUp({ username: 'two', email: 'same@example.test', password: 'pw' })).resolves.toEqual({
+    await client.signUp({ username: 'one', email: 'same@example.test', password: 'newbie-pass' })
+    await expect(client.signUp({ username: 'two', email: 'same@example.test', password: 'newbie-pass' })).resolves.toEqual({
       status: 'verification_required',
       email: 'same@example.test',
     })
-    await expect(client.signUp({ username: 'one', email: 'other@example.test', password: 'pw' })).rejects.toMatchObject({ status: 409 })
+    await expect(client.signUp({ username: 'one', email: 'other@example.test', password: 'newbie-pass' })).rejects.toMatchObject({ status: 409 })
   })
 
   it('names the operator\'s role as a reader\'s until it elevates — and a member\'s, none', async () => {
@@ -540,7 +540,7 @@ describe('the client against the mock — the mail it sends', () => {
 
   it('mails every link to the site\'s root, its step\'s parameter carrying the token', async () => {
     const { client, mock } = stack(invited({ email: 'guest@example.test', invitations: 1 }))
-    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })
     await client.requestPasswordReset({ email: 'attendee@example.test' })
     expect(mock.outbox.map((m) => linkOf(m).step)).toEqual(['offer', 'verify', 'reset'])
     for (const m of mock.outbox) expect(m.link).toBe(`/?${linkOf(m).step}=${m.token}`)
@@ -548,7 +548,7 @@ describe('the client against the mock — the mail it sends', () => {
 
   it('confirms an address once — the link, used, is `invalid`', async () => {
     const { client, mock } = stack()
-    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })
     const { token } = linkOf(mock.outbox[0])
     await client.verifyEmail(token)
     await expect(client.verifyEmail(token)).rejects.toMatchObject({ kind: 'invalid', status: 400 })
@@ -583,7 +583,7 @@ describe('the client against the mock — the mail it sends', () => {
     const { client } = stack({ ...invited({ email: 'guest@example.test' }), onMail: (m, url) => sent.push([m.subject, url]) })
     // What the seed sent waits for the first request, to know where the site is.
     expect(sent).toEqual([])
-    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })
     expect(sent.map(([subject]) => subject)).toEqual(["You've been invited", 'Confirm your email address'])
     expect(sent[1][1]).toMatch(/^http:\/\/site\.test\/\?verify=/)
   })
@@ -591,7 +591,7 @@ describe('the client against the mock — the mail it sends', () => {
   it('puts the links on `siteOrigin` when it is given one', async () => {
     const sent = []
     const { client } = stack({ siteOrigin: 'https://example.com', onMail: (m, url) => sent.push(url) })
-    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })
     expect(sent[0]).toMatch(/^https:\/\/example\.com\/\?verify=/)
   })
 
@@ -602,7 +602,7 @@ describe('the client against the mock — the mail it sends', () => {
       new Request('http://localhost:5173/_api/auth/register', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'newbie', email: 'newbie@example.test', password: 'pw' }),
+        body: JSON.stringify({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' }),
       }),
     )
     expect(log).toHaveBeenCalledTimes(1)
@@ -701,9 +701,9 @@ describe('the client against the mock — invitations', () => {
   it('⭐ binds an offer when its address is confirmed — and its link then answers `absent`, to that account too', async () => {
     const { client, mock } = stack(invited({ email: 'newbie@example.test', invitations: 1 }))
     const offer = linkOf(mock.outbox[0])
-    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+    await client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })
     await client.verifyEmail(linkOf(mock.outbox.find((m) => m.subject === 'Confirm your email address')).token)
-    await client.signIn({ username: 'newbie', password: 'pw' })
+    await client.signIn({ username: 'newbie', password: 'newbie-pass' })
     expect(await client.listInvitations()).toHaveLength(1)
     await expect(client.claimOffer(offer.token)).rejects.toMatchObject({ kind: 'absent', status: 404 })
   })
@@ -774,7 +774,8 @@ describe('the client against the mock — elevation', () => {
 
   it('⭐ the operator reads a member\'s, elevates, removes it — and lowered, changes nothing again', async () => {
     const { client, theirs } = await membersEntry()
-    expect(client.session.viewer.elevation).toEqual({ available: true, until: null })
+    // Seeded with a password, so the password elevates it, and no emailed code does (`ASSUMPTIONS`).
+    expect(client.session.viewer.elevation).toEqual({ available: true, hasPassword: true, emailCode: false, until: null })
     await expect(client.deleteEntity({ uuid: theirs.uuid, schema: '@/attendance' })).rejects.toMatchObject({ kind: 'forbidden' })
 
     const { until } = await client.elevate({ password: 'organiser' })
@@ -811,7 +812,7 @@ describe('the client against the mock — elevation', () => {
   it('offers a member nothing to elevate — `available: false` — and their own content was theirs all along', async () => {
     const { client } = stack()
     await signIn(client, 'attendee')
-    expect(client.session.viewer.elevation).toEqual({ available: false, until: null })
+    expect(client.session.viewer.elevation).toEqual({ available: false, hasPassword: true, emailCode: false, until: null })
     const mine = await client.createEntity({ schema: '@/attendance', items: [{ section: 'attendance', data: { who: 'Ada' } }] })
     expect((await client.readEntity({ schema: '@/attendance', uuid: mine.uuid })).entity.can_edit).toBe(true)
   })

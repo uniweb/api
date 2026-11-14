@@ -63,19 +63,64 @@ ordinary member holds no role (`[]`). `viewer.workspace` — the site service's 
 control for a particular record, read that record: `entity.can_edit` is the backend's
 own answer.
 
-**Signing up** — `useSignUp().signUp({ username, email, password })` answers
+**Signing up** — `useSignUp().signUp({ email, password })` answers
 `{ status: 'verification_required', email }`, the same answer for an address already in
-use. The account cannot sign in until the address is confirmed from the email the
-backend sends — its link lands on your site (below); until then `signIn` fails with
-`error.kind === 'unverified'`. A username already taken fails with status `409`.
-`canSignUp` (like `canSignIn`) says only that the site has a backend, not that sign-up
-is open.
+use. `username` is optional: without one, the account is named for its address. The
+account cannot sign in until the address is confirmed from the email the backend sends —
+its link lands on your site (below); until then `signIn` fails with
+`error.kind === 'unverified'`, and `useSignIn().resendVerification({ username, password })`
+mails the link again, with the same answer whatever happened. `canSignUp` (like
+`canSignIn`) says only that the site has a backend, not that sign-up is open.
 
-**What the page offers** — `useSignInOptions()` reads what the site's owner set:
-`options.providers` (`[{ id: 'google' }, …]`), `options.signup` (`'open'` or
-`'invite_only'`) and `options.email` (whether the backend delivers mail). It is read once
-per page and shared; `status` is `'absent'` with no backend. The answer comes as the
-backend gives it, with no defaults: draw a rule only when a field states it.
+A sign-in can name the account by its username, its `@handle` or its address.
+
+**What the page offers** — `useSignInOptions()` reads what the site's owner set. It is
+read once per page and shared; `status` is `'absent'` with no backend. The answer comes as
+the backend gives it, with no defaults: draw a way or a rule only when a field states it.
+
+| field | means |
+|---|---|
+| `options.providers` | the providers whose sign-in will start, `[{ id: 'google' }, …]` |
+| `options.signup` | `'open'`, or `'invite_only'`: only an invited address may make an account |
+| `options.email` | whether the backend delivers mail |
+| `options.email_sign_in` | whether the owner offers signing in by email at all |
+| `options.password` | present only while password sign-in is offered: `{ min_length }`, the shortest password sign-up and reset take |
+| `options.email_code` | present only while sign-in by an emailed code is offered: `{ length, lifetime_minutes }` |
+
+**Signing in, or up, with an emailed code** — one door for new and returning members,
+offered where `options.email_code` is present. `useEmailSignIn()` mails a code to the
+address typed, and the code signs the member in — making the account, for an address with
+none:
+
+```jsx
+const code = useEmailSignIn()
+if (code.step === 'email') return <EmailForm onSubmit={(email) => code.request({ email })} />
+if (code.challenge) return <SecondFactor onSubmit={code.completeChallenge} />
+return <CodeForm sentTo={code.sent.email} onSubmit={code.confirm} onBack={code.restart} />
+```
+
+The backend answers alike for every address, so the page never learns whether an account
+exists. `sent` says when the code stops working (`expiresAt`) and how long before another
+may be asked for (`resendAfterSeconds`). The same mail carries a link to your site,
+`?signin=`, which `useMailedLink` finishes on the member's click.
+
+**Why a step was refused** — every refusal of an account's step names its reason in
+`error.extensions.reason`, with the values a message needs beside it, and the words a
+member reads are yours. `ACCOUNT_REASON` in `@uniweb/api/wire` lists them:
+
+| reason | when | carries |
+|---|---|---|
+| `password_too_short` | sign-up and reset | `min_length` |
+| `username_taken` | sign-up | `username` |
+| `signup_by_invitation_only` | making an account, on a site by invitation | |
+| `email_not_verified` | the right password, before the address is confirmed | |
+| `email_already_verified_elsewhere` | confirming an address another account confirmed first | |
+| `email_sign_in_off`, `password_sign_in_off`, `email_code_sign_in_off` | a way the owner has turned off | |
+| `email_code_wrong` | a wrong code | `tries_left` |
+| `email_code_exhausted`, `email_code_expired` | a code that can't be used: ask for a new one | |
+| `email_link_invalid`, `reset_link_invalid` | a mailed link used, expired or never sent | |
+| `email_code_throttled` | asking again too soon | `retry_after_seconds` |
+| `two_factor_code_invalid` | a wrong second factor, with a reset or a code | |
 
 **Signing in through a provider** — `signInWithProvider(id, { returnTo })` leaves for
 the provider's sign-in, with `id` taken from `options.providers`. It is a navigation, so
@@ -91,9 +136,10 @@ link lands on your site, where `useMailedLink` finishes it. **Second factor** �
 `completeChallenge(code)`.
 
 **The links the backend mails** — a sign-up's confirmation, a password reset, an
-invitation sent to an address with no account here: each is a link to your site's root,
-a token in the query (`?verify=`, `?reset=`, `?offer=`), and the page it lands on
-finishes the step. `useMailedLink()` says which step, and finishes it:
+invitation sent to an address with no account here, an emailed code's sign-in: each is a
+link to your site's root, a token in the query (`?verify=`, `?reset=`, `?offer=`,
+`?signin=`), and the page it lands on finishes the step. `useMailedLink()` says which
+step, and finishes it:
 
 ```jsx
 import { useMailedLink } from '@uniweb/api'
@@ -107,6 +153,7 @@ function FromYourEmail() {
   if (step === 'verify' && status === 'done') return <p>Your address is confirmed. Sign in.</p>
   if (step === 'reset' && status === 'done') return <p>Your password is changed. Sign in.</p>
   if (step === 'offer' && status === 'idle') return <p>Sign in, or create an account, to take up your invitation.</p>
+  if (step === 'signin' && status === 'idle') return <button onClick={() => confirm()}>Sign in</button>
   if (error?.kind === 'invalid' || error?.kind === 'absent') return <p>This link can no longer be used.</p>
   return null   // a claimed offer: what it holds is listed by useInvitations, below
 }
@@ -116,7 +163,10 @@ function FromYourEmail() {
   `code` when the account has a second factor — and supplies the token; a password the
   backend's rule refuses is `error.extensions.reason === 'password_too_short'` (with
   `min_length`), and the same link works again. `offer` waits until someone is signed
-  in — whatever their account's own address — and then claims by itself.
+  in — whatever their account's own address — and then claims by itself. `signin` waits
+  for the member's click: `confirm()` signs them in, answering as `signIn` does.
+  ⛔ Never confirm it on load — whatever opens a link first, a mail scanner's prefetch
+  included, would spend it.
 - An offer answers counts, `{ invitations, grants }` — invitations now waiting for this
   account's answer, and entities now shared with it — never names. Both `0` means it
   bound nothing. ⛔ A token unknown, revoked or already used is ONE answer,
@@ -194,6 +244,11 @@ function AdminMode() {
   again — `entity.can_edit` is the record's answer for the session as it is now.
 - `rolesInFull` — draw controls that act through a role from this: true while elevated,
   and always on a backend that asks for no elevation.
+- `ways` — `{ password, emailCode }`: whether the password, and an emailed code, elevate
+  this account (`null` where the backend did not say). An account made by an emailed code
+  has no password: `requestCode()` mails a code to its own address, and
+  `elevateWithCode({ code, twoFactorCode })` elevates with it, refused as a sign-in's code
+  is (`email_code_wrong` with `tries_left`, and so on).
 - An account with no password elevates through its provider:
   `elevateWithProvider('google')` goes to the provider's sign-in and back to this page.
   If the identity that comes back is not this account's, `error.extensions.reason` is
@@ -859,9 +914,12 @@ npx uniweb-api-mock --port 8787 --site http://localhost:3000
 ## Outside React
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
-React: `probeSession`, `signIn`, `listEntities`, `readEntity`, `writeItems`,
+React: `probeSession`, `signIn`, for an emailed code, `requestEmailCode`,
+`confirmEmailCode`, `confirmEmailLink` and `forgetEmailCode`, `resendVerification`,
+`listEntities`, `readEntity`, `writeItems`,
 `createEntity`, `deleteEntity`, `adminHref`, for elevation, `elevate`, `lower`,
-`elevateWithProvider`, `isElevated` and `rolesInFull`, for the links the backend mails,
+`elevateWithProvider`, `requestElevationCode`, `elevateWithCode`, `isElevated` and
+`rolesInFull`, for the links the backend mails,
 `mailedLink`, `verifyEmail`, `claimOffer` and `forgetMailedLink`, for invitations,
 `listInvitations`, `acceptInvitation` and `declineInvitation`, for units, `listUnits`, and for
 access to an entry, `listAccess`, `listAccessCandidates`, `grantAccess`, `revokeAccess` and

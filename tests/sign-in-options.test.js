@@ -118,12 +118,19 @@ describe('useSignInOptions', () => {
 })
 
 describe('sign-in options — against the mock', () => {
-  it('answers what the mock does: no providers, sign-up open, mail to its outbox', async () => {
+  it('answers what the mock does: no providers, sign-up open, mail to its outbox, both email ways at the backend\'s numbers', async () => {
     const mock = createMockBackend({ onMail: null })
     createUniweb(WITH_BACKEND)
     const client = getClient()
     client.fetchFn = vi.fn((url, init) => mock.fetch(new Request(new URL(String(url), 'http://site.test'), init)))
-    await expect(readSignInOptions()).resolves.toEqual({ providers: [], signup: 'open', email: true })
+    await expect(readSignInOptions()).resolves.toEqual({
+      providers: [],
+      signup: 'open',
+      email: true,
+      email_sign_in: true,
+      password: { min_length: 8 },
+      email_code: { length: 8, lifetime_minutes: 10 },
+    })
   })
 
   it('refuses a parameter, as the backend does', async () => {

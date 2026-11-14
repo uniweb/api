@@ -21,7 +21,15 @@ import { Ledger } from './ledger.js'
 import { readLanguages, readsEveryLanguage, isLanguageMap, mergeInLanguage, checkLanguage } from './languages.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
 import { listInvitationsWith, acceptInvitationWith, declineInvitationWith } from './invitations.js'
-import { viewerElevation, watchLapse, elevateWith, lowerWith, elevateWithProviderOf } from './elevation.js'
+import {
+  viewerElevation,
+  watchLapse,
+  elevateWith,
+  lowerWith,
+  elevateWithProviderOf,
+  requestElevationCodeWith,
+  elevateWithCodeWith,
+} from './elevation.js'
 import {
   listAccessWith,
   listAccessCandidatesWith,
@@ -39,6 +47,13 @@ import {
   markAllNotificationsReadWith,
 } from './notifications.js'
 import { readSignInOptionsWith, returnedSignedIn, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
+import {
+  requestEmailCodeWith,
+  confirmEmailCodeWith,
+  confirmEmailLinkWith,
+  forgetEmailCodeWith,
+  resendVerificationWith,
+} from './email-sign-in.js'
 import { identityOf } from './item-identity.js'
 
 export { uuidv7 } from './uuid.js'
@@ -1590,6 +1605,20 @@ export const signInWithProvider = (provider, options) => signInWithProviderOf(re
 export const signInAddress = (provider, options) => signInAddressOf(getClient(), provider, options)
 /** @see ApiClient#signUp */
 export const signUp = (fields) => required().signUp(fields)
+
+export const resendVerification = (credentials) => resendVerificationWith(required(), credentials)
+
+export const requestEmailCode = (fields) => requestEmailCodeWith(required(), fields)
+
+export const confirmEmailCode = (code) => confirmEmailCodeWith(required(), code)
+
+export const confirmEmailLink = (token) => confirmEmailLinkWith(required(), token)
+
+export const forgetEmailCode = () => forgetEmailCodeWith(getClient())
+
+export const requestElevationCode = () => requestElevationCodeWith(required())
+
+export const elevateWithCode = (fields) => elevateWithCodeWith(required(), fields)
 /** @see ApiClient#requestPasswordReset */
 export const requestPasswordReset = (fields) => required().requestPasswordReset(fields)
 /** @see ApiClient#confirmPasswordReset */

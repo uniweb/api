@@ -118,6 +118,33 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
     expect(err).toMatchObject({ kind: 'auth', status: 401, title: 'Unauthorized' })
   })
 
+  it('says which email ways are offered by presence — `password` and `email_code` each an object when there', async () => {
+    const options = await readSignInOptionsWith(client())
+    if (SIGN_IN_OPTIONS.emailSignIn in options) expect(typeof options[SIGN_IN_OPTIONS.emailSignIn]).toBe('boolean')
+    const password = options[SIGN_IN_OPTIONS.password]
+    if (password !== undefined) expect(Number.isInteger(password[SIGN_IN_OPTIONS.minLength])).toBe(true)
+    const code = options[SIGN_IN_OPTIONS.emailCode]
+    if (code !== undefined) {
+      expect(Number.isInteger(code[SIGN_IN_OPTIONS.codeLength])).toBe(true)
+      expect(Number.isInteger(code[SIGN_IN_OPTIONS.codeLifetime])).toBe(true)
+    }
+  })
+
+  it('refuses a sign-in link never mailed as `email_link_invalid` — it spends nothing', async () => {
+    const err = await client().request('POST', AUTH.emailLinkConfirm, { body: { token: NEVER_SENT }, onUnauthorized: 'ignore' }).catch((e) => e)
+    // `400 email_link_invalid` — or `403`, an off switch's reason, where the owner offers no code.
+    expect(['email_link_invalid', 'email_sign_in_off', 'email_code_sign_in_off']).toContain(err.extensions.reason)
+    if (err.extensions.reason === 'email_link_invalid') expect(err).toMatchObject({ kind: 'invalid', status: 400 })
+  })
+
+  it('answers a resend of the confirmation link alike for credentials that name nobody — `202`', async () => {
+    const answer = await client().request('POST', AUTH.verifyRequest, {
+      body: { username: 'nobody-here', password: 'not-a-password' },
+      onUnauthorized: 'ignore',
+    })
+    expect(answer).toEqual({ status: 'verification_requested' })
+  })
+
   it.skipIf(!REGISTER)('signs up with 202, and refuses the sign-in until the address is verified', async () => {
     const stamp = Date.now()
     const fields = { username: `api-live-${stamp}`, email: `api-live-${stamp}@example.test`, password: `live-test-${stamp}` }

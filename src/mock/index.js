@@ -24,7 +24,7 @@ import {
   NOTIFICATIONS,
   NOTIFICATION,
 } from '../wire.js'
-import { MockStore, isUuid, refuse } from './store.js'
+import { MockStore, isUuid, refuse, EMAIL_SIGN_IN } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
 import { languageChain } from '../languages.js'
 
@@ -390,10 +390,46 @@ export function createMockBackend({
         if (!store.account) return unauthorized()
         return answer(store.lower())
       }
+      if (path === AUTH.elevateCodeRequest && method === 'POST') {
+        if (!store.account) return unauthorized()
+        return answer(store.requestElevationCode())
+      }
+      if (path === AUTH.elevateCodeConfirm && method === 'POST') {
+        if (!store.account) return unauthorized()
+        const b = await body(request)
+        return fields(b, ['challenge_token', 'code'], '{"challenge_token": ..., "code": ..., "two_factor_code": ...}') ?? answer(store.confirmElevationCode(b))
+      }
+      if (path === AUTH.emailCodeRequest && method === 'POST') {
+        const b = await body(request)
+        return fields(b, ['email'], '{"email": ...}') ?? answer(store.requestEmailCode(b.email))
+      }
+      if (path === AUTH.emailCodeConfirm && method === 'POST') {
+        const b = await body(request)
+        return fields(b, ['challenge_token', 'code'], '{"challenge_token": ..., "code": ...}') ?? answer(store.confirmEmailCode(b))
+      }
+      if (path === AUTH.emailLinkConfirm && method === 'POST') {
+        const b = await body(request)
+        return fields(b, ['token'], '{"token": ...}') ?? answer(store.confirmEmailLink(b.token))
+      }
+      if (path === AUTH.verifyRequest && method === 'POST') {
+        const b = await body(request)
+        return fields(b, ['username', 'password'], '{"username": ..., "password": ...}') ?? answer(store.requestVerification(b))
+      }
       if (path === AUTH.providers && method === 'GET') {
-        // The mock has no sign-in providers; its sign-up is the blueprint's, open by default, and
-        // what it mails lands in its outbox.
-        return json(200, { [SIGN_IN_OPTIONS.providers]: [], [SIGN_IN_OPTIONS.signup]: store.signup, [SIGN_IN_OPTIONS.email]: true })
+        // The mock has no sign-in providers; its sign-up is the blueprint's, open by default;
+        // what it mails lands in its outbox; and email sign-in is on, both ways, at the
+        // backend's default numbers.
+        return json(200, {
+          [SIGN_IN_OPTIONS.providers]: [],
+          [SIGN_IN_OPTIONS.signup]: store.signup,
+          [SIGN_IN_OPTIONS.email]: true,
+          [SIGN_IN_OPTIONS.emailSignIn]: true,
+          [SIGN_IN_OPTIONS.password]: { [SIGN_IN_OPTIONS.minLength]: EMAIL_SIGN_IN.passwordMin },
+          [SIGN_IN_OPTIONS.emailCode]: {
+            [SIGN_IN_OPTIONS.codeLength]: EMAIL_SIGN_IN.codeDigits,
+            [SIGN_IN_OPTIONS.codeLifetime]: EMAIL_SIGN_IN.codeMinutes,
+          },
+        })
       }
       if (path === AUTH.me && method === 'GET') {
         const viewer = store.viewer()
@@ -423,10 +459,10 @@ export function createMockBackend({
       }
       if (path === AUTH.register && method === 'POST') {
         const b = await body(request)
-        return (
-          fields(b, ['username', 'email', 'password'], '{"username": ..., "email": ..., "password": ...}') ??
-          answer(store.register(b))
-        )
+        // `username` is optional since 2026-10-25: without one the account is named for its address.
+        const shape = '{"email": ..., "password": ..., "username": ...}'
+        if (b && b.username != null && typeof b.username !== 'string') return badRequest(`expected \`${shape}\`: invalid type for \`username\``)
+        return fields(b, ['email', 'password'], shape) ?? answer(store.register(b))
       }
       if (path === AUTH.resetRequest && method === 'POST') {
         const b = await body(request)

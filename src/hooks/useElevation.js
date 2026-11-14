@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { getClient } from '../client.js'
 import { ApiError } from '../errors.js'
-import { elevateWith, lowerWith, elevateWithProviderOf, takeElevationReturn, rolesInFull } from '../elevation.js'
+import {
+  elevateWith,
+  lowerWith,
+  elevateWithProviderOf,
+  takeElevationReturn,
+  rolesInFull,
+  requestElevationCodeWith,
+  elevateWithCodeWith,
+} from '../elevation.js'
 import { useAction } from './useAction.js'
 
 const NONE = Object.freeze({ status: 'anonymous', viewer: null, error: null })
@@ -36,6 +44,15 @@ const noSnapshot = () => NONE
  *   Nothing says whether it has one, so offer the field to whoever might. A refusal is
  *   `kind: 'auth'`, one answer for a wrong password or code; a session that has ended
  *   shows as signed out first.
+ * - **`ways`** — `{ password, emailCode }`: whether the password, and an emailed code,
+ *   elevate this account — `null` where the backend did not say. An account made by an
+ *   emailed code has no password and no provider, and elevates by a code.
+ * - **`requestCode()`**, then **`elevateWithCode({ code, twoFactorCode })`** — elevate by a
+ *   code mailed to the account's own address; `twoFactorCode` when it has a second factor.
+ *   A wrong code is `kind: 'invalid'`, `error.extensions.reason === 'email_code_wrong'`
+ *   with `tries_left`; after `email_code_exhausted`, `email_code_expired` or
+ *   `two_factor_code_invalid`, ask for a new code. `codeSent` is `{ expiresAt,
+ *   resendAfterSeconds }` once one is mailed.
  * - **`elevateWithProvider(provider)`** — for an account with no password: a navigation
  *   to the provider's sign-in, which comes back to this page. If the identity that comes
  *   back is not this account's, `error` says so — `kind: 'auth'`,
@@ -52,6 +69,10 @@ const noSnapshot = () => NONE
  *   until: string | null,
  *   rolesInFull: boolean,
  *   elevate: (credentials: { password: string, code?: string }) => Promise<{ until: string|null }>,
+ *   ways: { password: boolean|null, emailCode: boolean|null },
+ *   requestCode: () => Promise<{ expiresAt: string|null, resendAfterSeconds: number|null }>,
+ *   codeSent: { expiresAt: string|null, resendAfterSeconds: number|null } | null,
+ *   elevateWithCode: (fields: { code: string, twoFactorCode?: string }) => Promise<{ until: string|null }>,
  *   elevateWithProvider: (provider: string, options?: { returnTo?: string }) => string | null,
  *   lower: () => Promise<{ until: null }>,
  *   status: 'idle' | 'submitting' | 'success' | 'error',
@@ -85,11 +106,23 @@ export function useElevation() {
     return () => clearTimeout(timer)
   }, [until])
 
+  const [codeSent, setCodeSent] = useState(null)
   const { run, status, error, reset } = useAction(
     useCallback(
       async (step, arg) => {
         if (!client) throw ApiError.disabled()
-        return step === 'lower' ? lowerWith(client) : elevateWith(client, arg)
+        if (step === 'lower') return lowerWith(client)
+        if (step === 'request-code') {
+          const sent = await requestElevationCodeWith(client)
+          setCodeSent(sent)
+          return sent
+        }
+        if (step === 'code') {
+          const answer = await elevateWithCodeWith(client, arg)
+          setCodeSent(null)
+          return answer
+        }
+        return elevateWith(client, arg)
       },
       [client],
     ),
@@ -116,6 +149,8 @@ export function useElevation() {
 
   const elevate = useCallback((credentials) => run('elevate', credentials), [run])
   const lower = useCallback(() => run('lower'), [run])
+  const requestCode = useCallback(() => run('request-code'), [run])
+  const elevateWithCode = useCallback((fields) => run('code', fields), [run])
   const elevateWithProvider = useCallback(
     (provider, options) => {
       setReturned(null)
@@ -135,7 +170,11 @@ export function useElevation() {
     elevated,
     until: elevated ? until : null,
     rolesInFull: rolesInFull(viewer),
+    ways: { password: elevation?.hasPassword ?? null, emailCode: elevation?.emailCode ?? null },
     elevate,
+    requestCode,
+    codeSent,
+    elevateWithCode,
     elevateWithProvider,
     lower,
     status,

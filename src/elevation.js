@@ -16,21 +16,28 @@
 
 import { ApiError } from './errors.js'
 import { composeUrl } from './http.js'
-import { AUTH, ELEVATION } from './wire.js'
+import { ACCOUNT_REASON, AUTH, ELEVATION, EMAIL_CODE } from './wire.js'
+
+/** A yes or no the backend stated, or `null` where it said nothing. */
+const told = (value) => (typeof value === 'boolean' ? value : null)
 
 /**
- * `/auth/me`'s `elevation` as the viewer carries it — `{ available, until }`, `until` an
- * ISO time or `null` — or `null` when the backend sends none: a backend no site reaches,
- * whose roles answer in full.
+ * `/auth/me`'s `elevation` as the viewer carries it — `{ available, hasPassword, emailCode,
+ * until }`, `until` an ISO time or `null` — or `null` when the backend sends none: a
+ * backend no site reaches, whose roles answer in full. `hasPassword` and `emailCode` say
+ * whether the password and an emailed code elevate the session, `null` where the backend
+ * did not say; neither means the provider's sign-in.
  *
  * @param {*} raw
- * @returns {{ available: boolean, until: string|null } | null}
+ * @returns {{ available: boolean, hasPassword: boolean|null, emailCode: boolean|null, until: string|null } | null}
  */
 export function viewerElevation(raw) {
   if (!raw || typeof raw !== 'object') return null
   const until = raw[ELEVATION.until]
   return Object.freeze({
     available: raw[ELEVATION.available] === true,
+    hasPassword: told(raw[ELEVATION.hasPassword]),
+    emailCode: told(raw[ELEVATION.emailCode]),
     until: typeof until === 'string' && until ? until : null,
   })
 }
@@ -108,6 +115,62 @@ export async function elevateWith(client, { password, code } = {}) {
     if (error?.status === 401) await reprobe(client)
     throw error
   }
+  client.invalidate?.(isEntityRead)
+  await reprobe(client)
+  return { until: answer?.[ELEVATION.answer] ?? null }
+}
+
+/** The refusals after which an elevation code is spent, so the member asks for a new one. */
+const CODE_SPENT = new Set([ACCOUNT_REASON.codeExhausted, ACCOUNT_REASON.codeExpired, ACCOUNT_REASON.secondFactorInvalid])
+
+/**
+ * Mail a code that elevates this session, to the account's own verified address — for an
+ * account `viewer.elevation.emailCode` names, such as one made by an emailed code, with no
+ * password and no provider. The code's request is kept on the client, so
+ * `elevateWithCode` finishes the newest one.
+ *
+ * @param {object} client
+ * @returns {Promise<{ expiresAt: string|null, resendAfterSeconds: number|null }>}
+ * @throws {ApiError} `rate-limited` — `email_code_throttled`, with `retry_after_seconds` ·
+ *   `invalid` — the account has no verified address · `auth` — nobody signed in
+ */
+export async function requestElevationCodeWith(client) {
+  const answer = await client.request('POST', AUTH.elevateCodeRequest)
+  client._elevationCode = answer?.[EMAIL_CODE.challenge] ?? null
+  const wait = answer?.[EMAIL_CODE.resendAfter]
+  return {
+    expiresAt: answer?.[EMAIL_CODE.expiresAt] ?? null,
+    resendAfterSeconds: typeof wait === 'number' ? wait : null,
+  }
+}
+
+/**
+ * Elevate with the code `requestElevationCode` mailed — and `twoFactorCode`, the second
+ * factor's, when the account has one. Answers `{ until }`, as `elevate` does, and the
+ * session and every entity read are read again.
+ *
+ * @param {object} client
+ * @param {{ code: string, twoFactorCode?: string }} fields
+ * @returns {Promise<{ until: string|null }>}
+ * @throws {ApiError} `invalid` — `email_code_wrong` with `tries_left`;
+ *   `email_code_exhausted`, `email_code_expired` or `two_factor_code_invalid`, after which a
+ *   new code is asked for · `invalid` — no code asked for on this page
+ */
+export async function elevateWithCodeWith(client, { code, twoFactorCode } = {}) {
+  const challenge = client._elevationCode
+  if (!challenge) throw ApiError.invalid('No Code Asked', 'ask for a code first: requestElevationCode()')
+  const typed = String(code ?? '').trim()
+  if (!typed) throw ApiError.invalid('No Code', 'elevateWithCode needs the code the member typed')
+  const body = { [EMAIL_CODE.challenge]: challenge, [EMAIL_CODE.code]: typed }
+  if (twoFactorCode != null && twoFactorCode !== '') body[EMAIL_CODE.secondFactor] = String(twoFactorCode).trim()
+  let answer
+  try {
+    answer = await client.request('POST', AUTH.elevateCodeConfirm, { body })
+  } catch (error) {
+    if (CODE_SPENT.has(error?.extensions?.reason)) client._elevationCode = null
+    throw error
+  }
+  client._elevationCode = null
   client.invalidate?.(isEntityRead)
   await reprobe(client)
   return { until: answer?.[ELEVATION.answer] ?? null }

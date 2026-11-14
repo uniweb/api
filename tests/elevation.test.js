@@ -55,9 +55,13 @@ function site({ password = 'pw' } = {}) {
 
 describe('the viewer carries the elevation /auth/me names', () => {
   it('reads `{ available, until? }` as `{ available, until }` — `until` null when not elevated', () => {
-    expect(viewerElevation({ available: true })).toEqual({ available: true, until: null })
-    expect(viewerElevation({ available: true, until: '2026-10-14T20:00:00Z' })).toEqual({ available: true, until: '2026-10-14T20:00:00Z' })
-    expect(viewerElevation({ available: 'yes' })).toEqual({ available: false, until: null })
+    const none = { hasPassword: null, emailCode: null }
+    expect(viewerElevation({ available: true })).toEqual({ available: true, ...none, until: null })
+    expect(viewerElevation({ available: true, until: '2026-10-14T20:00:00Z' })).toEqual({ available: true, ...none, until: '2026-10-14T20:00:00Z' })
+    expect(viewerElevation({ available: 'yes' })).toEqual({ available: false, ...none, until: null })
+    // Which ways elevate it — the password, an emailed code — as told, and null where untold.
+    expect(viewerElevation({ available: true, has_password: false, email_code: true })).toEqual({ available: true, hasPassword: false, emailCode: true, until: null })
+    expect(viewerElevation({ available: true, has_password: 'no' })).toMatchObject({ hasPassword: null })
     expect(Object.isFrozen(viewerElevation({ available: true }))).toBe(true)
   })
 
@@ -69,7 +73,7 @@ describe('the viewer carries the elevation /auth/me names', () => {
   it('rides the probe', async () => {
     const { client } = site()
     const { viewer } = await client.ensureSession()
-    expect(viewer.elevation).toEqual({ available: true, until: null })
+    expect(viewer.elevation).toEqual({ available: true, hasPassword: null, emailCode: null, until: null })
     expect(viewer.roles).toEqual([{ role: 'content_reader', scope_unit_id: 7 }])
   })
 })
@@ -121,7 +125,7 @@ describe('elevate — POST /auth/elevate', () => {
     await client.elevate({ password: 'pw' })
     expect(state.probes).toBe(2)
     expect(client.session.viewer.roles).toEqual([{ role: 'unit_admin', scope_unit_id: 7 }])
-    expect(client.session.viewer.elevation).toEqual({ available: true, until: state.until })
+    expect(client.session.viewer.elevation).toEqual({ available: true, hasPassword: null, emailCode: null, until: state.until })
     expect(isElevated(client.session.viewer)).toBe(true)
   })
 

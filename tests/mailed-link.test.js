@@ -30,7 +30,7 @@ function stack(options) {
 /** Land on a mailed link — the site's root, the token in the query. */
 const land = (mail, rest = '') => window.history.replaceState(null, '', `${mail.link}${rest}`)
 const calls = (client, path) => client.fetchFn.mock.calls.filter(([url]) => String(url).includes(path)).length
-const signUp = (client) => client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'pw' })
+const signUp = (client) => client.signUp({ username: 'newbie', email: 'newbie@example.test', password: 'newbie-pass' })
 
 describe('mailedLink — the step a URL carries', () => {
   it('reads each step and its token', () => {
@@ -83,7 +83,7 @@ describe('useMailedLink', () => {
     await waitFor(() => expect(result.current.status).toBe('done'))
     expect(result.current).toMatchObject({ step: 'verify', result: { verified: true }, error: null })
     expect(window.location.search).toBe('?utm_source=mail')
-    await expect(client.signIn({ username: 'newbie', password: 'pw' })).resolves.toMatchObject({ ok: true })
+    await expect(client.signIn({ username: 'newbie', password: 'newbie-pass' })).resolves.toMatchObject({ ok: true })
   })
 
   it('reads a used link as `invalid`, and takes it off the URL too — it will not work again', async () => {

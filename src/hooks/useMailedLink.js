@@ -3,6 +3,7 @@ import { getClient } from '../client.js'
 import { ApiError } from '../errors.js'
 import { LINK } from '../wire.js'
 import { mailedLink, forgetMailedLink, finishMailedLink, spends } from '../mailed-links.js'
+import { confirmEmailLinkWith } from '../email-sign-in.js'
 
 const IDLE = Object.freeze({ status: 'idle', result: null, error: null })
 const noSubscribe = () => () => {}
@@ -13,16 +14,18 @@ const noSnapshot = () => null
  *
  * A site's backend mails its members links to the site's root, a token in the query:
  * `?verify=` to confirm a new account's address, `?reset=` to choose a new password,
- * `?offer=` to take up an invitation sent to an address with no account here. Draw the
- * member area from `step` and `status`:
+ * `?offer=` to take up an invitation sent to an address with no account here, `?signin=`
+ * to sign in by the link an emailed code's mail carries. Draw the member area from `step`
+ * and `status`:
  *
  * ```jsx
  * const link = useMailedLink()
- * // link.step: null | 'verify' | 'reset' | 'offer'
+ * // link.step: null | 'verify' | 'reset' | 'offer' | 'signin'
  * // link.status: 'idle' | 'working' | 'done' | 'error'
  * if (link.step === 'verify' && link.status === 'done') return <p>Your address is confirmed. Sign in.</p>
  * if (link.step === 'reset' && link.status !== 'done') return <NewPassword onSubmit={(p) => link.confirm({ new_password: p })} />
  * if (link.step === 'offer' && link.status === 'idle') return <p>Sign in, or create an account, to take up your invitation.</p>
+ * if (link.step === 'signin' && link.status !== 'done') return <button onClick={() => link.confirm()}>Sign in</button>
  * ```
  *
  * - **`verify`** finishes by itself: `working`, then `done` (`result: { verified: true }`),
@@ -40,6 +43,13 @@ const noSnapshot = () => null
  *   that, naming no cause: the backend keeps them indistinguishable on purpose — and
  *   it is not "no invitation": a member who confirmed the address the offer was sent to
  *   holds its invitation already, and the link then answers `absent`.
+ * - **`signin`** waits for the member's click: `confirm()` signs them in — and makes the
+ *   account, for an address with none — answering as `signIn` does, so a second factor
+ *   comes back as `result.challenge` (`{ kind: 'totp' }`), finished with `useSignIn`'s
+ *   `completeChallenge(code)`. ⛔ Never call it on load: whatever opens a link first, a
+ *   mail scanner's prefetch included, would spend it. A link used, expired or never
+ *   mailed is `error`, `kind: 'invalid'`, `error.extensions.reason ===
+ *   'email_link_invalid'`: offer a new code.
  *
  * Once the backend has judged the token, its parameter leaves the address bar, so a
  * reload asks nothing again. `dismiss()` forgets the link without finishing it. On a
@@ -55,11 +65,11 @@ const noSnapshot = () => null
  * and the others are given the same answer.
  *
  * @returns {{
- *   step: 'verify' | 'reset' | 'offer' | null,
+ *   step: 'verify' | 'reset' | 'offer' | 'signin' | null,
  *   status: 'idle' | 'working' | 'done' | 'error',
  *   result: object | null,
  *   error: Error | null,
- *   confirm: (fields: { new_password: string, code?: string }) => Promise<object>,
+ *   confirm: (fields?: { new_password: string, code?: string }) => Promise<object>,
  *   dismiss: () => void,
  * }}
  */
@@ -120,18 +130,24 @@ export function useMailedLink() {
   const confirm = useCallback(
     async (fields = {}) => {
       if (!client) throw ApiError.disabled()
-      if (link?.step !== LINK.reset) {
-        throw ApiError.invalid('No Reset Link', 'confirm finishes a mailed reset link, and this page has none')
+      if (link?.step !== LINK.reset && link?.step !== LINK.signin) {
+        throw ApiError.invalid('Nothing To Confirm', 'confirm finishes a mailed reset or sign-in link, and this page has neither')
       }
       setState({ status: 'working', result: null, error: null })
       try {
-        const result = await client.confirmPasswordReset({ ...fields, token: link.token })
+        const result =
+          link.step === LINK.reset
+            ? await client.confirmPasswordReset({ ...fields, token: link.token })
+            : await confirmEmailLinkWith(client, link.token)
         forgetMailedLink(link)
         if (live.current) setState({ status: 'done', result, error: null })
         // Every other session of the account has ended — this page's may be one of them.
-        client.refresh()
+        if (link.step === LINK.reset) client.refresh()
         return result
       } catch (error) {
+        // A reset's refusal leaves its link working (a password the rule refuses); a sign-in
+        // link the backend judged is spent.
+        if (link.step === LINK.signin && spends(error)) forgetMailedLink(link)
         if (live.current) setState({ status: 'error', result: null, error })
         throw error
       }

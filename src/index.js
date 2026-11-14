@@ -27,6 +27,13 @@ export {
   signInWithProvider,
   signInAddress,
   signUp,
+  resendVerification,
+  requestEmailCode,
+  confirmEmailCode,
+  confirmEmailLink,
+  forgetEmailCode,
+  requestElevationCode,
+  elevateWithCode,
   requestPasswordReset,
   confirmPasswordReset,
   verifyEmail,
@@ -74,6 +81,7 @@ export { useElevation } from './hooks/useElevation.js'
 export { useSignIn } from './hooks/useSignIn.js'
 export { useSignUp } from './hooks/useSignUp.js'
 export { useSignInOptions } from './hooks/useSignInOptions.js'
+export { useEmailSignIn } from './hooks/useEmailSignIn.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'
 export { useMailedLink } from './hooks/useMailedLink.js'
 export { useInvitations } from './hooks/useInvitations.js'
