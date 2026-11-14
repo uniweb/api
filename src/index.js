@@ -52,6 +52,16 @@ export {
   uuidv7,
   deleteEntity,
   adminHref,
+  readStore,
+  checkout,
+  offeringState,
+  listEntitlements,
+  listHolders,
+  listNotifications,
+  countNotifications,
+  markNotificationRead,
+  dismissNotification,
+  markAllNotificationsRead,
   ApiError,
   Ledger,
   languagesOf,
@@ -74,4 +84,8 @@ export { useRecords } from './hooks/useRecords.js'
 export { useDefinition } from './hooks/useDefinition.js'
 export { useChoices } from './hooks/useChoices.js'
 export { useEntityWriter } from './hooks/useEntityWriter.js'
+export { useStore } from './hooks/useStore.js'
+export { useEntitlements } from './hooks/useEntitlements.js'
+export { useHolders } from './hooks/useHolders.js'
+export { useNotifications } from './hooks/useNotifications.js'
 export { SignedIn, SignedOut } from './components/gates.js'

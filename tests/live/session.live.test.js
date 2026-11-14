@@ -8,7 +8,8 @@
  *
  * - **`UNIWEB_API_LOGIN`** — the JSON body of a sign-in (`{"username","password"}`)
  *   for a verified account with no second factor. Turns on the signed-in half — its
- *   elevation too, on a backend a site reaches.
+ *   elevation too, on a backend a site reaches — and the store, what the account holds
+ *   and its inbox, each in the shape this package reads.
  * - **`UNIWEB_API_MODEL`** — a Model that account may create (`@scope/name`), with a
  *   brief section. Turns on the entities half: create, list, read, item writes, a
  *   conflict, and — when the Model has an insert-only section — its rule.
@@ -455,6 +456,47 @@ describe.skipIf(!BASE)('live: the session against a real backend', () => {
       expect(nowhere).toMatchObject({ kind: 'absent', status: 404 })
       const loose = await c.listSectionItems({ section: field.section_uuid, q: 'a' }).catch((e) => e)
       expect(loose).toMatchObject({ kind: 'invalid', status: 400, title: 'Validation' })
+    })
+  })
+
+  // The store and the inbox — every route a signed-in member's. A backend whose site sells
+  // nothing answers the store `404 no_store`; one with several live catalogs, `409
+  // store_ambiguous`; either is an answer, and the shape of a store that sells is checked
+  // where there is one.
+  describe.skipIf(!LOGIN)('the store, what the account holds, and its inbox', () => {
+    it('answers the store — or names why there is none', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const store = await c.readStore().catch((e) => e)
+      if (store instanceof Error) {
+        expect(['no_store', 'store_ambiguous']).toContain(store.extensions?.reason)
+        return
+      }
+      expect(store).toMatchObject({ catalog_uuid: expect.any(String), info: expect.any(Object), offerings: expect.any(Array), payments_ready: expect.any(Boolean) })
+      for (const offering of store.offerings) {
+        expect(offering).toMatchObject({ id: expect.anything(), price: expect.any(Number), charge_kind: expect.any(String), owned: expect.any(Boolean) })
+      }
+    })
+
+    it('lists what the account holds, one row per record', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      const held = await c.listEntitlements()
+      expect(Array.isArray(held)).toBe(true)
+      for (const row of held) {
+        expect(row).toMatchObject({ entity: { uuid: expect.any(String), model_name: expect.any(String) }, sources: expect.any(Array), since: expect.any(String) })
+      }
+    })
+
+    it('reads the inbox — its unread count, and a page of rows in the contract’s shape', async () => {
+      const c = client()
+      await c.signIn(LOGIN)
+      expect(Number.isInteger(await c.countNotifications())).toBe(true)
+      const { notifications, next } = await c.listNotifications({ limit: 5 })
+      expect(next === null || typeof next === 'string').toBe(true)
+      for (const row of notifications) {
+        expect(Object.keys(row)).toEqual(expect.arrayContaining(['id', 'kind', 'actor_account_id', 'payload', 'read_at', 'dismissed_at', 'created_at']))
+      }
     })
   })
 })

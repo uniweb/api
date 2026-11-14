@@ -1,4 +1,4 @@
-import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP } from '../wire.js'
+import { CLAIM, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 import { uuidv7 } from '../uuid.js'
@@ -75,8 +75,18 @@ import { uuidv7 } from '../uuid.js'
  *   its parent section. *(Both since 2026-10-14; nested sections were not modelled
  *   before.)*
  *
- * ⛔ **What it does not model**: entitlements behind `via` (a `via` read is the
- * same read), second factors —
+ * - **What a member holds** (since 2026-11-14) — `seed.store`, `seed.entitlements`, `seed.coupons`
+ *   (`storeFrom`): the store's one catalog and its offerings, each selling one seeded record. A
+ *   free one-off is held at once; a priced one opens the mock's own payment page, which completes
+ *   it or turns back. A holder reads the record — listed `via: 'entitlement'` — and, through it
+ *   (`?via=`), what its references marked `sold_with` point to, three steps deep. Only whoever
+ *   administers a record reads who holds it.
+ * - **The inbox** (since 2026-11-14) — `seed.notifications`: each account's rows, and one more
+ *   for a person whenever an entry is given to them (`entity_shared`, as the backend sends it).
+ *
+ * ⛔ **What it does not model**: a package of several records in one offering, a subscription
+ * renewing or lapsing, a refund, what a coupon takes off (a code the seed lists applies, any other
+ * is refused), second factors —
  * at a sign-in or an elevation, where a `code` is accepted and not checked —
  * sign-in providers, and so no elevation through one, roles other than the operator's
  * — so no reader or editor held at a unit, no entry grants but a blueprint's, and no by
@@ -180,6 +190,17 @@ const GAP = 1_000_000
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 export const isUuid = (value) => typeof value === 'string' && UUID_RE.test(value)
+
+/** An address with a scheme and a host — where the backend may send a buyer. */
+function isAbsoluteUrl(value) {
+  if (typeof value !== 'string') return false
+  try {
+    const url = new URL(value)
+    return !!url.protocol && !!url.host
+  } catch {
+    return false
+  }
+}
 
 // A UUIDv7, as the backend's store mints them. ⛔ v4 until 2026-10-29.
 const newUuid = () => uuidv7()
@@ -324,7 +345,7 @@ export class MockStore {
    */
   constructor(seed = {}, { signedInAs = null, blueprint = null } = {}) {
     this.clock = makeClock()
-    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT }
+    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT, offering: 0, notification: 0 }
     const founded = foundFrom(blueprint)
     /** Who may create an account: `open`, or `invite_only` (`SIGNUP`). */
     this.signup = founded.signup
@@ -403,6 +424,19 @@ export class MockStore {
     for (const offer of seed.offers || []) this.addOffer(offer)
     this.entities = new Map()
     for (const e of seed.entities || []) this.seedEntity(e)
+
+    /** The inbox: every account's rows, as the backend keeps them — `{ id, recipient_account_id, kind, … }`. */
+    this.notifications = []
+    for (const n of seed.notifications || []) this.seedNotification(n)
+    /** What accounts hold: `{ account_id, entity_uuid, sources: Set, since }`, one per account and record. */
+    this.entitlements = []
+    for (const e of seed.entitlements || []) this.seedEntitlement(e)
+    /** The coupon codes that apply at a checkout, lowercased: case does not matter. */
+    this.coupons = new Set((seed.coupons || []).map((code) => String(code).toLowerCase()))
+    /** The store — one catalog, or none. Its offerings name the seeded records they sell. */
+    this.shop = seed.store ? this.storeFrom(seed.store) : null
+    /** Checkouts opened and not yet completed or cancelled, by token. */
+    this.checkouts = new Map()
 
     /** The one session. A mock serves one developer, so one is the honest number. */
     this.session = null
@@ -1312,7 +1346,8 @@ export class MockStore {
 
   /**
    * The owner — or the operator, whose role reads everything, elevated or not — or
-   * whoever it was given to, or any member the floor covers.
+   * whoever it was given to, or any member the floor covers, or whoever holds it: bought
+   * it, subscribed to it, or was given it by its owner.
    */
   mayRead(entity) {
     const me = this.account
@@ -1322,7 +1357,8 @@ export class MockStore {
         me.operator === true ||
         this.grantOf(entity) != null ||
         this.floorFor(entity) != null ||
-        this.teamReach(entity) != null)
+        this.teamReach(entity) != null ||
+        this.holds(entity))
     )
   }
 
@@ -1371,6 +1407,8 @@ export class MockStore {
     // A team's line from the blueprint — a role narrowed to one type (`ASSUMPTIONS`,
     // `team-access-to-every-entry`) — before the floor.
     if (this.teamReach(entity) != null) return 'rbac'
+    // What the viewer holds comes last in the backend's order: the floor answers first.
+    if (this.floorFor(entity) == null && this.holds(entity)) return 'entitlement'
     return 'unit_member'
   }
 
@@ -1439,6 +1477,15 @@ export class MockStore {
     }
     const given = { permission, granted_by: this.account.id, granted_at: this.clock() }
     entity.grants.set(accountId, given)
+    // The person it was given to hears of it, as the backend tells them: a row in their inbox.
+    if (accountId !== this.account.id) {
+      this.notify(accountId, {
+        kind: 'entity_shared',
+        actor: this.account,
+        referent: entity,
+        payload: { entity_uuid: entity.uuid, entity_model: model.name, permission, actor_handle: this.account.handle ?? null },
+      })
+    }
     return { body: this.grantRow(entity, accountId, given) }
   }
 
@@ -1496,6 +1543,293 @@ export class MockStore {
       })
     }
     entity.grants.delete(me.id)
+    return { status: 204 }
+  }
+
+  // ── The store, and what accounts hold ───────────────────────────────────────
+
+  /**
+   * A seeded store, read into the one the mock sells from. `seed.store`:
+   * `{ catalog_uuid?, info: { name, currency, description? }, payments_ready?, offerings:
+   * [{ id?, entry, price, currency?, charge_kind?, recurring_interval?, promo? }] }` — `entry`
+   * the uuid of a seeded record it sells, `charge_kind` `one_off` by default, `price` in the
+   * currency's smallest unit. `payments_ready` is `true` by default: the mock completes a
+   * payment on a page of its own (`checkout`). A package — several records in one offering —
+   * is not modelled.
+   */
+  storeFrom(seed) {
+    // An id the seed gives is kept; the rest are counted on from the highest of them.
+    const given = (seed.offerings || []).map((o) => o.id).filter(Number.isInteger)
+    this.ids.offering = Math.max(this.ids.offering, 0, ...given)
+    const offerings = (seed.offerings || []).map((o) => {
+      if (o.components !== undefined) {
+        throw new Error('[uniweb/api mock] store: an offering of several records (`components`) is not modelled — give each record an offering of its own')
+      }
+      const entity = this.entities.get(o.entry)
+      if (!entity) throw new Error(`[uniweb/api mock] store: an offering sells ${o.entry}, which is no seeded entity's uuid`)
+      return {
+        id: Number.isInteger(o.id) ? o.id : (this.ids.offering += 1),
+        price: Number.isInteger(o.price) ? o.price : 0,
+        currency: o.currency ?? null,
+        charge_kind: o.charge_kind ?? STORE_FIELD.oneOff,
+        recurring_interval: o.recurring_interval ?? null,
+        promo: o.promo ?? null,
+        entity,
+      }
+    })
+    return {
+      catalog_uuid: isUuid(seed.catalog_uuid) ? seed.catalog_uuid : newUuid(),
+      info: seed.info ?? { name: { en: 'Store' }, currency: 'USD' },
+      payments_ready: seed.payments_ready !== false,
+      offerings,
+    }
+  }
+
+  /** `seed.entitlements`: `{ username, entity, source? }` — a record an account holds, `source` `purchase` by default. */
+  seedEntitlement({ username, entity, source = 'purchase' } = {}) {
+    const account = this.accounts.find((a) => a.username === username)
+    if (!account) throw new Error(`[uniweb/api mock] entitlements: '${username}' is not a seeded account`)
+    const held = this.entities.get(entity)
+    if (!held) throw new Error(`[uniweb/api mock] entitlements: ${entity} is no seeded entity's uuid`)
+    this.entitle(account, held, source)
+  }
+
+  /** Hold a record — one row per account and record, every way it is held among its `sources`. */
+  entitle(account, entity, source) {
+    const row = this.entitlements.find((e) => e.account_id === account.id && e.entity_uuid === entity.uuid)
+    if (row) row.sources.add(source)
+    else this.entitlements.push({ account_id: account.id, entity_uuid: entity.uuid, sources: new Set([source]), since: this.clock() })
+  }
+
+  /** Whether the account holds the record. */
+  holds(entity, account = this.account) {
+    return !!account && this.entitlements.some((e) => e.account_id === account.id && e.entity_uuid === entity.uuid)
+  }
+
+  /**
+   * Whether the viewer reads `target` through a record they hold — a course's lessons through
+   * the course: a reference marked `sold_with` from the held record to it, up to three steps.
+   */
+  readsThrough(heldUuid, target) {
+    const held = this.entities.get(heldUuid)
+    if (!held || !this.holds(held)) return false
+    let level = [held]
+    const seen = new Set([held.uuid])
+    for (let step = 0; step < 3 && level.length; step += 1) {
+      const nextLevel = []
+      for (const entity of level) {
+        for (const uuid of this.soldWith(entity)) {
+          if (uuid === target.uuid) return true
+          const reached = this.entities.get(uuid)
+          if (reached && !seen.has(uuid)) {
+            seen.add(uuid)
+            nextLevel.push(reached)
+          }
+        }
+      }
+      level = nextLevel
+    }
+    return false
+  }
+
+  /** The records an entity points to through its references marked `sold_with`. */
+  soldWith(entity) {
+    const model = this.model(entity.model)
+    const out = []
+    for (const item of entity.items) {
+      const section = model?.sections.find((s) => s.id === item.section_id)
+      for (const [key, field] of Object.entries(section?.fields || {})) {
+        if (kindOf(field) !== 'entity_ref' || field?.sold_with !== true) continue
+        const value = item.data?.[key]
+        for (const ref of Array.isArray(value) ? value : [value]) {
+          const uuid = typeof ref === 'string' ? ref : (ref?.uuid ?? ref?.entity ?? null)
+          if (isUuid(uuid)) out.push(uuid)
+        }
+      }
+    }
+    return out
+  }
+
+  /** An offering, as the store lists it: each field only when it has a value, and `owned` for the viewer. */
+  offeringRow(o) {
+    const model = this.model(o.entity.model)
+    return {
+      id: o.id,
+      price: o.price,
+      currency: o.currency ?? this.shop.info.currency,
+      charge_kind: o.charge_kind,
+      ...(o.recurring_interval ? { recurring_interval: o.recurring_interval } : {}),
+      ...(o.promo ? { promo: o.promo } : {}),
+      entry: { uuid: o.entity.uuid, model_name: model.name, brief: this.brief(o.entity, null) },
+      owned: this.holds(o.entity),
+    }
+  }
+
+  /** `GET /store` — `{ catalog_uuid, info, offerings, payments_ready }`, or `404 no_store`. */
+  storeAnswer({ entity = null } = {}) {
+    if (!this.shop) return refuse(404, 'Not Found', 'this site has no store', { reason: STORE_REASON.noStore })
+    const offerings = this.shop.offerings.filter((o) => !entity || o.entity.uuid === entity).map((o) => this.offeringRow(o))
+    return { body: { catalog_uuid: this.shop.catalog_uuid, info: this.shop.info, offerings, payments_ready: this.shop.payments_ready } }
+  }
+
+  /**
+   * `POST /checkout`. A free one-off is taken at once — `{ checkout_url: null }`, the record
+   * held. A priced one opens a payment: `{ token }`, which the router answers as the address
+   * of the mock's own payment page, and the record is held once that page completes it.
+   */
+  checkout(b) {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return refuse(400, 'Bad Request', 'invalid checkout body: expected an object')
+    for (const name of [STORE_FIELD.catalog, STORE_FIELD.offering, STORE_FIELD.successUrl, STORE_FIELD.cancelUrl]) {
+      if (b[name] == null || b[name] === '') return refuse(400, 'Bad Request', `invalid checkout body: missing field \`${name}\``)
+    }
+    for (const name of [STORE_FIELD.successUrl, STORE_FIELD.cancelUrl]) {
+      if (!isAbsoluteUrl(b[name])) return refuse(400, 'Bad Request', `invalid checkout body: \`${name}\` must be an absolute URL`)
+    }
+    if (!this.shop) return refuse(404, 'Not Found', 'this site has no store', { reason: STORE_REASON.noStore })
+    const notForSale = () => refuse(404, 'Not Found', `catalog ${b[STORE_FIELD.catalog]} not found`, { reason: STORE_REASON.notForSale })
+    if (b[STORE_FIELD.catalog] !== this.shop.catalog_uuid) return notForSale()
+    const offering = this.shop.offerings.find((o) => o.id === b[STORE_FIELD.offering])
+    if (!offering) return notForSale()
+    if (offering.charge_kind === STORE_FIELD.oneOff && offering.price === 0) {
+      this.entitle(this.account, offering.entity, 'purchase')
+      return { body: { [STORE_FIELD.checkoutUrl]: null } }
+    }
+    const coupon = b[STORE_FIELD.coupon]
+    if (coupon != null && !this.coupons.has(String(coupon).toLowerCase())) {
+      return refuse(400, 'Bad Request', `the code ${coupon} cannot apply`, { reason: STORE_REASON.coupon, cause: 'not_found' })
+    }
+    if (!this.shop.payments_ready) {
+      return refuse(409, 'Conflict', 'payments are not set up on this site', { reason: STORE_REASON.notReady })
+    }
+    const token = newUuid()
+    this.checkouts.set(token, {
+      account: this.account,
+      offering,
+      success_url: b[STORE_FIELD.successUrl],
+      cancel_url: b[STORE_FIELD.cancelUrl],
+    })
+    return { token }
+  }
+
+  /** Complete a checkout the mock's payment page opened: the buyer holds the record. The address to send them to, or null. */
+  completeCheckout(token) {
+    const pending = this.checkouts.get(token)
+    if (!pending) return null
+    this.checkouts.delete(token)
+    this.entitle(pending.account, pending.offering.entity, 'purchase')
+    return pending.success_url
+  }
+
+  /** Turn back from a checkout: nothing is written. The address to send the buyer to, or null. */
+  cancelCheckout(token) {
+    const pending = this.checkouts.get(token)
+    if (!pending) return null
+    this.checkouts.delete(token)
+    return pending.cancel_url
+  }
+
+  /** `GET /entitlements/me` — what the viewer holds, one row per record. */
+  heldList() {
+    const me = this.account
+    const rows = []
+    for (const e of this.entitlements) {
+      if (e.account_id !== me.id) continue
+      const entity = this.entities.get(e.entity_uuid)
+      if (!entity) continue
+      const model = this.model(entity.model)
+      rows.push({
+        entity: { uuid: entity.uuid, model_uuid: model.uuid, model_name: model.name, brief: this.brief(entity, null), disabled: false },
+        sources: [...e.sources],
+        since: e.since,
+      })
+    }
+    return { [STORE_FIELD.entitlements]: rows }
+  }
+
+  /**
+   * `GET /entitlements/{uuid}` — who holds the record, oldest account first, for whoever
+   * administers it; `403` for someone who reads it and does not.
+   */
+  holdersOf(entity, { after = null, limit = STORE_FIELD.holdersPage } = {}) {
+    if (!this.mayAdminister(entity)) {
+      return refuse(403, 'Forbidden', `holders of entity ${entity.uuid} not permitted`, { op: 'read', target: `entity ${entity.uuid}` })
+    }
+    const size = Math.min(Math.max(limit, 1), STORE_FIELD.holdersMax)
+    const rows = this.entitlements
+      .filter((e) => e.entity_uuid === entity.uuid && (after == null || e.account_id > after))
+      .sort((a, b) => a.account_id - b.account_id)
+    const page = rows.slice(0, size)
+    return {
+      body: {
+        [STORE_FIELD.holders]: page.map((e) => {
+          const account = this.accounts.find((a) => a.id === e.account_id)
+          return { account: account ? this.person(account) : null, sources: [...e.sources], since: e.since }
+        }),
+        [STORE_FIELD.next]: rows.length > size ? page[page.length - 1].account_id : null,
+      },
+    }
+  }
+
+  // ── The inbox ─────────────────────────────────────────────────────────────
+
+  /** `seed.notifications`: `{ to, kind?, from?, payload?, read? }` — a row in `to`'s inbox, from `from` when named. */
+  seedNotification({ to, kind = 'entity_shared', from = null, payload = {}, read = false } = {}) {
+    const recipient = this.accounts.find((a) => a.username === to)
+    if (!recipient) throw new Error(`[uniweb/api mock] notifications: '${to}' is not a seeded account`)
+    const actor = from ? this.accounts.find((a) => a.username === from) : null
+    if (from && !actor) throw new Error(`[uniweb/api mock] notifications: '${from}' is not a seeded account`)
+    const row = this.notify(recipient.id, { kind, actor, payload })
+    if (read) row.read_at = row.created_at
+  }
+
+  /** Put a row in an account's inbox, as the backend writes one. */
+  notify(recipientId, { kind, actor = null, referent = null, payload = {} }) {
+    this.ids.notification += 1
+    const row = {
+      id: this.ids.notification,
+      recipient_account_id: recipientId,
+      kind,
+      actor_account_id: actor?.id ?? null,
+      referent_kind: referent ? 'entity' : null,
+      referent_id: referent?.id ?? null,
+      payload,
+      read_at: null,
+      dismissed_at: null,
+      resolved_at: null,
+      created_at: this.clock(),
+    }
+    this.notifications.push(row)
+    return row
+  }
+
+  /** The viewer's rows, newest first, the dismissed left out — the unread alone when asked. */
+  inboxRows({ unread = false } = {}) {
+    const me = this.account
+    return this.notifications
+      .filter((n) => n.recipient_account_id === me.id && n.dismissed_at == null && (!unread || n.read_at == null))
+      .sort((a, b) => b.id - a.id)
+  }
+
+  /** `GET /notifications` — a page, newest first, and the next page's cursor: the last row's id. */
+  inbox({ unread = false, before = null, limit = 50 } = {}) {
+    const size = Math.min(Math.max(limit, 1), 100)
+    const rows = this.inboxRows({ unread }).filter((n) => before == null || n.id < before)
+    const page = rows.slice(0, size)
+    return { rows: page, last: rows.length > size ? page[page.length - 1].id : null }
+  }
+
+  /** `POST /notifications/{id}/read` or `…/dismiss` — `204`, or `404` for a row not in the viewer's inbox. */
+  markNotification(id, step) {
+    const row = this.notifications.find((n) => n.id === id && n.recipient_account_id === this.account.id)
+    if (!row) return refuse(404, 'Not Found', `notification ${id} not found`)
+    const field = step === 'dismiss' ? 'dismissed_at' : 'read_at'
+    if (row[field] == null) row[field] = this.clock()
+    return { status: 204 }
+  }
+
+  /** `POST /notifications/read-all` — every unread row of the viewer's read. */
+  readAllNotifications() {
+    for (const row of this.inboxRows({ unread: true })) row.read_at = this.clock()
     return { status: 204 }
   }
 

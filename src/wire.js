@@ -558,8 +558,12 @@ export const PARAM = {
   field: 'field',
   /** Section items: the search term. */
   q: 'q',
-  /** Section items: the previous page's `next_cursor`. */
+  /** Section items: the previous page's `next_cursor`. The inbox's too (`NOTIFICATIONS`). */
   cursor: 'cursor',
+  /** Who holds a record: the previous page's `next` (`STORE`). */
+  after: 'after',
+  /** The inbox: unread and not dismissed only (`NOTIFICATIONS`). */
+  unread: 'unread',
 }
 
 /**
@@ -968,6 +972,145 @@ export const GRANT = {
 }
 
 /**
+ * The site's store, what a member holds, and who holds a record — the whole surface a
+ * Buy button, a "My courses" page and a roster read, on the site's own backend.
+ * **MEASURED by backend, 2026-10-20**, against its own tests and through a site's
+ * `/_api`; `coupon` on a checkout since 2026-11-13, *the backend's statement*.
+ *
+ * | route | takes | answers |
+ * |---|---|---|
+ * | `GET /store` | `?entity=<uuid>` keeps the offerings that sell that one record | `{ catalog_uuid, info: { name, currency, description? }, offerings, payments_ready }` |
+ * | `POST /checkout` | `{ catalog_uuid, offering_id, success_url, cancel_url, coupon? }` — the first four required, the two addresses absolute | `{ checkout_url }`: the payment page to send the buyer to, or `null` when the buyer already holds what it sells — a one-off at `price: 0` is taken at once, with no payment and whatever `payments_ready` says |
+ * | `GET /entitlements/me` | — | `{ entitlements: [{ entity: { uuid, model_uuid, model_name, brief, disabled }, sources, since }] }`: active only, one row per record, `sources` each way it is held (`purchase`, `subscription`, `comp`), `since` the earliest |
+ * | `GET /entitlements/{uuid}?model=` | `after` (the last page's `next`), `limit` (50 by default, at most 200) | `{ holders: [{ account, sources, since }], next }`, oldest account first; `account` a person, `null` once the account is gone; `next` null on the last page |
+ *
+ * - **An offering** — `{ id, price, currency, charge_kind, entry?, recurring_interval?,
+ *   promo?, components?, owned }` — carries a field only when it has a value: `entry`
+ *   (`{ uuid, model_name, brief }`, the record it sells) is absent on a package, and
+ *   `components` on a single. `price` is in the currency's smallest unit; `currency` is
+ *   resolved, the offering's own or the store's. `owned` — the viewer holds every record
+ *   it sells, however they came to. Localized text (`info.name`, a promo's words) is a
+ *   locale map, as stored.
+ * - **`payments_ready`** says whether a priced checkout would open a payment now: `false`
+ *   until the site's owner has connected payments, and checkout then refuses `409
+ *   payments_not_ready`. A free offering needs none.
+ * - **The store sells only from itself.** A checkout naming another catalog is refused as
+ *   if it did not exist.
+ * - **Every route needs a signed-in member** (`401` otherwise). A visitor who is not
+ *   signed in reads prices through a public query of the store's catalog, which the
+ *   owner opens — not through this package.
+ * - **Who holds a record** is read by whoever may see who it is shared with: its owner,
+ *   or someone given `admin` on it. Someone who may read it and not administer it is
+ *   `403`; someone who may not read it, `404`.
+ * - **What a purchase gives** is read access to the record, held as an entitlement: a
+ *   held record lists with `via: 'entitlement'`, and the records it points to through a
+ *   reference marked `sold_with` are read through it — `?via=<held record>` (`READ`).
+ *
+ * A refusal names why in its `reason` (`STORE_REASON`), a top-level member of the problem
+ * as on the grant routes.
+ */
+export const STORE = {
+  store: '/store',
+  checkout: '/checkout',
+  held: '/entitlements/me',
+  holders: (uuid) => `/entitlements/${segment(uuid)}`,
+}
+
+/** The store's bodies and answers (`STORE`). MEASURED by backend, 2026-10-20. */
+export const STORE_FIELD = {
+  catalog: 'catalog_uuid',
+  info: 'info',
+  offerings: 'offerings',
+  paymentsReady: 'payments_ready',
+  id: 'id',
+  price: 'price',
+  entry: 'entry',
+  owned: 'owned',
+  /** How an offering charges — `one_off`, or a subscription's kind. A one-off at `price: 0` is taken at once. */
+  chargeKind: 'charge_kind',
+  oneOff: 'one_off',
+  /** A checkout's body. */
+  offering: 'offering_id',
+  successUrl: 'success_url',
+  cancelUrl: 'cancel_url',
+  coupon: 'coupon',
+  /** A checkout's answer: where to send the buyer, or `null` — they hold it already. */
+  checkoutUrl: 'checkout_url',
+  /** What I hold, and who holds a record. */
+  entitlements: 'entitlements',
+  holders: 'holders',
+  next: 'next',
+  after: 'after',
+  /** Paging the holders: 50 by default, at most 200. */
+  holdersPage: 50,
+  holdersMax: 200,
+}
+
+/**
+ * Why a store route refused — the problem's `reason`. MEASURED by backend, 2026-10-20;
+ * `coupon_not_applicable` since 2026-11-13, its `cause` naming why the code cannot apply
+ * (`not_found`, `inactive`, `expired`, …).
+ *
+ * | status | `reason` | means |
+ * |---|---|---|
+ * | `404` | `no_store` | the site sells nothing: no live catalog |
+ * | `409` | `store_ambiguous` | more than one live catalog — the owner disables all but one, and until then nothing sells |
+ * | `409` | `payments_not_ready` | a priced checkout before the owner has connected payments |
+ * | `404` | `not_for_sale` | the catalog a checkout names is not the store |
+ * | `400` | `coupon_not_applicable` | the code a buyer typed cannot apply; nothing opens |
+ */
+export const STORE_REASON = {
+  noStore: 'no_store',
+  ambiguous: 'store_ambiguous',
+  notReady: 'payments_not_ready',
+  notForSale: 'not_for_sale',
+  coupon: 'coupon_not_applicable',
+}
+
+/**
+ * The signed-in account's inbox — events addressed to a person, such as an entry shared
+ * with them. **The backend's contract with its own app, 2026-06-29**: the routes, the
+ * row's fields, `204` for the three posts, `401` signed out. Reached through a site's
+ * `/_api` for a site's member (`ASSUMPTIONS`, `a-member-reads-their-inbox-through-the-site`).
+ *
+ * | route | takes | answers |
+ * |---|---|---|
+ * | `GET /notifications` | `unread` (`true`: unread and not dismissed), `cursor` (the last page's `next_cursor`, opaque), `limit` (1 to 100, 50 by default) | `{ notifications: [row], next_cursor }`, newest first; `next_cursor` null on the last page |
+ * | `GET /notifications/count` | — | `{ unread }` — not read and not dismissed, for a badge |
+ * | `POST /notifications/{id}/read` | — | `204`, idempotent |
+ * | `POST /notifications/{id}/dismiss` | — | `204`, idempotent |
+ * | `POST /notifications/read-all` | — | `204` |
+ *
+ * A row: `{ id, recipient_account_id, kind, actor_account_id, referent_kind, referent_id,
+ * payload, read_at, dismissed_at, resolved_at, created_at }`. `payload` is what the row
+ * shows, as it was when it was sent — for `entity_shared`, `{ entity_uuid, entity_model,
+ * permission, actor_handle }`. `kind` is a closed set the backend grows; draw the ones you
+ * know and pass over the rest. There is no push: poll the count, and read the list when a
+ * person opens it.
+ */
+export const NOTIFICATIONS = {
+  list: '/notifications',
+  count: '/notifications/count',
+  readAll: '/notifications/read-all',
+  read: (id) => `/notifications/${segment(id)}/read`,
+  dismiss: (id) => `/notifications/${segment(id)}/dismiss`,
+}
+
+/** The inbox's parameters and answers (`NOTIFICATIONS`). */
+export const NOTIFICATION = {
+  list: 'notifications',
+  next: 'next_cursor',
+  unread: 'unread',
+  /** A row's fields this package reads. */
+  id: 'id',
+  readAt: 'read_at',
+  dismissedAt: 'dismissed_at',
+  /** The list's page size: 50 by default, 1 to 100. */
+  page: 50,
+  max: 100,
+}
+
+/**
  * The units the viewer is placed in, and where a create lands. **Stated by the backend,
  * 2026-10-15, and measured by its own end-to-end test; not yet measured here** — the
  * backend this package was measured against that day predates it (`/unit/mine` answered
@@ -1067,6 +1210,15 @@ export const PROBLEM = {
  * `breaks`; `tests/wire.test.js` pins the set, so adding one is deliberate.
  */
 export const ASSUMPTIONS = [
+  {
+    id: 'a-member-reads-their-inbox-through-the-site',
+    we:
+      "read a site member's inbox — `GET /notifications`, `/notifications/count`, and mark one read, dismiss one, read all — through the site's `/_api`, with the member's session, as the backend's own app reads an account's inbox; and leave out of a list any row that carries a `dismissed_at`",
+    from:
+      "the backend's contract with its app (2026-06-29): every account's inbox, on the routes and in the row the app reads, and the same routes on every backend. Through a site's `/_api` for a site's member, not measured from this package; whether a list without `unread` holds the dismissed rows, the contract does not say",
+    breaks:
+      "a site's backend that does not serve its members their inbox answers `404`, and `useNotifications` reads `error`; nothing else is affected",
+  },
   {
     id: 'team-access-to-every-entry',
     we:

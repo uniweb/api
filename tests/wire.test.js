@@ -44,8 +44,11 @@ describe('wire — the assumptions are a reviewable set', () => {
   // Since 2026-10-28 it also holds `sign-in-options-are-the-same-for-everyone`: the backend
   // says `/auth/providers` holds nothing about the visitor, so a page reads it once. Since
   // 2026-11-09 it also holds `team-access-to-every-entry`: what a blueprint's team line reaches,
-  // as the backend states it, for the mock to found itself from a blueprint.
+  // as the backend states it, for the mock to found itself from a blueprint. Since 2026-11-14,
+  // `a-member-reads-their-inbox-through-the-site`: the inbox a site's member reads through its
+  // `/_api`, on the backend's contract with its own app.
   const EXPECTED = [
+    'a-member-reads-their-inbox-through-the-site',
     'team-access-to-every-entry',
     'localized-json-is-a-locale-map',
     'elevation-by-provider',

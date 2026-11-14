@@ -30,6 +30,14 @@ import {
   leaveAccessWith,
 } from './access.js'
 import { listUnitsWith } from './units.js'
+import { readStoreWith, checkoutWith, listEntitlementsWith, listHoldersWith } from './store.js'
+import {
+  listNotificationsWith,
+  countNotificationsWith,
+  markNotificationReadWith,
+  dismissNotificationWith,
+  markAllNotificationsReadWith,
+} from './notifications.js'
 import { readSignInOptionsWith, returnedSignedIn, signInAddressOf, signInWithProviderOf } from './sign-in-options.js'
 import { identityOf } from './item-identity.js'
 
@@ -702,6 +710,55 @@ export class ApiClient {
   /** Give up access that was given to the viewer (`./access.js`). */
   leaveAccess(args) {
     return leaveAccessWith(this, args)
+  }
+
+  // ── The store, and what members hold ──────────────────────────────────────
+
+  /** The site's store — `{ catalog_uuid, info, offerings, payments_ready }` (`./store.js`). */
+  readStore(options) {
+    return readStoreWith(this, options)
+  }
+
+  /** Open a checkout for an offering of the store — `{ url, held }` (`./store.js`). */
+  checkout(args) {
+    return checkoutWith(this, args)
+  }
+
+  /** What the signed-in account holds (`./store.js`). */
+  listEntitlements(options) {
+    return listEntitlementsWith(this, options)
+  }
+
+  /** Who holds a record — a page, and the next one's cursor (`./store.js`). */
+  listHolders(args) {
+    return listHoldersWith(this, args)
+  }
+
+  // ── The inbox ─────────────────────────────────────────────────────────────
+
+  /** A page of the signed-in member's inbox (`./notifications.js`). */
+  listNotifications(options) {
+    return listNotificationsWith(this, options)
+  }
+
+  /** How many rows of the inbox are unread (`./notifications.js`). */
+  countNotifications(options) {
+    return countNotificationsWith(this, options)
+  }
+
+  /** Mark one row of the inbox read (`./notifications.js`). */
+  markNotificationRead(id) {
+    return markNotificationReadWith(this, id)
+  }
+
+  /** Dismiss one row of the inbox (`./notifications.js`). */
+  dismissNotification(id) {
+    return dismissNotificationWith(this, id)
+  }
+
+  /** Mark every unread row of the inbox read (`./notifications.js`). */
+  markAllNotificationsRead() {
+    return markAllNotificationsReadWith(this)
   }
 
   // ── The cache ─────────────────────────────────────────────────────────────
@@ -1580,6 +1637,26 @@ export const createEntity = async (args) => required().createEntity(withTypeName
 export const deleteEntity = async (args) => required().deleteEntity(withTypeName(args, 'deleteEntity'))
 /** The Admin link for the current viewer, or `null` — never throws; see `adminHrefOf`. */
 export const adminHref = () => adminHrefOf(getClient())
+
+/** @see ApiClient#readStore — on any instance, an older copy's too */
+export const readStore = async (options) => readStoreWith(required(), options)
+/** @see ApiClient#checkout — on any instance, an older copy's too */
+export const checkout = async (args) => checkoutWith(required(), args)
+/** @see ApiClient#listEntitlements — on any instance, an older copy's too */
+export const listEntitlements = async (options) => listEntitlementsWith(required(), options)
+/** @see ApiClient#listHolders — on any instance, an older copy's too */
+export const listHolders = async (args) => listHoldersWith(required(), withTypeName(args, 'listHolders'))
+/** @see ApiClient#listNotifications — on any instance, an older copy's too */
+export const listNotifications = async (options) => listNotificationsWith(required(), options)
+/** @see ApiClient#countNotifications — on any instance, an older copy's too */
+export const countNotifications = async (options) => countNotificationsWith(required(), options)
+/** @see ApiClient#markNotificationRead — on any instance, an older copy's too */
+export const markNotificationRead = async (id) => markNotificationReadWith(required(), id)
+/** @see ApiClient#dismissNotification — on any instance, an older copy's too */
+export const dismissNotification = async (id) => dismissNotificationWith(required(), id)
+/** @see ApiClient#markAllNotificationsRead — on any instance, an older copy's too */
+export const markAllNotificationsRead = async () => markAllNotificationsReadWith(required())
+export { offeringState } from './store.js'
 
 export { mailedLink, forgetMailedLink } from './mailed-links.js'
 export { isElevated, rolesInFull, elevationReturn } from './elevation.js'

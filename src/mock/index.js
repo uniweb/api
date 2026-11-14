@@ -19,6 +19,10 @@ import {
   HANDOFF_REFUSAL,
   ELEVATION,
   SIGN_IN_OPTIONS,
+  STORE,
+  STORE_FIELD,
+  NOTIFICATIONS,
+  NOTIFICATION,
 } from '../wire.js'
 import { MockStore, isUuid, refuse } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
@@ -55,6 +59,33 @@ function decodeCursor(token) {
   } catch {
     return null
   }
+}
+
+/** An inbox cursor: the id the page ended on, hex as the other cursors are; null for one this mock did not hand out. */
+function decodeIdCursor(token) {
+  if (!/^(?:[0-9a-f]{2})+$/.test(token)) return null
+  try {
+    const key = JSON.parse(new TextDecoder().decode(Uint8Array.from(token.match(/../g).map((h) => parseInt(h, 16)))))
+    return Array.isArray(key) && key.length === 1 && Number.isInteger(key[0]) ? key[0] : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Where a priced checkout sends the buyer: the mock's own payment page, which takes no payment.
+ * Complete it, and the buyer holds what they bought and lands on `success_url`; cancel, and
+ * nothing is written and they land on `cancel_url`. A path of the mock's, not the backend's.
+ */
+const CHECKOUT_PAGE = '/local/checkout/store'
+
+function checkoutPage(pending, token) {
+  const { price, currency } = pending.offering
+  return `<!doctype html><meta charset="utf-8"><title>Checkout</title>
+<p>On a live site the buyer pays here. The local mock takes no payment: complete it, and the buyer holds what the offering sells.</p>
+<p>Offering ${escapeHtml(pending.offering.id)} — ${escapeHtml(price)} in the smallest unit of ${escapeHtml(currency ?? '')}</p>
+<p><a href="${escapeHtml(token)}/complete">Complete payment</a> · <a href="${escapeHtml(token)}/cancel">Cancel</a></p>
+`
 }
 
 const escapeHtml = (value) =>
@@ -114,9 +145,14 @@ function adminPage(account) {
  * item's uuid, checked against its list, and the list's items are read a page at a time
  * from `/sections/{uuid}/items`. Whoever administers an entry gives people access to it
  * and takes it back (`/grants/*`), and a seed's `units` are where a create may land
- * (`/unit/mine`). It does not model entitlements behind `via`, second factors, password
- * rules, roles other than the operator's, an offer's grants, what joining an
- * organization gives, or an organization withdrawing an invitation.
+ * (`/unit/mine`). A seed's `store` sells its records: a free one-off is held at once, and a
+ * priced one opens a payment page of the mock's own that takes no payment — complete it,
+ * and the buyer holds the record and reads through it what its `sold_with` references
+ * point to. Each account has an inbox (`/notifications`), and an entry given to a person
+ * puts a row in theirs. It does not model a package of records, a subscription's renewal,
+ * a coupon's discount, second factors, password rules, roles other than the operator's, an
+ * offer's grants, what joining an organization gives, or an organization withdrawing an
+ * invitation.
  *
  * ## The mail it sends
  *
@@ -691,10 +727,10 @@ export function createMockBackend({
         if (via && !isUuid(via)) return badRequest(`invalid via uuid: ${via}`)
         const found = target(one[1], q.get(PARAM.model))
         if (found.response) return found.response
-        // Not found and not permitted are one answer. The mock models no entitlements:
-        // a `via` read is the same read, once the container exists.
-        if (!store.mayRead(found.entity)) return notFound('entity', one[1])
+        // Not found and not permitted are one answer. Through a record the viewer holds (`via`), the
+        // records its references marked `sold_with` point to are read too — a course's lessons.
         if (via && !store.entities.has(via)) return notFound('entity', one[1])
+        if (!store.mayRead(found.entity) && !(via && store.readsThrough(via, found.entity))) return notFound('entity', one[1])
         return json(200, store.read(found.entity, { locales: locales(q), withItems: depth === 'shallow' || depth === 'deep' }))
       }
 
@@ -717,6 +753,94 @@ export function createMockBackend({
         store.remove(entity)
         return new Response(null, { status: 204 })
       }
+    }
+
+    // ── The store, and what accounts hold ───────────────────────────────────
+    if (path === STORE.store && method === 'GET') {
+      const bad = unexpected(q, [PARAM.entity])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const entity = q.get(PARAM.entity)
+      if (entity != null && !isUuid(entity)) return badRequest(`invalid uuid: ${entity}`)
+      return answer(store.storeAnswer({ entity }))
+    }
+    if (path === STORE.checkout && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const outcome = store.checkout(await body(request))
+      if (outcome.token) {
+        return json(200, { [STORE_FIELD.checkoutUrl]: new URL(`${prefix}${CHECKOUT_PAGE}/${outcome.token}`, request.url).href })
+      }
+      return answer(outcome)
+    }
+    if (path === STORE.held && method === 'GET') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return json(200, store.heldList())
+    }
+    const holdersOf = path.startsWith('/entitlements/') && path !== STORE.held ? path.slice('/entitlements/'.length) : null
+    if (holdersOf && !holdersOf.includes('/') && method === 'GET') {
+      const bad = unexpected(q, [PARAM.model, PARAM.after, PARAM.limit])
+      if (bad) return bad
+      if (!q.get(PARAM.model)) return badRequest(`Missing required parameter: ${PARAM.model}`)
+      if (!store.account) return unauthorized()
+      const found = target(holdersOf, q.get(PARAM.model))
+      if (found.response) return found.response
+      if (!store.mayRead(found.entity)) return notFound('entity', holdersOf)
+      const after = int(q, PARAM.after, null)
+      const limit = int(q, PARAM.limit, STORE_FIELD.holdersPage)
+      if (after === undefined || limit === undefined) return badRequest('`after` and `limit` are integers')
+      return answer(store.holdersOf(found.entity, { after, limit }))
+    }
+    // The mock's payment page, and its two ways out.
+    const paying = path.startsWith(`${CHECKOUT_PAGE}/`) ? path.slice(CHECKOUT_PAGE.length + 1).split('/') : null
+    if (paying && method === 'GET') {
+      const [token, step] = paying
+      const pending = store.checkouts.get(token)
+      if (!pending) return new Response('This checkout is over, or never began.', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } })
+      if (step === 'complete' || step === 'cancel') {
+        const to = step === 'complete' ? store.completeCheckout(token) : store.cancelCheckout(token)
+        return new Response(null, { status: 302, headers: { location: to } })
+      }
+      return new Response(checkoutPage(pending, token), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+    }
+
+    // ── The inbox ─────────────────────────────────────────────────────────────
+    if (path === NOTIFICATIONS.list && method === 'GET') {
+      const bad = unexpected(q, [PARAM.unread, PARAM.cursor, PARAM.limit])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const unread = bool(q, PARAM.unread, false)
+      const limit = int(q, PARAM.limit, NOTIFICATION.page)
+      if (unread === undefined || limit === undefined) return badRequest('`unread` is true or false, and `limit` an integer')
+      const cursor = q.get(PARAM.cursor)
+      const before = cursor == null ? null : decodeIdCursor(cursor)
+      if (cursor != null && before == null) return badRequest(`invalid cursor: ${cursor}`)
+      const { rows, last } = store.inbox({ unread, before, limit })
+      return json(200, { [NOTIFICATION.list]: rows, [NOTIFICATION.next]: last == null ? null : encodeCursor([last]) })
+    }
+    if (path === NOTIFICATIONS.count && method === 'GET') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return json(200, { [NOTIFICATION.unread]: store.inboxRows({ unread: true }).length })
+    }
+    if (path === NOTIFICATIONS.readAll && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return answer(store.readAllNotifications())
+    }
+    const marking = path.match(/^\/notifications\/([^/]+)\/(read|dismiss)$/)
+    if (marking && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const id = Number(marking[1])
+      if (!Number.isInteger(id)) return badRequest(`invalid notification id: ${marking[1]}`)
+      return answer(store.markNotification(id, marking[2]))
     }
 
     // ── Where the Admin link lands ──────────────────────────────────────────

@@ -1,7 +1,7 @@
 # @uniweb/api
 
 The client a foundation uses to talk to **its site's `backend` service** — sign-in, the
-site's members, and the content they create.
+site's members, the content they create, what the site sells them, and their inbox.
 
 You import it the way you import `@uniweb/kit`. It is bundled into your foundation,
 tree-shaken, and **inert on a site that has no `backend` service**: nothing throws, no request
@@ -529,6 +529,109 @@ function Roster({ course }) {
 Outside React: `grantAccess`, `revokeAccess`, `listAccess`, `listAccessCandidates` and
 `leaveAccess` from `@uniweb/api/client`, each taking `{ schema, uuid, … }`.
 
+## Selling: the store, a checkout, and what members hold
+
+A site's backend can sell: the site's owner connects their payment account and sets the
+store's offerings in the backend's administration, and the site draws them. A purchase
+gives the buyer read access to what an offering sells — a course — and, through it, to
+what its references marked `sold_with` point to — the course's lessons, read with
+`useEntity({ schema, uuid, via: course.uuid })`. A record bought lists for its buyer with
+`via: 'entitlement'`.
+
+```jsx
+import { useStore, offeringState } from '@uniweb/api'
+
+function Buy({ uuid, href, words }) {
+  const { status, store, offerings, checkout, checking } = useStore({ entity: uuid })
+  if (status !== 'ready' || !offerings.length) return null   // 'none': the site sells nothing
+  const offering = offerings[0]
+  switch (offeringState(offering, store)) {
+    case 'owned':
+      return <a href={href}>{words.open}</a>
+    case 'take':
+      return <button onClick={() => checkout(offering)}>{words.free}</button>
+    case 'not-ready':
+      return null                                             // the owner has not connected payments
+    default:
+      return (
+        <button disabled={checking != null} onClick={() => checkout(offering)}>
+          {words.buy}
+        </button>
+      )
+  }
+}
+```
+
+- **`useStore({ entity })`** — `ready` with `store`, `{ catalog_uuid, info, offerings,
+  payments_ready }`: each offering its `id`, `price` in the currency's smallest unit, the
+  resolved `currency`, `charge_kind`, the record it sells as `entry`, and `owned` for the
+  viewer. `entity` keeps only the offerings that sell that record. `none` on a site that
+  sells nothing — the ordinary case, so draw nothing. `absent` with no backend or nobody
+  signed in: a visitor who is not signed in reads prices from the store's catalog through
+  a public query the owner opens, as the site reads any records.
+- **`offeringState(offering, store)`** — what to draw from that one read: `owned`, `take`
+  (a one-off at `price: 0`, held at once with no payment), `not-ready` (the owner has not
+  connected payments), or `buy`.
+- **`checkout(offering, { successUrl, cancelUrl, coupon, navigate })`** — opens the payment
+  page and, by default, sends the buyer there; both addresses are this page unless you
+  give others. It answers `{ url, held }`. A free one-off answers `{ url: null, held: true }`
+  at once, and everything the viewer has read reads again. A refusal names why in
+  `error.extensions.reason`: `payments_not_ready`, `coupon_not_applicable` (with
+  `extensions.cause`: `not_found`, `expired`, …), `not_for_sale`. `checking` is the
+  offering's id while one is out, and `checkoutError` the last refusal.
+- **After paying,** the buyer lands on `successUrl`. The purchase is written when the
+  payment's notice reaches the backend, which can be a moment after they land, so the page
+  there calls `refresh()` until the offering reads `owned`.
+- **`useEntitlements()`** — what the viewer holds, for a "My courses" page: each `{ entity,
+  sources, since }`, `sources` every way it is held (`purchase`, `subscription`, `comp`).
+  What is read through a held record — a course's lessons — is not listed.
+- **`useHolders({ schema, uuid })`** — who holds a record, for an instructor's roster: each
+  `{ account, sources, since }`, oldest account first, `more()` reading the next page while
+  `next` is not `null`. Only the record's owner, or someone given `admin` on it — an
+  instructors' team the course is shared with at `admin` — may read it; anyone else who
+  reads the record is `forbidden`, so draw nothing.
+
+Outside React: `readStore`, `checkout({ catalog, offering, … })`, `offeringState`,
+`listEntitlements` and `listHolders({ schema, uuid, after, limit })` from
+`@uniweb/api/client`.
+
+## The inbox
+
+The backend tells a member of what concerns them — an entry someone shared with them, an
+invitation — in their inbox. A site draws it: a badge with the unread count, and the rows
+when the member opens them.
+
+```jsx
+import { useNotifications } from '@uniweb/api'
+
+function Badge() {
+  const { unread } = useNotifications({ every: 60_000, list: false })   // read again once a minute
+  return unread ? <span className="badge">{unread}</span> : null
+}
+
+function Inbox({ draw }) {
+  const { status, notifications, markRead, dismiss, markAllRead } = useNotifications()
+  if (status !== 'ready') return null
+  return notifications.map((row) => draw(row, { open: () => markRead(row.id), dismiss: () => dismiss(row.id) }))
+}
+```
+
+- **`unread`** — how many rows are neither read nor dismissed. There is no push: `every`
+  (milliseconds) reads the count again on that cadence while the page is visible. Keep it
+  light — a minute — and read the list when the member opens it.
+- **`notifications`** — the newest page, each row as the backend sends it: `{ id, kind,
+  actor_account_id, payload, read_at, created_at, … }`. `payload` is what the row shows, as
+  it was when it was sent: for `kind: 'entity_shared'`, `{ entity_uuid, entity_model,
+  permission, actor_handle }`. The kinds grow, so draw the ones you know and pass over the
+  rest. `more()` reads the next page while `next` is not `null`; `onlyUnread: true` lists the
+  unread rows alone, and `list: false` reads only the count.
+- **`markRead(id)`, `dismiss(id)`, `markAllRead()`** — after each, the count and the list
+  read again. A dismissed row leaves the list.
+- `absent` with no backend or nobody signed in.
+
+Outside React: `listNotifications`, `countNotifications`, `markNotificationRead`,
+`dismissNotification` and `markAllNotificationsRead` from `@uniweb/api/client`.
+
 ## Rules, lists, and what stays in your foundation
 
 The backend checks every write against the Model's declaration, and refuses to register
@@ -697,7 +800,34 @@ entities: [{ model: '@/lesson', owner: 'me', unit: 'intro-101', items: [...] }],
 `members` are placed in the unit, and its `floor` — as `memberFloor`, which is the root's —
 covers what lands in it, for them and for those placed in the units below it. The mock
 models no roles but the operator's: no reader or editor held at a unit, and nothing a
-reference opens.
+reference opens but what a purchase does (below).
+
+To try a store, seed one, with an offering per record it sells:
+
+```js
+seed: {
+  // …accounts, schemas and entities as above
+  store: {
+    info: { name: { en: 'Bluewater Academy' }, currency: 'CAD' },
+    offerings: [
+      { entry: '01926d5e-0000-7000-8000-0000000c0001', price: 4900 },   // a seeded course, 49.00
+      { entry: '01926d5e-0000-7000-8000-0000000c0002', price: 0 },      // a free one
+    ],
+  },
+  coupons: ['WELCOME10'],                                   // the codes that apply at a checkout
+  entitlements: [{ username: 'guest', entity: '01926d5e-0000-7000-8000-0000000c0002' }],
+  notifications: [{ to: 'guest', from: 'ada', payload: { entity_uuid: '…', entity_model: '@/track', permission: 'read', actor_handle: 'ada' } }],
+}
+```
+
+A free offering is held at once. A priced one sends the buyer to a payment page of the
+mock's own, which takes no payment: complete it, and the buyer holds the record and lands
+on the checkout's `successUrl`; cancel, and nothing is written. A holder reads the record
+and, through it (`via`), what its references marked `sold_with` point to, three steps deep.
+Only whoever administers a record reads who holds it. `payments_ready: false` in the
+`store` tries a site whose owner has not connected payments yet. The mock models one
+record per offering, and no renewal, refund or discount. Each account has an inbox, and an
+entry given to a person adds a row to theirs, as the backend does.
 
 Name a seed's types as your foundation's calls send them under `uniweb dev`: your own as
 `@/track`, any other in full — the mock matches a name exactly, so `@std/person` is not
