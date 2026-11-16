@@ -499,6 +499,23 @@ The uuids serve that one write: the answer is the entry, and no read carries an 
 `create` takes `uuid` and `parent` the same way, so a `batch` can add an item and the items
 under it at once.
 
+**Sent twice, made once.** A person clicks *Add* twice, or a create's answer never comes back
+and they try again. Each call makes an entry, unless the create names the new entry's own
+`uuid`: make it once, when the person starts adding the entry, and pass it to every create of
+it. The entry takes that uuid, and sending the create again answers with the entry the first one
+made, in the same row.
+
+```jsx
+import { createEntity, uuidv7 } from '@uniweb/api'
+
+const [uuid] = useState(uuidv7)   // once, for the entry being added
+const add = () => createEntity({ schema: '@/course', uuid, items: [{ section: 'course', data: { title } }] })
+```
+
+The backend refuses a second create of that uuid, and the package reads the entry back. A uuid
+another entry holds (of another type, or one the viewer cannot read) is refused as taken. The
+package never sends a create again by itself.
+
 **Where it lands.** Everything a member creates lands at the root of the organization the
 site's backend is founded with. A solution that uses units — a department, a program, a
 course — lands an entity in one by naming it:

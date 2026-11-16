@@ -758,8 +758,10 @@ export function createMockBackend({
         if (named != null && !unit) return problem({ status: 404, title: 'Not Found', detail: `unit ${named} not found` })
         const archived = unit ? store.archivedRefusal(unit) : null
         if (archived) return answer(archived)
-        // Any other top-level key is ignored, exactly as the backend ignores it.
-        return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} })), unit))
+        // `uuid` names the entry, as on the backend (MEASURED 2026-11-16: the entry takes it, and a
+        // second create naming it is refused). Any other top-level key is ignored, exactly as the
+        // backend ignores it.
+        return answer(store.create(model, items.map((i) => ({ ...i, data: i.data ?? {} })), unit, b?.[CREATE.uuid] ?? null))
       }
 
       if (rest === '/delete' && method === 'POST') {

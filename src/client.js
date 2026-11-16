@@ -14,6 +14,7 @@
 import { getUniweb, deriveCacheKey } from '@uniweb/core'
 import { resolveService } from '@uniweb/core'
 import { ApiError } from './errors.js'
+import { isUuid } from './uuid.js'
 import { typeName, withTypeName } from './types.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
 import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
@@ -1442,8 +1443,12 @@ export class ApiClient {
    * section's item. `data` at the top level is refused here, because the backend
    * would ignore it — an empty entity and no error.
    *
-   * ⚠️ Not idempotent, and deliberately not made so: two calls make two entities.
-   * A successful create drops this Model's cached reads, so a list on the page
+   * **Sent twice, made once — when it names its uuid.** Make the new entry's uuid once, with
+   * `uuidv7()`, when the person starts adding it, and pass it to every create of that entry: a
+   * second click, or a retry after an answer that never came, then gets the entry the first one
+   * made, in the same row. The backend refuses the repeat (`409`, its uuid taken), and this reads
+   * that entry back. Without `uuid`, each call makes an entry. Nothing is ever sent again by this
+   * package itself. A successful create drops this Model's cached reads, so a list on the page
    * shows it.
    *
    * **Where it lands.** On a site's backend everything a member creates lands at the
@@ -1474,10 +1479,12 @@ export class ApiClient {
    * @param {string} args.schema
    * @param {Array<{ section: string, data?: object, uuid?: string, parent?: number|string }>} [args.items]
    * @param {string} [args.unit] - the uuid of the unit it lands in
+   * @param {string} [args.uuid] - the new entry's own uuid (`uuidv7()`), so that sending this create
+   *   again makes no second entry
    * @param {AbortSignal} [args.signal]
    * @returns {Promise<object>} the new entity's row — `{ uuid, brief, unit_id, … }`
    */
-  async createEntity({ schema, items, data, unit, signal } = {}) {
+  async createEntity({ schema, items, data, unit, uuid, signal } = {}) {
     if (!schema) throw ApiError.invalid('No Model', 'createEntity needs a schema')
     if (data !== undefined) {
       throw ApiError.invalid(
@@ -1492,7 +1499,11 @@ export class ApiClient {
     if (unit != null && (typeof unit !== 'string' || !unit)) {
       throw ApiError.invalid('No Unit', "createEntity's unit is a unit's uuid — `unit` on a row of listUnits")
     }
+    if (uuid != null && !isUuid(uuid)) {
+      throw ApiError.invalid('No Uuid', "createEntity's uuid is the new entry's own — make it once with uuidv7()")
+    }
     const fields = {
+      ...(uuid != null ? { [CREATE.uuid]: uuid } : {}),
       ...(unit != null ? { [CREATE.unit]: unit } : {}),
       ...(list.length
         ? {
@@ -1505,11 +1516,18 @@ export class ApiClient {
         : {}),
     }
     const body = Object.keys(fields).length ? fields : undefined
-    const created = await this.request('POST', ROUTES.create(), {
-      query: { [PARAM.model]: schema },
-      body,
-      signal,
-    })
+    let created
+    try {
+      created = await this.request('POST', ROUTES.create(), {
+        query: { [PARAM.model]: schema },
+        body,
+        signal,
+      })
+    } catch (err) {
+      // The same create sent again: the entry the first one made is the answer (`madeAlready`).
+      created = uuid != null && err?.status === 409 ? await madeAlready(this, schema, uuid, signal) : null
+      if (!created) throw err
+    }
     this.invalidate((spec) => spec?.schema === schema)
     return created
   }
@@ -1701,6 +1719,32 @@ export const listChoices = async (args) => required().listChoices(withTypeName(a
 /** @see ApiClient#writeItems */
 export const writeItems = async (args) => required().writeItems(withTypeName(args, 'writeItems'))
 /** @see ApiClient#createEntity */
+/**
+ * The entry a create that named its uuid already made, when the backend refused the same create
+ * again (`409`, its uuid taken — `CREATE`): read back by that uuid, as the row a create answers,
+ * the read's `model_*` with its `hydrated.entity` (`READ`). Null when no entry of this Model holds
+ * the uuid for this viewer, so the refusal stands: it was about something else, or the uuid is
+ * another entry's.
+ *
+ * @param {ApiClient} client
+ * @param {string} schema
+ * @param {string} uuid
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<object|null>}
+ */
+async function madeAlready(client, schema, uuid, signal) {
+  let read
+  try {
+    read = await client.request('GET', ROUTES.read(uuid), { query: { [PARAM.model]: schema }, signal })
+  } catch (err) {
+    if (err?.name === 'AbortError' || signal?.aborted) throw err
+    return null
+  }
+  const entity = read?.[READ.hydrated]?.[READ.entity]
+  if (!entity || entity.uuid !== uuid) return null
+  return { [READ.modelUuid]: read[READ.modelUuid], [READ.modelName]: read[READ.modelName], ...entity }
+}
+
 export const createEntity = async (args) => required().createEntity(withTypeName(args, 'createEntity'))
 /** @see ApiClient#deleteEntity */
 export const deleteEntity = async (args) => required().deleteEntity(withTypeName(args, 'deleteEntity'))

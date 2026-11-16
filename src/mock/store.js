@@ -2534,8 +2534,15 @@ export class MockStore {
   }
 
   /** A create, landing in `unit` — a unit `landing` let through — or at the root. */
-  create(model, items, unit = null) {
+  create(model, items, unit = null, uuid = null) {
+    // ⭐ A create may name the entry's uuid, and the entry takes it. A second create naming it is
+    // refused before anything is written, whatever its Model, with the backend's own words: its
+    // entries' uuids are one unique key (MEASURED 2026-11-16, `CREATE`).
+    if (uuid != null && this.entities.has(uuid)) {
+      return refuse(409, PROBLEM.schemaRule, 'entity uniqueness violated: duplicate key value violates unique constraint "entity_uuid_key"')
+    }
     const entity = this.newEntity(model, this.account, unit?.id ?? SITE_UNIT)
+    if (uuid != null) entity.uuid = uuid
     const staged = { ...entity, items: [] }
     const identity = this.identityRefusal(
       staged,

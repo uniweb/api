@@ -819,6 +819,14 @@ export const FIELD = {
  * `unit` — a unit's uuid — lands the entity in that unit rather than where a create
  * lands by default (`UNITS`; stated by the backend 2026-10-15, not yet measured here).
  *
+ * ⭐ **`uuid` — the entry's own, made by the caller** (`uuidv7()`). The entry takes it, and a
+ * second create naming it is refused, with nothing written: `409 Schema Rule Violation`,
+ * `detail: 'entity uniqueness violated: duplicate key value violates unique constraint
+ * "entity_uuid_key"'`, no `reason`. An entry of any Model holds its uuid against every other.
+ * So a create that names its uuid makes one entry however often it is sent. And the row a
+ * create answers is the single read's `model_uuid` and `model_name` with its
+ * `hydrated.entity` (`READ`), every field equal (all MEASURED 2026-11-16, a local backend).
+ *
  * ⛔ **There is no entity-level data.** An entity's content is always items in its
  * sections; its `brief` is maintained by the backend from the brief section's
  * item. ⛔ And the body's other keys are the backend's own — `uuid`, `owner_id`,
@@ -829,6 +837,8 @@ export const CREATE = {
   items: 'items',
   sectionName: 'section',
   unit: 'unit',
+  /** The entry's own uuid, which the entry takes (above). */
+  uuid: 'uuid',
 }
 
 /**
@@ -879,6 +889,8 @@ export const LIST = {
  * the Model named.
  */
 export const READ = {
+  modelUuid: 'model_uuid',
+  modelName: 'model_name',
   hydrated: 'hydrated',
   entity: 'entity',
   items: 'items',
