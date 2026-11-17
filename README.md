@@ -635,18 +635,22 @@ function BodyEditor({ value, onChange, labels }) {
 - **TipTap is an optional peer.** Install it in the foundation that edits rich text —
   `@tiptap/core`, `@tiptap/pm`, `@tiptap/react` and `@tiptap/starter-kit` (3.x) — and load the
   editor lazily (`React.lazy`), so public pages carry none of it.
-- **It edits** paragraphs, headings, bold, italic, strike, code, links, lists, quotes, code
-  blocks, line breaks and a divider (`setDivider()`, or `---` on its own line), with TipTap's
-  commands and keys. Underline is off: a stored text has none.
+- **It edits** paragraphs, headings, bold, italic, underline, strike, code, links, lists, quotes,
+  code blocks, line breaks, superscript and subscript (`toggleSuperscript()`, `toggleSubscript()`,
+  Mod-. and Mod-,) and a divider (`setDivider()`, or `---` on its own line), with TipTap's commands
+  and keys.
 - **It keeps** everything else a stored text may hold — an image, an inset, a formula, a table —
   loaded and saved as it was.
 - **`onChange`** gets each change as a backend stores it. `value` is read when the editor starts:
   give it a new `key` to load another document. `isEmptyRichText(doc)` tells an empty field from
   one with something in it.
+- **`richTextLength(doc)`** counts a text as a field's `max_length` does: the characters a reader
+  sees, with a new line or paragraph counting one and formatting nothing. Draw a counter with it,
+  so it says what a save will.
 - The toolbar, its words and its icons are yours.
 
-The mock keeps rich text to the vocabulary as the backend does, and prints in its terminal what
-it left out — so an editor of your own that writes what a stored text can't hold shows at your
+The mock keeps rich text to the vocabulary as the backend does, refuses one over its field's
+`max_length` as it refuses a string over its limit, and prints in its terminal what it left out — so an editor of your own that writes what a stored text can't hold shows at your
 desk, not after a member's save.
 
 ## Translated fields
