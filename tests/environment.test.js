@@ -28,9 +28,10 @@ const BROWSER_ENTRIES = ['index.js', 'client.js', 'wire.js']
 
 /**
  * Bare specifiers the browser half may depend on. `@uniweb/schemas/refs` is the one rule that
- * names a foundation's own `@/x` in full, a leaf that imports nothing (its package pins that).
+ * names a foundation's own `@/x` in full, and `@uniweb/schemas/rich-text-length` the one count of a
+ * rich text that a `max_length` is checked by — leaves that import nothing (their package pins that).
  */
-const ALLOWED_PACKAGES = new Set(['react', '@uniweb/core', '@uniweb/core/services', '@uniweb/schemas/refs'])
+const ALLOWED_PACKAGES = new Set(['react', '@uniweb/core', '@uniweb/core/services', '@uniweb/schemas/refs', '@uniweb/schemas/rich-text-length'])
 
 const stripComments = (code) =>
   code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')

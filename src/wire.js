@@ -1636,4 +1636,13 @@ export const ASSUMPTIONS = [
     breaks:
       "a form built in definition order shows its sections in another order than a hosted site's",
   },
+  {
+    id: 'rich-text-max-length',
+    we:
+      "have the mock refuse a rich text over its field's `max_length` — counted as `@uniweb/schemas/rich-text-length` counts it, the characters a reader sees, and each language of a translated one on its own — as the backend refuses a string over its limit: `rule: 'max_length'`, the field (`summary`, `summary.fr`) and the bound",
+    from:
+      "framework's rule for a registry storing a Model (2026-11-17), asked of the backend with the definition it counts by; the refusal is a string's, measured 2026-10-14. Not yet measured on a rich text",
+    breaks:
+      "until a backend checks it, a rich text over its limit is stored there though the mock refuses it. A foundation that checks first — `useEntityForm`, or an editor's counter drawn with `richTextLength` — is right either way",
+  },
 ]

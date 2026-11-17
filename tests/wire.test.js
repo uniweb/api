@@ -63,6 +63,7 @@ describe('wire — the assumptions are a reviewable set', () => {
     'cross-field-rules-on-a-write',
     'definition-in-a-language',
     'definition-in-declared-order',
+    'rich-text-max-length',
   ]
 
   it('names exactly the assumptions we have handed over', () => {

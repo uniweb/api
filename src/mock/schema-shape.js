@@ -19,6 +19,7 @@
  */
 
 import { cleanToVocabulary } from '@uniweb/content-reader/vocabulary'
+import { richTextLength, isRichTextDocument } from '@uniweb/schemas/rich-text-length'
 
 /** Where a written section lives, and therefore what we are entitled to do about it. */
 export const STORAGE = {
@@ -258,6 +259,23 @@ function matchesPattern(pattern, value) {
   return new RegExp(`^(?:${pattern})$`, PATTERN_FLAG).test(value)
 }
 
+/** A rich-text value's documents, each with where it is: the field, or `field.lang` for one language. */
+function richTextsOf(field, value, at) {
+  if (isRichTextDocument(value)) return [[value, at]]
+  if (field.localized === true && value && typeof value === 'object' && !Array.isArray(value)) {
+    return Object.entries(value).filter(([lang, doc]) => lang !== '@' && isRichTextDocument(doc)).map(([lang, doc]) => [doc, `${at}.${lang}`])
+  }
+  return []
+}
+
+/** A value over its field's `max_length`, refused as the backend refuses a string's. */
+const tooLong = (field, at) => ({
+  field: at,
+  rule: 'max_length',
+  detail: `item.data.${at} exceeds max_length=${field.max_length}`,
+  params: { max_length: field.max_length },
+})
+
 /**
  * The checks on one text value — a field's own, or one language of a localized one —
  * as the backend makes them: `max_length` in characters, then the `format`, then the
@@ -265,14 +283,7 @@ function matchesPattern(pattern, value) {
  */
 function checkText(field, value, at) {
   if (typeof value !== 'string') return { field: at, rule: 'type', detail: `item.data.${at} must be a string` }
-  if (Number.isInteger(field.max_length) && charCount(value) > field.max_length) {
-    return {
-      field: at,
-      rule: 'max_length',
-      detail: `item.data.${at} exceeds max_length=${field.max_length}`,
-      params: { max_length: field.max_length },
-    }
-  }
+  if (Number.isInteger(field.max_length) && charCount(value) > field.max_length) return tooLong(field, at)
   if (typeof field.format === 'string' && value !== '' && !matchesFormat(value, field.format)) {
     return {
       field: at,
@@ -323,6 +334,19 @@ export function checkFields(fields, data, path = '') {
       continue
     }
     if (missing) continue
+
+    // A rich text's `max_length` counts the characters a reader sees (`richTextLength`), and a
+    // translated one's each language on its own — framework's rule for a backend, refused as a
+    // string's is (2026-11-17; `ASSUMPTIONS.richTextLength` in ../wire.js).
+    if (isRichText(field) && Number.isInteger(field.max_length)) {
+      const found = richTextsOf(field, value, at)
+        .map(([doc, where]) => (richTextLength(doc) > field.max_length ? tooLong(field, where) : null))
+        .find(Boolean)
+      if (found) {
+        problems.push(found)
+        continue
+      }
+    }
 
     // ⭐ A localized text field holds a string — its value in every language — or a
     // per-language object, each language's value checked as the field's text is

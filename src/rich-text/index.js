@@ -15,15 +15,19 @@
  *   `@tiptap/pm`, `@tiptap/react` and `@tiptap/starter-kit` (3.x); one that doesn't never loads
  *   them. Import it where an editor shows — `React.lazy` makes it a chunk of its own — so public
  *   pages carry none of it.
- * - **What it edits** is TipTap's own: paragraphs, headings, bold, italic, strike, code, links,
- *   lists, quotes, code blocks, line breaks — with TipTap's commands, keys and input rules — and a
- *   divider (`setDivider()`, or `---` on its own line). Underline and TipTap's horizontal rule are
- *   off: a stored text has neither.
+ * - **What it edits** is TipTap's own: paragraphs, headings, bold, italic, underline, strike, code,
+ *   links, lists, quotes, code blocks, line breaks — with TipTap's commands, keys and input rules —
+ *   superscript and subscript (`toggleSuperscript()`, `toggleSubscript()`, Mod-. and Mod-,), and a
+ *   divider (`setDivider()`, or `---` on its own line). TipTap's horizontal rule is off: a stored
+ *   text holds a divider.
  * - **What it keeps** is everything else a stored text may hold — an image, an inset, a formula, a
  *   table, a data block, a button, a styled span — loaded and saved as it was, editable around.
  * - **What it emits** is a document within the vocabulary, cleaned by the vocabulary's own
  *   `cleanToVocabulary` — so a stored text from this editor and one from the files read alike.
  *
+ * - **How long it is** — `richTextLength(doc)`, the count a field's `max_length` is checked by: the
+ *   characters a reader sees, a new line or paragraph counting one. Draw a counter with it, so it
+ *   says what a save will.
  * No words: the toolbar, its labels and its icons are the foundation's.
  */
 
@@ -32,6 +36,8 @@ import { Extension, Mark, Node, getSchema, nodeInputRule } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import { cleanToVocabulary, getBaseSchema } from '@uniweb/content-reader/vocabulary'
+
+export { richTextLength } from '@uniweb/schemas/rich-text-length'
 
 const BASE = getBaseSchema()
 
@@ -139,12 +145,11 @@ const Divider = Node.create({
 })
 
 /**
- * TipTap's kit, set to the vocabulary: underline and its horizontal rule off (the divider stands
- * for the rule), and links that carry what their author gave — no `target` or `rel` of TipTap's.
+ * TipTap's kit, set to the vocabulary: its horizontal rule off (the divider stands for the rule),
+ * and links that carry what their author gave — no `target` or `rel` of TipTap's.
  */
 function kit({ headingLevels }) {
   return StarterKit.configure({
-    underline: false,
     horizontalRule: false,
     heading: { levels: headingLevels },
     link: {
@@ -157,6 +162,37 @@ function kit({ headingLevels }) {
 }
 
 /**
+ * Superscript and subscript, the vocabulary's own marks (2026-11-17), as TipTap's extensions make
+ * them: `<sup>` and `<sub>` in and out, each excluding the other, with `set…`, `toggle…` and
+ * `unset…` commands and TipTap's keys. Made here, so a foundation installs no other peer for them.
+ */
+function verticalMark(name, tag, other, key, align) {
+  const cap = name[0].toUpperCase() + name.slice(1)
+  return Mark.create({
+    name,
+    excludes: other,
+    parseHTML() {
+      return [{ tag }, { style: 'vertical-align', getAttrs: (value) => (value === align ? null : false) }]
+    },
+    renderHTML() {
+      return [tag, 0]
+    },
+    addCommands() {
+      return {
+        [`set${cap}`]: () => ({ commands }) => commands.setMark(this.name),
+        [`toggle${cap}`]: () => ({ commands }) => commands.toggleMark(this.name),
+        [`unset${cap}`]: () => ({ commands }) => commands.unsetMark(this.name),
+      }
+    },
+    addKeyboardShortcuts() {
+      return { [key]: () => this.editor.commands[`toggle${cap}`]() }
+    },
+  })
+}
+const Superscript = verticalMark('superscript', 'sup', 'subscript', 'Mod-.', 'super')
+const Subscript = verticalMark('subscript', 'sub', 'superscript', 'Mod-,', 'sub')
+
+/**
  * The editor's extensions: TipTap's kit, set to the vocabulary; the vocabulary's attributes its
  * nodes lack, kept as they are; and a kept node or mark for everything else the vocabulary names.
  *
@@ -165,7 +201,8 @@ function kit({ headingLevels }) {
  */
 export function richTextExtensions({ headingLevels = [1, 2, 3, 4, 5, 6] } = {}) {
   const base = kit({ headingLevels })
-  const schema = getSchema([base, Divider])
+  const own = [Divider, Superscript, Subscript]
+  const schema = getSchema([base, ...own])
   const missing = (types, specs) =>
     Object.entries(specs)
       .filter(([name]) => types[name])
@@ -191,7 +228,7 @@ export function richTextExtensions({ headingLevels = [1, 2, 3, 4, 5, 6] } = {}) 
   const marks = Object.entries(BASE.marks)
     .filter(([name]) => !schema.marks[name])
     .map(([name, spec]) => keptMark(name, spec))
-  return [base, Divider, KeptAttributes, ...nodes, ...marks]
+  return [base, ...own, KeptAttributes, ...nodes, ...marks]
 }
 
 /** The vocabulary's nodes and marks whose attributes are open — any beyond those declared. */

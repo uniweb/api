@@ -24,6 +24,7 @@
  * @module @uniweb/api/entity-form
  */
 
+import { richTextLength, isRichTextDocument } from '@uniweb/schemas/rich-text-length'
 import { mergeInLanguage, isLanguageMap } from './languages.js'
 import { READ } from './wire.js'
 
@@ -143,6 +144,10 @@ function checkControl(control, value) {
     if ((control.type === 'int' || control.type === 'decimal') && control.min != null && Number(v) < control.min) return { rule: 'min', min: control.min }
     if ((control.type === 'int' || control.type === 'decimal') && control.max != null && Number(v) > control.max) return { rule: 'max', max: control.max }
     if (typeof v === 'string' && control.max_length != null && [...v].length > control.max_length) return { rule: 'max_length', max_length: control.max_length }
+    // A rich text's length is the characters a reader sees, as a backend counts it (`richTextLength`).
+    if (control.type === 'richtext' && control.max_length != null && isRichTextDocument(v) && richTextLength(v) > control.max_length) {
+      return { rule: 'max_length', max_length: control.max_length }
+    }
     if (typeof v === 'string' && control.pattern && !matchesWhole(control.pattern, v)) return { rule: 'pattern', pattern: control.pattern }
     if (control.type === 'date' && typeof v === 'string' && !(DATE[control.format] ?? DATE.day).test(v)) return { rule: 'format', format: control.format ?? 'date' }
     if (control.format === 'email' && typeof v === 'string' && !/^[^@\s]+@[^@\s]+$/.test(v)) return { rule: 'format', format: 'email' }

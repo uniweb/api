@@ -3,7 +3,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { Editor, getSchema } from '@tiptap/core'
 import { createUniweb } from '@uniweb/core'
-import { getBaseSchema, outsideVocabulary } from '@uniweb/content-reader/vocabulary'
+import { cleanToVocabulary, getBaseSchema, outsideVocabulary } from '@uniweb/content-reader/vocabulary'
 import {
   richTextExtensions,
   useRichTextEditor,
@@ -43,8 +43,8 @@ describe("the editor's schema is the vocabulary's", () => {
     }
   })
 
-  it('has no underline and no horizontal rule — a stored text holds neither', () => {
-    expect(schema.marks.underline).toBeUndefined()
+  it('has underline, superscript and subscript — a stored text holds them (2026-11-17) — and no horizontal rule', () => {
+    for (const mark of ['underline', 'superscript', 'subscript']) expect(schema.marks[mark], mark).toBeDefined()
     expect(schema.nodes.horizontalRule).toBeUndefined()
   })
 })
@@ -126,9 +126,29 @@ describe('a document through the editor', () => {
     expect(link.attrs.rel ?? null).toBeNull()
   })
 
-  it('makes a divider — never a horizontal rule — and offers no underline', () => {
+  it('⭐ underlines, raises and lowers text, and saves each as the mark a stored text keeps', () => {
+    const editor = new Editor({
+      extensions: richTextExtensions(),
+      content: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'CO2 m2 under' }] }] },
+    })
+    editor.chain().setTextSelection({ from: 3, to: 4 }).toggleSubscript().run()
+    editor.chain().setTextSelection({ from: 6, to: 7 }).toggleSuperscript().toggleSubscript().run() // the second replaces the first
+    editor.chain().setTextSelection({ from: 8, to: 13 }).toggleUnderline().run()
+    const saved = fromEditorDocument(editor.getJSON())
+    editor.destroy()
+    expect(saved.content[0].content.map((n) => [n.text, (n.marks ?? []).map((m) => m.type)])).toEqual([
+      ['CO', []],
+      ['2', ['subscript']],
+      [' m', []],
+      ['2', ['subscript']],
+      [' ', []],
+      ['under', ['underline']],
+    ])
+    expect(cleanToVocabulary(saved).removed).toEqual([])
+  })
+
+  it('makes a divider — never a horizontal rule', () => {
     const editor = new Editor({ extensions: richTextExtensions(), content: { type: 'doc', content: [{ type: 'paragraph' }] } })
-    expect(editor.commands.toggleUnderline).toBeUndefined()
     editor.commands.setDivider()
     const saved = fromEditorDocument(editor.getJSON())
     editor.destroy()
@@ -176,12 +196,13 @@ describe('the mock keeps rich text to the vocabulary, as a backend does', () => 
     await client.signIn({ username: 'ada', password: 'ada-password' })
     const body = {
       type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'under', marks: [{ type: 'underline' }, { type: 'bold' }] }] }],
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'marked', marks: [{ type: 'highlight' }, { type: 'underline' }, { type: 'bold' }] }] }],
     }
     const { uuid } = await client.createEntity({ schema: '@acme/post', items: [{ section: 'post', data: { body } }] })
     const read = await client.readEntity({ schema: '@acme/post', uuid })
     const stored = read.entity.hydrated.items[0].data.body
-    expect(stored.content[0].content[0].marks).toEqual([{ type: 'bold' }])
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('underline'))
+    // An editor's highlight is the theme's to give (`[x]{highlight}`); underline is the vocabulary's.
+    expect(stored.content[0].content[0].marks).toEqual([{ type: 'underline' }, { type: 'bold' }])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('highlight'))
   })
 })
