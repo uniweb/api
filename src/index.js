@@ -30,6 +30,7 @@ export {
   forgetProviderReturn,
   signInReturnPath,
   sendFeedback,
+  uploadFiles,
   signUp,
   resendVerification,
   requestEmailCode,
@@ -98,6 +99,8 @@ export { useSignInOptions } from './hooks/useSignInOptions.js'
 export { useEmailSignIn } from './hooks/useEmailSignIn.js'
 export { useMayCreate } from './hooks/useMayCreate.js'
 export { useFeedback } from './hooks/useFeedback.js'
+export { useUpload } from './hooks/useUpload.js'
+export { UPLOAD_NOTE } from './media/prepare.js'
 export { useUnitStaff } from './hooks/useUnitStaff.js'
 export { useUnitEntryGrants } from './hooks/useUnitEntryGrants.js'
 export { usePasswordReset } from './hooks/usePasswordReset.js'

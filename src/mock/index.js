@@ -26,6 +26,7 @@ import {
   CAPABILITIES,
   FEEDBACK,
   UNIT_ADMIN,
+  ASSETS,
 } from '../wire.js'
 import { MockStore, isUuid, refuse, EMAIL_SIGN_IN, SITE_UNIT } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
@@ -680,6 +681,68 @@ export function createMockBackend({
       const b = await body(request)
       if (!b || typeof b !== 'object' || Array.isArray(b)) return badRequest('expected `{"message": ...}`')
       return answer(store.sendFeedback(b))
+    }
+
+    // ── A member's upload ──────────────────────────────────────────────────
+    // The plan, then each file's bytes to the slot it names, and the file served from there: the
+    // backend's own paths, as a backend that serves its files itself answers (`ASSETS`, MEASURED
+    // 2026-11-16). A file is known by the SHA-256 of its bytes, so the same file is planned once.
+    if (path === ASSETS.route && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const b = await body(request)
+      const files = b?.[ASSETS.files]
+      if (!Array.isArray(files) || files.some((f) => !f || typeof f[ASSETS.path] !== 'string' || !/^[0-9a-f]{64}$/i.test(f[ASSETS.sha256] || ''))) {
+        return badRequest('invalid upload plan: each file needs a `path` and its `sha256`')
+      }
+      const named = b[ASSETS.entity]
+      if (named != null) {
+        const entity = isUuid(named) ? store.entities.get(named) : null
+        if (!entity) return notFound('entity', named)
+        if (!store.mayEdit(entity)) {
+          return problem({ status: 403, title: 'Forbidden', detail: `edit on entity ${entity.uuid} not permitted`, op: 'edit', target: `entity ${entity.uuid}` })
+        }
+      }
+      const at = `${prefix}${ASSETS.route}`
+      return json(200, {
+        [ASSETS.mode]: 'direct',
+        expires_in: null,
+        [ASSETS.serveBase]: `${at}/`,
+        [ASSETS.uploads]: files.map((f) => {
+          const id = f[ASSETS.sha256].toLowerCase()
+          const ext = (/\.([a-z0-9]+)$/i.exec(f[ASSETS.path])?.[1] || 'bin').toLowerCase()
+          const address = `${at}/${id}/base.${ext}`
+          const present = store.assets.has(id)
+          return {
+            [ASSETS.path]: f[ASSETS.path],
+            [ASSETS.id]: id,
+            [ASSETS.ext]: ext,
+            [ASSETS.present]: present,
+            [ASSETS.serveUrl]: address,
+            [ASSETS.method]: 'PUT',
+            [ASSETS.url]: address,
+            [ASSETS.headers]: { 'content-type': f[ASSETS.contentType] || 'application/octet-stream', 'cache-control': 'public, max-age=31536000, immutable' },
+          }
+        }),
+      })
+    }
+    {
+      const file = /^\/assets\/([0-9a-f]{64})\/base\.([a-z0-9]+)$/.exec(path)
+      if (file && method === 'PUT') {
+        if (!store.account) return unauthorized()
+        const bytes = new Uint8Array(await request.arrayBuffer())
+        const digest = Array.from(new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', bytes)), (x) => x.toString(16).padStart(2, '0')).join('')
+        if (digest !== file[1]) return badRequest(`the bytes sent are not asset ${file[1]}`)
+        const deduped = store.assets.has(digest)
+        if (!deduped) store.assets.set(digest, { bytes, type: request.headers.get('content-type') || 'application/octet-stream' })
+        return json(200, { [ASSETS.id]: digest, [ASSETS.size]: bytes.length, deduped })
+      }
+      if (file && method === 'GET') {
+        const held = store.assets.get(file[1])
+        if (!held) return notFound('asset', file[1])
+        return new Response(held.bytes, { status: 200, headers: { 'content-type': held.type } })
+      }
     }
 
     // ── What the viewer may create ─────────────────────────────────────────

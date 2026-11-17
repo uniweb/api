@@ -68,6 +68,7 @@ import {
   signInReturnPath,
 } from './sign-in-options.js'
 import { sendFeedbackWith } from './feedback.js'
+import { uploadFilesWith } from './assets.js'
 import {
   requestEmailCodeWith,
   confirmEmailCodeWith,
@@ -1645,6 +1646,7 @@ export const signInAddress = (provider, options) => signInAddressOf(getClient(),
 export { providerReturn, forgetProviderReturn, signInReturnPath }
 
 export const sendFeedback = (fields) => sendFeedbackWith(required(), fields)
+export const uploadFiles = (files, options) => uploadFilesWith(required(), files, options)
 /** @see ApiClient#signUp */
 export const signUp = (fields) => required().signUp(fields)
 

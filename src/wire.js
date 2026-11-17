@@ -941,6 +941,48 @@ export const ALLOWANCE = Object.freeze({
 })
 
 /**
+ * A member's upload: a plan for the files, then each file's bytes to where the plan says.
+ * **MEASURED 2026-11-16** on a local backend; the same wire a solution measured on a site's
+ * backend on 2026-11-03.
+ *
+ * | step | sends | answers |
+ * |---|---|---|
+ * | `POST /assets` | `{ entity?, files: [{ path, sha256, size, content_type }] }` — `entity` the entry the files are for, whose owner the storage is charged to and which the member must be able to edit | `200 { mode, expires_in, serve_base, uploads: [{ path, id, ext, present, method, url, headers, serve_url }] }` — one per file, by `path` |
+ * | the slot's `method` (`PUT`) to its `url` | the file's bytes, with exactly the slot's `headers` | `200 { id, size, deduped }` |
+ *
+ * - **A file's id is the SHA-256 of the bytes sent**, so the same bytes are one asset: a plan for a
+ *   file already stored answers `present: true`, and nothing is sent again.
+ * - **`url`:** the backend's own path in `direct` mode (`/api/assets/{id}/base.{ext}`, which rides
+ *   the session and the CSRF header), or a bucket's presigned address, which carries its own
+ *   signature and takes no credentials.
+ * - **`serve_url`** is where the file is served (`/static/asset/dist/{id}/base.{ext}` on a backend
+ *   that serves sites itself), and what an entry stores, as given. `ext` is what the backend types
+ *   the file by, from the path's extension.
+ * - **Refused:** `507 Insufficient Storage`, `reason: storage_quota_exceeded`, with `used_bytes`,
+ *   `limit_bytes` and `needed_bytes` (`kind: 'full'`).
+ */
+export const ASSETS = Object.freeze({
+  route: '/assets',
+  entity: 'entity',
+  files: 'files',
+  path: 'path',
+  sha256: 'sha256',
+  size: 'size',
+  contentType: 'content_type',
+  uploads: 'uploads',
+  id: 'id',
+  ext: 'ext',
+  present: 'present',
+  method: 'method',
+  url: 'url',
+  headers: 'headers',
+  serveUrl: 'serve_url',
+  serveBase: 'serve_base',
+  mode: 'mode',
+  quotaExceeded: 'storage_quota_exceeded',
+})
+
+/**
  * A member's feedback to the people who run the site's backend — **stated by backend**
  * (`kb/backend/api-package-contract.md` §3.18, 2026-11-01), measured by its `serve_feedback`
  * test; not yet measured here.

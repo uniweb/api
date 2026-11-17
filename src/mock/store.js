@@ -364,6 +364,8 @@ export class MockStore {
    */
   constructor(seed = {}, { signedInAs = null, blueprint = null } = {}) {
     this.clock = makeClock()
+    /** Uploaded files, by the SHA-256 of their bytes: `{ bytes, type }` (`ASSETS`). */
+    this.assets = new Map()
     this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT, offering: 0, notification: 0 }
     const founded = foundFrom(blueprint)
     /** Who may create an account: `open`, or `invite_only` (`SIGNUP`). */

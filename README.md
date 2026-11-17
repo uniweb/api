@@ -1068,6 +1068,40 @@ send({ message, kind: 'problem', rating: 4 })   // kind: 'general' | 'idea' | 'p
 `page` is sent as the path the member is on. A message holds 1 to 5,000 characters, and a
 member sends at most ten an hour (`kind: 'rate-limited'`). Outside React: `sendFeedback`.
 
+## A member's uploads
+
+A member can upload files to the site's backend: a car's photos, a course's handout. What comes back,
+one per file, is what an entry stores.
+
+```jsx
+import { useUpload } from '@uniweb/api'
+
+const { upload, status, error } = useUpload({ entity: vehicle.uuid })   // the entry the files are for
+const photos = await upload(input.files)
+// [{ url, assetId, assetExt, name, type, size, prepared, note? }]: store `url` in the entry
+```
+
+**Each file is prepared before it goes up**, by the rule every Uniweb client applies, in the browser:
+
+- **A picture becomes a WebP** at quality 85 when that makes it at least 10% smaller, or when it needs
+  turning: it is turned upright as its camera said, its colour managed into sRGB. Alpha is kept, and
+  nothing is scaled.
+- **Kept in its own format**, a picture loses where it was taken and the camera that took it, without
+  being re-encoded: a WebP, an AVIF, an animated GIF, PNG or WebP (whose frames a canvas would lose),
+  and any picture this browser can't convert. Safari has no WebP encoder, so there every picture is
+  kept so.
+- **A video** loses its metadata boxes in place (MP4, QuickTime); a browser encodes none.
+- **SVG and ICO** go up as they are. `keepFormat: true` keeps pictures other software fetches by their
+  address, such as a favicon or a social image, in their format.
+
+`prepared` says which: `converted`, `kept` or `as-is`. `note` says what to tell the member:
+`unconverted`, a TIFF or HEIC this browser couldn't convert, which not every browser draws (a page's
+picture needs it as a JPEG); `unreduced`, a video over the rule's bitrate, uploaded as it is.
+
+The same bytes are one file: uploading it again sends nothing. The storage is charged to the entry's
+owner, and the member must be able to edit the entry. A full store is `kind: 'full'`, its
+`extensions` holding `used_bytes`, `limit_bytes` and `needed_bytes`. Outside React: `uploadFiles`.
+
 ## When the backend offers something this package doesn't
 
 Every call above keeps your foundation out of the backend's routes. When the backend offers
