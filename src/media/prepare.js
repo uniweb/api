@@ -83,7 +83,7 @@ function nameOf(file, ext) {
  */
 export async function prepareUpload(file, { keepFormat = false } = {}) {
   const ext = extOf(file)
-  const bytes = new Uint8Array(await file.arrayBuffer())
+  const bytes = await bytesOf(file)
   const result = (out, kind, prepared, note) => ({
     bytes: out,
     name: nameOf(file, kind),
@@ -117,6 +117,18 @@ export async function prepareUpload(file, { keepFormat = false } = {}) {
   const smaller = webp.length <= bytes.length * UPLOAD_RULE.keepRatio
   if (!DRAWN_EVERYWHERE.has(ext) || turned || smaller) return result(webp, 'webp', 'converted')
   return kept()
+}
+
+/** A file's bytes: `arrayBuffer()` where the file has it, else read the older way. */
+async function bytesOf(file) {
+  if (typeof file.arrayBuffer === 'function') return new Uint8Array(await file.arrayBuffer())
+  const buffer = await new Promise((done, fail) => {
+    const reader = new FileReader()
+    reader.onload = () => done(reader.result)
+    reader.onerror = () => fail(reader.error)
+    reader.readAsArrayBuffer(file)
+  })
+  return new Uint8Array(buffer)
 }
 
 /**

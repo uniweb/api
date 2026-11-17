@@ -576,6 +576,40 @@ site's state, never the visitor's mistake, and its owner's to change:
 - `full` (`allowance_full`): the site's storage is full. A new entry, item or upload is
   refused, and reading, editing and deleting still work.
 
+## A member's form for an entry
+
+A member adds or edits an entry of a type through a form the type itself defines. The package makes
+it as an `@std/form` definition, the same kind of definition an author's form is, so the foundation
+draws it with the component it already draws every form with, and kit holds the values:
+
+```jsx
+import { useEntityForm } from '@uniweb/api'
+import { useFormValues } from '@uniweb/kit'
+
+const { status, form, save, errors } = useEntityForm({ schema: '@/course', uuid })   // no uuid: a new one
+const { controls, values, setValue, missing } = useFormValues(form)
+
+<MyForm controls={controls} values={values} onChange={setValue} errors={errors} />
+<button disabled={status === 'saving'} onClick={() => save(values)}>…</button>
+```
+
+- **The form** is a fieldset per single section of the type, named by the section, and a control per
+  field: `type` its kind, `label`, `description`, `required`, `enum` as `{ value, label }`, and the
+  rules the backend checks (`max_length`, `min`, `max`, `pattern`, `format`). Editing an entry, each
+  control starts from what is stored. A list section is written with `useEntityWriter`.
+- **A translated field** is edited in the page's language, or `language`, and saved into that language
+  alone, the others kept.
+- **A `ref` control** is a choice: from a list, with `choose` what `useChoices` takes; or another entry,
+  with `choose: { model }`, its value that entry's uuid.
+- **A `file` control** may hold a `File`: saving uploads it, prepared as every upload is, and the entry
+  stores the address it is served at. A `richtext` control's value is a document
+  (`@uniweb/api/rich-text`).
+- **`save(values)` checks the type's rules first.** A problem rejects the save and lands in `errors` by
+  control path, `{ 'head.title': { rule: 'max_length', max_length: 20 } }`, for your foundation to word.
+  Then it creates the entry, made once however often it is clicked, or writes its sections in one
+  transaction. A refusal from the backend lands in `errors` the same way, under its field where the
+  form can tell which, else under `''`. A later save writes the entry it created.
+
 ## Rich text a member writes
 
 A rich-text field holds a document in the framework's stored vocabulary — the same a page's
