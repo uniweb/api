@@ -719,6 +719,11 @@ what its references marked `sold_with` point to — the course's lessons, read w
 `useEntity({ schema, uuid, via: course.uuid })`. A record bought lists for its buyer with
 `via: 'entitlement'`.
 
+The store reads here are a signed-in member's. **A visitor who isn't signed in** sees the
+prices as records instead, through a site query on `@uniweb/catalog` that the site's
+`blueprint.yml` opens to visitors, so the first page a visit lands on already shows them
+(`uniweb guide backend`, *Selling*).
+
 ```jsx
 import { useStore, offeringState } from '@uniweb/api'
 
