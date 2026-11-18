@@ -336,11 +336,12 @@ export function checkFields(fields, data, path = '') {
     if (missing) continue
 
     // A rich text's `max_length` counts the characters a reader sees (`richTextLength`), and a
-    // translated one's each language on its own — framework's rule for a backend, refused as a
-    // string's is (2026-11-17; `ASSUMPTIONS.richTextLength` in ../wire.js).
+    // translated one's each language on its own, refused as a string's is. It counts the document
+    // the store keeps — after the clean (`storedRichText`), as the backend does [backend,
+    // 2026-11-17] — so text inside something the clean removes is no part of it.
     if (isRichText(field) && Number.isInteger(field.max_length)) {
       const found = richTextsOf(field, value, at)
-        .map(([doc, where]) => (richTextLength(doc) > field.max_length ? tooLong(field, where) : null))
+        .map(([doc, where]) => (richTextLength(cleanToVocabulary(doc).document) > field.max_length ? tooLong(field, where) : null))
         .find(Boolean)
       if (found) {
         problems.push(found)

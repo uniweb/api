@@ -66,6 +66,20 @@ describe("a rich text's max_length, against the mock", () => {
     expect(made.uuid).toBeTruthy()
   })
 
+  it('⭐ it counts the document the store keeps, after the clean, as the backend does', async () => {
+    const client = stack()
+    await client.signIn({ username: 'ada', password: 'ada-password' })
+    // 7 characters a reader sees; the editor's own `callout` node, and its 22, the clean removes.
+    const summary = { type: 'doc', content: [{ type: 'paragraph', content: [text('Carbon.')] }, { type: 'callout', content: [{ type: 'paragraph', content: [text('not stored, not counted')] }] }] }
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const made = await client.createEntity({ schema: '@acme/interest', items: [{ section: 'main', data: { summary } }] })
+    const read = await client.readEntity({ schema: '@acme/interest', uuid: made.uuid })
+    expect(read.entity.hydrated.items[0].data.summary.content).toHaveLength(1)
+    // CONTROL — what the clean keeps still counts: 7, a new paragraph, 8 more.
+    const kept = doc('Carbon.', 'Methane.')
+    expect((await client.createEntity({ schema: '@acme/interest', items: [{ section: 'main', data: { summary: kept } }] }).catch((e) => e)).extensions).toMatchObject({ rule: 'max_length' })
+  })
+
   it('a translated one is counted a language at a time', async () => {
     const client = stack()
     await client.signIn({ username: 'ada', password: 'ada-password' })

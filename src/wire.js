@@ -1513,6 +1513,7 @@ export const PROBLEM = {
  * | `offer-claim-needs-a-session` | ✅ true — `401` with no session, and the token is not spent; see `OFFERS` (2026-10-11) |
  * | `invitations-list-holds-the-waiting` | ✅ true — only the invitations still waiting, and `401` with no session; see `INVITATIONS` (2026-10-12) |
  * | `invitation-answer-refusals` | ⚠️ half — decline answers as the mock did, but one that no longer waits is `409`, not the `404` an id not this account's gets; see `INVITATIONS` (2026-10-12) |
+ * | `rich-text-max-length` | ✅ true — confirmed by the backend, 2026-11-17: a rich text over its field's `max_length` is refused as a string over its limit, counting the document it keeps, after its clean — as the mock now counts. Not measured from this package |
  *
  * *(Retired 2026-09-17: `write-response-fields`, `move-exists`, `move-position`,
  * `op-field-names` — see `FIELD` and `OP`.)* A new entry needs `we`, `from` and
@@ -1635,14 +1636,5 @@ export const ASSUMPTIONS = [
       "the backend's statement, 2026-10-28, that a definition lists sections in declared order — not measured from this package",
     breaks:
       "a form built in definition order shows its sections in another order than a hosted site's",
-  },
-  {
-    id: 'rich-text-max-length',
-    we:
-      "have the mock refuse a rich text over its field's `max_length` — counted as `@uniweb/schemas/rich-text-length` counts it, the characters a reader sees, and each language of a translated one on its own — as the backend refuses a string over its limit: `rule: 'max_length'`, the field (`summary`, `summary.fr`) and the bound",
-    from:
-      "framework's rule for a registry storing a Model (2026-11-17), asked of the backend with the definition it counts by; the refusal is a string's, measured 2026-10-14. Not yet measured on a rich text",
-    breaks:
-      "until a backend checks it, a rich text over its limit is stored there though the mock refuses it. A foundation that checks first — `useEntityForm`, or an editor's counter drawn with `richTextLength` — is right either way",
   },
 ]
