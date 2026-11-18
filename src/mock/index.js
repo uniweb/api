@@ -154,8 +154,8 @@ function adminPage(account) {
  * and the buyer holds the record and reads through it what its `sold_with` references
  * point to. Each account has an inbox (`/notifications`), and an entry given to a person
  * puts a row in theirs. It does not model a package of records, a subscription's renewal,
- * a coupon's discount, second factors, password rules, roles other than the operator's, an
- * offer's grants, what joining an organization gives, or an organization withdrawing an
+ * the discount a coupon takes off a payment (its preview answers as seeded), second
+ * factors, password rules, roles other than the operator's, an offer's grants, what joining an organization gives, or an organization withdrawing an
  * invitation.
  *
  * ## The mail it sends
@@ -950,6 +950,12 @@ export function createMockBackend({
         return json(200, { [STORE_FIELD.checkoutUrl]: new URL(`${prefix}${CHECKOUT_PAGE}/${outcome.token}`, request.url).href })
       }
       return answer(outcome)
+    }
+    if (path === STORE.coupon && method === 'POST') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return answer(store.couponPreview(await body(request)))
     }
     if (path === STORE.held && method === 'GET') {
       const bad = unexpected(q, [])

@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createUniweb } from '@uniweb/core'
-import { useStore, useEntitlements, useHolders, readStore, checkout, listHolders, offeringState, readEntity, signIn } from '../src/index.js'
+import { useStore, useCoupon, useEntitlements, useHolders, readStore, checkout, previewCoupon, couponReason, listHolders, offeringState, readEntity, signIn } from '../src/index.js'
 import { getClient } from '../src/client.js'
 import { createMockBackend } from '../src/mock/index.js'
 import { storeSpec } from '../src/store.js'
@@ -57,7 +57,12 @@ const SEED = {
       { id: 14, entry: FREE, price: 0 },
     ],
   },
-  coupons: ['WELCOME10'],
+  coupons: [
+    'WELCOME10',
+    { code: 'HALF', type: 'percent', value: 50, duration: 'repeating', duration_in_months: 3 },
+    { code: 'OLD', cause: 'expired' },
+    { code: 'FIVE', type: 'amount', value: 500, currency: 'usd' },
+  ],
 }
 
 function stack(options = {}) {
@@ -289,6 +294,132 @@ describe('useStore, against the mock', () => {
     await act(async () => {
       expect((await result.current.checkout(13, { coupon: 'welcome10', navigate: false })).held).toBe(false)
     })
+  })
+})
+
+describe('a coupon, previewed before the checkout', () => {
+  it('previewCoupon posts the code as typed, trimmed, and answers the discount', async () => {
+    createUniweb(WITH_BACKEND)
+    const client = getClient()
+    client.fetchFn = fetchStub((url, init) =>
+      route(url, init) === 'POST /_api/billing/coupon/validate'
+        ? json(200, { valid: true, discount: { type: 'amount', value: 500, currency: 'cad', duration: 'once' } })
+        : undefined,
+    )
+    const answer = await previewCoupon({ code: '  Save5 ' })
+    expect(answer).toEqual({ code: 'Save5', valid: true, discount: { type: 'amount', value: 500, currency: 'cad', duration: 'once' }, reason: null })
+    const [url, init] = client.fetchFn.mock.calls[0]
+    expect(parse(String(url)).pathname).toBe('/_api/billing/coupon/validate')
+    expect(JSON.parse(init.body)).toEqual({ code: 'Save5', for: 'store' })
+  })
+
+  it('a code that cannot apply is an answer, not a refusal', async () => {
+    createUniweb(WITH_BACKEND)
+    getClient().fetchFn = fetchStub((url, init) =>
+      route(url, init) === 'POST /_api/billing/coupon/validate' ? json(200, { valid: false, reason: 'expired' }) : undefined,
+    )
+    expect(await previewCoupon({ code: 'OLD' })).toEqual({ code: 'OLD', valid: false, discount: null, reason: 'expired' })
+  })
+
+  it('an empty code is refused before any request', async () => {
+    createUniweb(WITH_BACKEND)
+    const client = getClient()
+    client.fetchFn = vi.fn()
+    await expect(previewCoupon({ code: '  ' })).rejects.toMatchObject({ kind: 'invalid' })
+    expect(client.fetchFn).not.toHaveBeenCalled()
+  })
+
+  it('useCoupon, against the mock: the discount, the reason, and the code a checkout takes', async () => {
+    const { mock } = stack({ signedInAs: 'bo' })
+    const { result } = renderHook(() => ({ coupon: useCoupon(), store: useStore() }))
+    await waitFor(() => expect(result.current.store.status).toBe('ready'))
+
+    await act(async () => {
+      await result.current.coupon.check('half')
+    })
+    expect(result.current.coupon.coupon).toEqual({
+      code: 'half',
+      valid: true,
+      discount: { type: 'percent', value: 50, duration: 'repeating', duration_in_months: 3 },
+      reason: null,
+    })
+    expect(result.current.coupon.applied).toBe('half')
+
+    await act(async () => {
+      await result.current.coupon.check('OLD')
+    })
+    expect(result.current.coupon.coupon).toMatchObject({ valid: false, reason: 'expired' })
+    expect(result.current.coupon.applied).toBeUndefined()
+    expect(result.current.coupon.error).toBeNull()
+
+    await act(async () => {
+      await result.current.coupon.check('nope')
+    })
+    expect(result.current.coupon.coupon).toMatchObject({ valid: false, reason: 'not_found' })
+
+    let refused
+    await act(async () => {
+      refused = await result.current.store.checkout(13, { coupon: 'OLD', navigate: false }).catch((e) => e)
+    })
+    expect(refused).toMatchObject({ status: 400, extensions: { reason: 'coupon_not_applicable', cause: 'expired' } })
+    expect(mock.store.checkouts.size).toBe(0)
+
+    await act(async () => {
+      await result.current.coupon.check('WELCOME10')
+    })
+    expect(result.current.coupon.coupon).toEqual({ code: 'WELCOME10', valid: true, discount: null, reason: null })
+    await act(async () => {
+      const done = await result.current.store.checkout(13, { coupon: result.current.coupon.applied, navigate: false })
+      expect(done.held).toBe(false)
+    })
+
+    act(() => result.current.coupon.clear())
+    expect(result.current.coupon.coupon).toBeNull()
+    await act(async () => {
+      expect(await result.current.coupon.check('')).toBeNull()
+    })
+  })
+
+  it('couponReason — why a previewed code will not apply to one offering', () => {
+    const priced = { id: 13, price: 4900, currency: 'CAD' }
+    const free = { id: 14, price: 0, currency: 'CAD' }
+    const usd = { code: 'FIVE', valid: true, discount: { type: 'amount', value: 500, currency: 'usd', duration: 'once' }, reason: null }
+    const cad = { ...usd, discount: { ...usd.discount, currency: 'cad' } }
+    const half = { code: 'HALF', valid: true, discount: { type: 'percent', value: 12.5, duration: 'once' }, reason: null }
+    expect(couponReason(null, priced)).toBeNull()
+    expect(couponReason(half, priced)).toBeNull()
+    expect(couponReason(cad, priced)).toBeNull()
+    expect(couponReason(usd, priced)).toBe('wrong_currency')
+    expect(couponReason({ code: 'OLD', valid: false, discount: null, reason: 'expired' }, priced)).toBe('expired')
+    expect(couponReason(usd, free)).toBeNull()
+  })
+
+  it('the mock: an amount off in another currency is refused at checkout; an empty code is not_found', async () => {
+    const { mock } = stack({ signedInAs: 'bo' })
+    const { result } = renderHook(() => useStore())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    expect(await previewCoupon({ code: 'FIVE' })).toMatchObject({ valid: true, discount: { type: 'amount', currency: 'usd' } })
+    let refused
+    await act(async () => {
+      refused = await result.current.checkout(13, { coupon: 'FIVE', navigate: false }).catch((e) => e)
+    })
+    expect(refused).toMatchObject({ status: 400, extensions: { reason: 'coupon_not_applicable', cause: 'wrong_currency' } })
+    expect(mock.store.checkouts.size).toBe(0)
+    const raw = await getClient().request('POST', '/billing/coupon/validate', { body: { code: '', for: 'store' } })
+    expect(raw).toEqual({ valid: false, reason: 'not_found' })
+    await expect(getClient().request('POST', '/billing/coupon/validate', { body: {} })).rejects.toMatchObject({ status: 400 })
+  })
+
+  it('signed out, a preview fails as an error, not as a code that cannot apply', async () => {
+    stack()
+    const { result } = renderHook(() => useCoupon())
+    let failed
+    await act(async () => {
+      failed = await result.current.check('HALF').catch((e) => e)
+    })
+    expect(failed).toMatchObject({ kind: 'auth' })
+    expect(result.current.error).toBe(failed)
+    expect(result.current.coupon).toBeNull()
   })
 })
 

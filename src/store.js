@@ -106,6 +106,59 @@ export async function checkoutWith(client, { catalog, offering, successUrl, canc
 }
 
 /**
+ * What a code would take off, before the buyer checks out — the same rules a checkout
+ * applies, so a code that previews `valid` is one `checkout` takes. Answers `{ code, valid,
+ * discount, reason }`: `discount` `{ type: 'percent' | 'amount', value, currency?, duration,
+ * duration_in_months? }` on a valid code, else `null`; `reason` why one cannot apply
+ * (`COUPON_CAUSE`: `not_found`, `expired`, …), else `null`. A code that cannot apply is an
+ * answer, not a refusal.
+ *
+ * @param {object} client
+ * @param {{ code: string, signal?: AbortSignal }} args - `code` as the buyer typed it; case
+ *   does not matter, and the spaces around it are dropped
+ * @returns {Promise<{ code: string, valid: boolean, discount: object|null, reason: string|null }>}
+ * @throws {ApiError} `invalid` — no code · `auth` — nobody signed in
+ */
+export async function previewCouponWith(client, { code, signal } = {}) {
+  const typed = code == null ? '' : String(code).trim()
+  if (!typed) throw ApiError.invalid('No Code', 'previewCoupon needs the code the buyer typed')
+  const body = { [STORE_FIELD.code]: typed, [STORE_FIELD.couponFor]: STORE_FIELD.couponForStore }
+  const answer = await client.request('POST', STORE.coupon, { body, signal })
+  const valid = answer?.[STORE_FIELD.valid] === true
+  const discount = answer?.[STORE_FIELD.discount]
+  const reason = answer?.[STORE_FIELD.reason]
+  return {
+    code: typed,
+    valid,
+    discount: valid && discount && typeof discount === 'object' ? discount : null,
+    reason: !valid && typeof reason === 'string' ? reason : null,
+  }
+}
+
+/**
+ * Why a previewed code will not apply to one offering, or `null` when it will — so a Buy
+ * button can say so before the checkout refuses it. The preview's own `reason`; else
+ * `wrong_currency` for an amount off in another currency than the offering's. A free
+ * offering ignores a code, so nothing stops it: `null`.
+ *
+ * @param {{ valid: boolean, discount: object|null, reason: string|null } | null} coupon - a
+ *   preview's answer (`previewCoupon`, `useCoupon`)
+ * @param {object} offering - one of the store's `offerings`
+ * @returns {string|null}
+ */
+export function couponReason(coupon, offering) {
+  if (!coupon) return null
+  if (offering?.[STORE_FIELD.price] === 0) return null
+  if (!coupon.valid) return coupon.reason ?? 'not_found'
+  const off = coupon.discount
+  const theirs = offering?.[STORE_FIELD.currency]
+  if (off?.type === 'amount' && off.currency && theirs && String(off.currency).toLowerCase() !== String(theirs).toLowerCase()) {
+    return 'wrong_currency'
+  }
+  return null
+}
+
+/**
  * What the signed-in account holds — each `{ entity: { uuid, model_uuid, model_name, brief,
  * disabled }, sources, since }`: active only, one row per record, `sources` every way it is
  * held (`purchase`, `subscription`, `comp`). A record reached through a held one — a course's

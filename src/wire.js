@@ -1247,6 +1247,7 @@ export const GRANT = {
  * | `POST /checkout` | `{ catalog_uuid, offering_id, success_url, cancel_url, coupon? }` — the first four required, the two addresses absolute | `{ checkout_url }`: the payment page to send the buyer to, or `null` when the buyer already holds what it sells — a one-off at `price: 0` is taken at once, with no payment and whatever `payments_ready` says |
  * | `GET /entitlements/me` | — | `{ entitlements: [{ entity: { uuid, model_uuid, model_name, brief, disabled }, sources, since }] }`: active only, one row per record, `sources` each way it is held (`purchase`, `subscription`, `comp`), `since` the earliest |
  * | `GET /entitlements/{uuid}?model=` | `after` (the last page's `next`), `limit` (50 by default, at most 200) | `{ holders: [{ account, sources, since }], next }`, oldest account first; `account` a person, `null` once the account is gone; `next` null on the last page |
+ * | `POST /billing/coupon/validate` | `{ code, for: 'store' }`, `code` as the buyer typed it, case not mattering; `for: 'store'` checks the code for the signed-in buyer, as the store's checkout does, whatever the workspace (without it, the acting workspace's payer: the platform plan's) | `{ valid, discount?, reason? }`: a code that cannot apply is still `200`, `valid: false` and `reason` one of `COUPON_CAUSE`. A body without `code` is `400` with no `reason`; `""` is `valid: false, reason: 'not_found'` (since 2026-11-18, *the backend's statement*) |
  *
  * - **An offering** — `{ id, price, currency, charge_kind, entry?, recurring_interval?,
  *   promo?, components?, owned }` — carries a field only when it has a value: `entry`
@@ -1278,6 +1279,7 @@ export const STORE = {
   checkout: '/checkout',
   held: '/entitlements/me',
   holders: (uuid) => `/entitlements/${segment(uuid)}`,
+  coupon: '/billing/coupon/validate',
 }
 
 /** The store's bodies and answers (`STORE`). MEASURED by backend, 2026-10-20. */
@@ -1288,6 +1290,8 @@ export const STORE_FIELD = {
   paymentsReady: 'payments_ready',
   id: 'id',
   price: 'price',
+  /** An offering's currency, resolved: its own or the store's. */
+  currency: 'currency',
   entry: 'entry',
   owned: 'owned',
   /** How an offering charges — `one_off`, or a subscription's kind. A one-off at `price: 0` is taken at once. */
@@ -1300,6 +1304,19 @@ export const STORE_FIELD = {
   coupon: 'coupon',
   /** A checkout's answer: where to send the buyer, or `null` — they hold it already. */
   checkoutUrl: 'checkout_url',
+  /**
+   * A coupon's preview: `{ code }` → `{ valid, discount?, reason? }`. `discount` is `{ type:
+   * 'percent' | 'amount', value, currency?, duration: 'once' | 'repeating' | 'forever',
+   * duration_in_months? }` — `currency` on an amount; `duration` how long it discounts a
+   * subscription.
+   */
+  code: 'code',
+  /** Whose code a preview checks: `store`, the buyer's — what the store's checkout applies. */
+  couponFor: 'for',
+  couponForStore: 'store',
+  valid: 'valid',
+  discount: 'discount',
+  reason: 'reason',
   /** What I hold, and who holds a record. */
   entitlements: 'entitlements',
   holders: 'holders',
@@ -1323,6 +1340,26 @@ export const STORE_FIELD = {
  * | `404` | `not_for_sale` | the catalog a checkout names is not the store |
  * | `400` | `coupon_not_applicable` | the code a buyer typed cannot apply; nothing opens |
  */
+/**
+ * Why a code cannot apply — a coupon preview's `reason`, and a refused checkout's `cause`
+ * (`coupon_not_applicable`): one set, as the backend states them, 2026-11-18. A
+ * backend may add one, so a field words the ones it knows and has a fallback.
+ * `wrong_currency` — an amount off in another currency than the offering's — only a
+ * checkout refuses, since a preview names no offering; `couponReason` finds it first from the
+ * preview's `discount.currency` (since 2026-11-18).
+ */
+export const COUPON_CAUSE = Object.freeze([
+  'not_found',
+  'inactive',
+  'not_yet_valid',
+  'expired',
+  'max_redemptions',
+  'not_allowlisted',
+  'per_user_limit',
+  'no_discount',
+  'wrong_currency',
+])
+
 export const STORE_REASON = {
   noStore: 'no_store',
   ambiguous: 'store_ambiguous',

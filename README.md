@@ -802,6 +802,33 @@ function Buy({ uuid, href, words }) {
   `error.extensions.reason`: `payments_not_ready`, `coupon_not_applicable` (with
   `extensions.cause`: `not_found`, `expired`, …), `not_for_sale`. `checking` is the
   offering's id while one is out, and `checkoutError` the last refusal.
+- **`useCoupon()`** — a code the buyer types before paying: `check(code)` previews it
+  with the rules a checkout applies, and `coupon` holds the answer, `{ code, valid,
+  discount, reason }`. A valid code's `discount` is `{ type: 'percent' | 'amount', value,
+  currency?, duration: 'once' | 'repeating' | 'forever', duration_in_months? }`: what it
+  takes off, and for a subscription how long. A code that cannot apply is an answer, not
+  an error: `valid: false`, and `reason` one of `COUPON_CAUSE` (`@uniweb/api/wire`:
+  `not_found`, `inactive`, `not_yet_valid`, `expired`, `max_redemptions`,
+  `not_allowlisted`, `per_user_limit`, `no_discount`, `wrong_currency`). A backend may add
+  a reason, so give your wording a fallback. A percent may be fractional (`12.5`); an amount
+  is in the currency's smallest unit, like `price`. A code is for every priced offering, and
+  a free one ignores it. `couponReason(coupon, offering)` says why a previewed code won't
+  apply to one offering, or `null`: the preview's `reason`, or `wrong_currency` for an
+  amount off in another currency than the offering's. Pass `applied`, the last valid code,
+  to `checkout(offering, { coupon: applied })`. The checkout checks the code again, since it
+  can run out between the two, and a refusal carries the same reason as
+  `extensions.cause`. The hook draws
+  nothing: the field, its label and the words for each reason are your foundation's.
+  Outside React, `previewCoupon({ code })` answers the same.
+
+  ```jsx
+  const { checkout } = useStore()
+  const { check, coupon, applied, checking, clear } = useCoupon()
+  // <input onChange={(e) => { setCode(e.target.value); clear() }} />
+  // <button disabled={checking} onClick={() => check(code)}>Apply</button>
+  // const why = couponReason(coupon, offering) → why && (words[why] ?? words.other)
+  // <button onClick={() => checkout(offering, { coupon: applied })}>Buy</button>
+  ```
 - **After paying,** the buyer lands on `successUrl`. The purchase is written when the
   payment's notice reaches the backend, which can be a moment after they land, so the page
   there calls `refresh()` until the offering reads `owned`.
@@ -1039,7 +1066,11 @@ seed: {
       { entry: '01926d5e-0000-7000-8000-0000000c0002', price: 0 },      // a free one
     ],
   },
-  coupons: ['WELCOME10'],                                   // the codes that apply at a checkout
+  coupons: [
+    'WELCOME10',                                            // applies, with no discount to preview
+    { code: 'HALF', type: 'percent', value: 50, duration: 'once' },   // previews what it takes off
+    { code: 'OLD', cause: 'expired' },                     // cannot apply, and says why
+  ],
   entitlements: [{ username: 'guest', entity: '01926d5e-0000-7000-8000-0000000c0002' }],
   notifications: [{ to: 'guest', from: 'ada', payload: { entity_uuid: '…', entity_model: '@/track', permission: 'read', actor_handle: 'ada' } }],
 }

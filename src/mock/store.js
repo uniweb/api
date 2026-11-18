@@ -85,8 +85,8 @@ import { uuidv7 } from '../uuid.js'
  *   for a person whenever an entry is given to them (`entity_shared`, as the backend sends it).
  *
  * ⛔ **What it does not model**: a package of several records in one offering, a subscription
- * renewing or lapsing, a refund, what a coupon takes off (a code the seed lists applies, any other
- * is refused), second factors —
+ * renewing or lapsing, a refund, what a coupon takes off at the payment (a code the seed lists
+ * previews as seeded and applies, any other is `not_found`), second factors —
  * at a sign-in or an elevation, where a `code` is accepted and not checked —
  * sign-in providers, and so no elevation through one, roles other than the operator's
  * — so no reader or editor held at a unit, no entry grants but a blueprint's, and no by
@@ -468,8 +468,14 @@ export class MockStore {
     /** What accounts hold: `{ account_id, entity_uuid, sources: Set, since }`, one per account and record. */
     this.entitlements = []
     for (const e of seed.entitlements || []) this.seedEntitlement(e)
-    /** The coupon codes that apply at a checkout, lowercased: case does not matter. */
-    this.coupons = new Set((seed.coupons || []).map((code) => String(code).toLowerCase()))
+    /**
+     * The coupon codes, by the code lowercased (case does not matter): each `{ code, discount,
+     * cause }`. A seed gives a code alone, which applies with no discount the mock can name, or
+     * `{ code, type, value, currency?, duration?, duration_in_months? }` for what it takes off,
+     * or `{ code, cause }` for one that cannot apply, and why (`expired`, …).
+     */
+    this.coupons = new Map()
+    for (const c of seed.coupons || []) this.seedCoupon(c)
     /** The store — one catalog, or none. Its offerings name the seeded records they sell. */
     this.shop = seed.store ? this.storeFrom(seed.store) : null
     /** Checkouts opened and not yet completed or cancelled, by token. */
@@ -2215,6 +2221,50 @@ export class MockStore {
     }
   }
 
+  /** A seeded coupon: a code alone, or `{ code, type, value, … }`, or `{ code, cause }`. */
+  seedCoupon(c) {
+    const entry = typeof c === 'string' ? { code: c } : c
+    if (!entry || typeof entry.code !== 'string' || !entry.code.trim()) throw new Error('mock: a seeded coupon needs a code')
+    const { code, cause = null, type, value, currency, duration = 'once', duration_in_months } = entry
+    const discount = type
+      ? { type, value, ...(currency ? { currency } : {}), duration, ...(duration_in_months != null ? { duration_in_months } : {}) }
+      : null
+    this.coupons.set(code.trim().toLowerCase(), { code: code.trim(), discount, cause })
+  }
+
+  /**
+   * Why a code cannot apply — a `COUPON_CAUSE` — or null when it can. Given the offering a
+   * checkout buys, an amount off in another currency is `wrong_currency`, as the backend
+   * refuses it before the payment is asked.
+   */
+  couponCause(code, offering = null) {
+    const found = this.coupons.get(String(code).trim().toLowerCase())
+    if (!found) return 'not_found'
+    if (found.cause) return found.cause
+    const off = found.discount
+    const theirs = offering ? (offering.currency ?? this.shop?.info?.currency) : null
+    if (off?.type === 'amount' && off.currency && theirs && off.currency.toLowerCase() !== String(theirs).toLowerCase()) {
+      return 'wrong_currency'
+    }
+    return null
+  }
+
+  /**
+   * `POST /billing/coupon/validate` — `{ valid, discount? }`, or `{ valid: false, reason }`: a
+   * code that cannot apply is still an answer, `""` included (`not_found`). A code seeded alone
+   * answers no `discount`. `for` is taken and changes nothing: the mock has one payer, the
+   * buyer, which is what `for: 'store'` asks the backend to check.
+   */
+  couponPreview(b) {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return refuse(400, 'Bad Request', 'invalid coupon body: expected an object')
+    const code = b[STORE_FIELD.code]
+    if (typeof code !== 'string') return refuse(400, 'Bad Request', 'invalid coupon body: missing field `code`')
+    const cause = this.couponCause(code)
+    if (cause) return { body: { [STORE_FIELD.valid]: false, [STORE_FIELD.reason]: cause } }
+    const { discount } = this.coupons.get(code.trim().toLowerCase())
+    return { body: { [STORE_FIELD.valid]: true, ...(discount ? { [STORE_FIELD.discount]: discount } : {}) } }
+  }
+
   /** `GET /store` — `{ catalog_uuid, info, offerings, payments_ready }`, or `404 no_store`. */
   storeAnswer({ entity = null } = {}) {
     if (!this.shop) return refuse(404, 'Not Found', 'this site has no store', { reason: STORE_REASON.noStore })
@@ -2245,8 +2295,9 @@ export class MockStore {
       return { body: { [STORE_FIELD.checkoutUrl]: null } }
     }
     const coupon = b[STORE_FIELD.coupon]
-    if (coupon != null && !this.coupons.has(String(coupon).toLowerCase())) {
-      return refuse(400, 'Bad Request', `the code ${coupon} cannot apply`, { reason: STORE_REASON.coupon, cause: 'not_found' })
+    const cause = coupon != null ? this.couponCause(coupon, offering) : null
+    if (cause) {
+      return refuse(400, 'Bad Request', `the code ${coupon} cannot apply`, { reason: STORE_REASON.coupon, cause })
     }
     if (!this.shop.payments_ready) {
       return refuse(409, 'Conflict', 'payments are not set up on this site', { reason: STORE_REASON.notReady })

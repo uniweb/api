@@ -76,7 +76,9 @@ export {
   readMayCreate,
   readStore,
   checkout,
+  previewCoupon,
   offeringState,
+  couponReason,
   listEntitlements,
   listHolders,
   listNotifications,
@@ -116,6 +118,7 @@ export { useDefinition } from './hooks/useDefinition.js'
 export { useChoices } from './hooks/useChoices.js'
 export { useEntityWriter } from './hooks/useEntityWriter.js'
 export { useStore } from './hooks/useStore.js'
+export { useCoupon } from './hooks/useCoupon.js'
 export { useEntitlements } from './hooks/useEntitlements.js'
 export { useHolders } from './hooks/useHolders.js'
 export { useNotifications } from './hooks/useNotifications.js'

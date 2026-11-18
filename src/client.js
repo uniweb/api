@@ -39,7 +39,7 @@ import {
   leaveAccessWith,
 } from './access.js'
 import { listUnitsWith } from './units.js'
-import { readStoreWith, checkoutWith, listEntitlementsWith, listHoldersWith } from './store.js'
+import { readStoreWith, checkoutWith, previewCouponWith, listEntitlementsWith, listHoldersWith } from './store.js'
 import { readMayCreateWith, mayDo } from './may.js'
 import {
   listUnitRolesWith,
@@ -759,6 +759,11 @@ export class ApiClient {
   /** Open a checkout for an offering of the store — `{ url, held }` (`./store.js`). */
   checkout(args) {
     return checkoutWith(this, args)
+  }
+
+  /** What a coupon code would take off, before a checkout — `{ code, valid, discount, reason }` (`./store.js`). */
+  previewCoupon(args) {
+    return previewCouponWith(this, args)
   }
 
   /** What the signed-in account holds (`./store.js`). */
@@ -1767,6 +1772,9 @@ export const readMayCreate = async ({ schemas, signal } = {}) => {
 export const readStore = async (options) => readStoreWith(required(), options)
 /** @see ApiClient#checkout — on any instance, an older copy's too */
 export const checkout = async (args) => checkoutWith(required(), args)
+
+/** @see ApiClient#previewCoupon — on any instance, an older copy's too */
+export const previewCoupon = async (args) => previewCouponWith(required(), args)
 /** @see ApiClient#listEntitlements — on any instance, an older copy's too */
 export const listEntitlements = async (options) => listEntitlementsWith(required(), options)
 /** @see ApiClient#listHolders — on any instance, an older copy's too */
@@ -1781,7 +1789,7 @@ export const markNotificationRead = async (id) => markNotificationReadWith(requi
 export const dismissNotification = async (id) => dismissNotificationWith(required(), id)
 /** @see ApiClient#markAllNotificationsRead — on any instance, an older copy's too */
 export const markAllNotificationsRead = async () => markAllNotificationsReadWith(required())
-export { offeringState } from './store.js'
+export { offeringState, couponReason } from './store.js'
 
 export { mailedLink, forgetMailedLink } from './mailed-links.js'
 export { isElevated, rolesInFull, elevationReturn } from './elevation.js'
