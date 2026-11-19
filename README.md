@@ -829,6 +829,27 @@ function Buy({ uuid, href, words }) {
   // const why = couponReason(coupon, offering) → why && (words[why] ?? words.other)
   // <button onClick={() => checkout(offering, { coupon: applied })}>Buy</button>
   ```
+- **Paying in the page** — `checkout(offering, { coupon, inPage: true })` asks for the
+  provider's own checkout form, embedded in the page, instead of sending the buyer away. It
+  answers `{ url: null, held: false, payment }` and navigates nowhere. Mount the form in your
+  own frame — kit's `<Overlay>` gives the modal, your foundation the box and its words — and
+  await the outcome:
+
+  ```jsx
+  const { payment } = await checkout(offering, { coupon: applied, inPage: true })
+  // <Overlay open onClose={payment.cancel}><div ref={payment.mount} /></Overlay>
+  const outcome = await payment.done   // 'paid' · 'cancelled'
+  if (outcome === 'paid') refresh()    // until the offering reads `owned`
+  ```
+
+  The form shows the line, the discount and the total, in the page's language (or
+  `locale`), and handles a declined card itself. `payment.quote` (`{ amount_due_cents,
+  discount_cents, currency }`) is the same total, for a summary of your own. `'paid'` is not
+  yet ownership: the purchase is written when the provider's notice reaches the backend, so
+  refresh until it reads `owned`. `done` rejects when the provider's script can't load. The
+  script comes from the provider at first use, never bundled. Where the backend can't pay in
+  the page, the answer is a `url` and `checkout` navigates as usual, so handle both. The
+  local mock answers its own payment page.
 - **After paying,** the buyer lands on `successUrl`. The purchase is written when the
   payment's notice reaches the backend, which can be a moment after they land, so the page
   there calls `refresh()` until the offering reads `owned`.

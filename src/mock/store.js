@@ -85,7 +85,9 @@ import { uuidv7 } from '../uuid.js'
  *   for a person whenever an entry is given to them (`entity_shared`, as the backend sends it).
  *
  * ⛔ **What it does not model**: a package of several records in one offering, a subscription
- * renewing or lapsing, a refund, what a coupon takes off at the payment (a code the seed lists
+ * renewing or lapsing, a refund, paying in the page (`collection: 'in_page'` is ignored, as a
+ * backend that cannot do it ignores it, and the mock's own payment page answers), what a
+ * coupon takes off at the payment (a code the seed lists
  * previews as seeded and applies, any other is `not_found`), second factors —
  * at a sign-in or an elevation, where a `code` is accepted and not checked —
  * sign-in providers, and so no elevation through one, roles other than the operator's

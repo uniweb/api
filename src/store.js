@@ -14,6 +14,8 @@
  */
 
 import { ApiError } from './errors.js'
+import { readLanguages } from './languages.js'
+import { canMount, paymentFrom } from './payment.js'
 import { PARAM, STORE, STORE_FIELD, STORE_REASON } from './wire.js'
 
 /** What the store is cached under — one per `entity` it is narrowed to, or none. */
@@ -63,8 +65,10 @@ export function offeringState(offering, store) {
 }
 
 /**
- * Open a checkout for one of the store's offerings. Answers `{ url, held }`: `url` is the
- * payment page to send the buyer to; `null`, with `held: true`, when they hold it already —
+ * Open a checkout for one of the store's offerings. Answers `{ url, held, payment }`: `url` is
+ * the payment page to send the buyer to; `payment`, when `inPage` was asked and the backend
+ * could, the provider's form to mount in the page instead (`./payment.js`); both `null`, with
+ * `held: true`, when they hold it already —
  * a free one-off is taken at once, and everything the viewer has read reads again, since
  * what they may read just changed.
  *
@@ -80,12 +84,16 @@ export function offeringState(offering, store) {
  * @param {string} [args.successUrl] - where the buyer lands after paying; this page by default
  * @param {string} [args.cancelUrl] - where they land if they turn back; this page by default
  * @param {string} [args.coupon] - a code the buyer typed; case does not matter
- * @returns {Promise<{ url: string|null, held: boolean }>}
+ * @param {boolean} [args.inPage] - pay in the page: the answer carries a `payment` to mount
+ *   (`./payment.js`) instead of a `url`. A backend or a provider that cannot do that answers a
+ *   `url` as before, so a caller handles both
+ * @param {string} [args.locale] - the language the provider's form speaks: the page's by default
+ * @returns {Promise<{ url: string|null, held: boolean, payment: object|null }>}
  * @throws {ApiError} `rule` with `reason: 'payments_not_ready'` · `absent` with `reason:
  *   'not_for_sale'` or `'no_store'` · `invalid` with `reason: 'coupon_not_applicable'` and
  *   `extensions.cause` · `auth` — nobody signed in
  */
-export async function checkoutWith(client, { catalog, offering, successUrl, cancelUrl, coupon } = {}) {
+export async function checkoutWith(client, { catalog, offering, successUrl, cancelUrl, coupon, inPage = false, locale } = {}) {
   const offeringId = offering !== null && typeof offering === 'object' ? offering[STORE_FIELD.id] : offering
   if (!catalog) throw ApiError.invalid('No Catalog', "checkout needs the store's catalog_uuid")
   if (offeringId == null || offeringId === '') throw ApiError.invalid('No Offering', 'checkout needs an offering of the store, or its id')
@@ -96,13 +104,29 @@ export async function checkoutWith(client, { catalog, offering, successUrl, canc
     [STORE_FIELD.cancelUrl]: absolute(cancelUrl, 'cancelUrl'),
     ...(coupon ? { [STORE_FIELD.coupon]: String(coupon) } : {}),
   }
-  const answer = await client.request('POST', STORE.checkout, { body })
+  if (inPage) {
+    const language = locale ?? readLanguages(client.website ?? undefined)[0]
+    const answer = await client.request('POST', STORE.checkout, {
+      body: { ...body, [STORE_FIELD.collection]: STORE_FIELD.inPage, ...(language ? { [STORE_FIELD.locale]: language } : {}) },
+    })
+    const collection = answer?.[STORE_FIELD.collection]
+    if (!collection) return settled(client, answer)
+    if (canMount(collection)) {
+      return { url: null, held: false, payment: paymentFrom(collection, answer?.[STORE_FIELD.quote] ?? null) }
+    }
+    // A way of paying in the page this copy cannot mount: ask again for the provider's page.
+  }
+  return settled(client, await client.request('POST', STORE.checkout, { body }))
+}
+
+/** A checkout's `checkout_url` answer: a page to send the buyer to, or `null` — held at once. */
+function settled(client, answer) {
   const url = typeof answer?.[STORE_FIELD.checkoutUrl] === 'string' ? answer[STORE_FIELD.checkoutUrl] : null
   if (url === null) {
     client.invalidate?.(() => true)
     client.refresh?.()
   }
-  return { url, held: url === null }
+  return { url, held: url === null, payment: null }
 }
 
 /**

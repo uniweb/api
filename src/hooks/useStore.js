@@ -40,6 +40,13 @@ const QUIET = Object.freeze({ checking: null, checkoutError: null })
  *   backend does — `error.extensions.reason` names why (`payments_not_ready`,
  *   `coupon_not_applicable` with its `cause`, …). `checking` is the offering's id while one is
  *   out, and `checkoutError` the last refusal.
+ * - `checkout(offering, { coupon, inPage: true })` pays in the page where the backend can: it
+ *   answers `{ url: null, held: false, payment }`, and nothing navigates. Mount
+ *   `payment.mount` as a ref inside the foundation's own frame (kit's `<Overlay>`), close it
+ *   with `payment.cancel`, and await `payment.done` — `'paid'` or `'cancelled'`. After
+ *   `'paid'`, `refresh` until the offering reads `owned`. Where the backend answers a page
+ *   instead, it navigates as without `inPage`, so a Buy button handles both. The form speaks
+ *   the page's language, or `locale`.
  * - Both addresses default to this page. After a payment the entitlement is written when the
  *   payment's notice arrives, which can be a moment after the buyer lands: a page there calls
  *   `refresh` until the offering reads `owned`.
@@ -54,7 +61,7 @@ const QUIET = Object.freeze({ checking: null, checkoutError: null })
  *   offerings: object[],
  *   paymentsReady: boolean,
  *   error: Error | null,
- *   checkout: (offering: object|number, options?: { successUrl?: string, cancelUrl?: string, coupon?: string, navigate?: boolean }) => Promise<{ url: string|null, held: boolean }>,
+ *   checkout: (offering: object|number, options?: { successUrl?: string, cancelUrl?: string, coupon?: string, inPage?: boolean, locale?: string, navigate?: boolean }) => Promise<{ url: string|null, held: boolean, payment: object|null }>,
  *   checking: number | null,
  *   checkoutError: Error | null,
  *   refresh: () => void,
@@ -116,14 +123,14 @@ export function useStore({ entity = null } = {}) {
   const catalog = entry?.data?.[STORE_FIELD.catalog] ?? null
 
   const checkout = useCallback(
-    async (offering, { successUrl, cancelUrl, coupon, navigate = true } = {}) => {
+    async (offering, { successUrl, cancelUrl, coupon, inPage, locale, navigate = true } = {}) => {
       if (!client || !client.enabled) throw ApiError.disabled()
       if (!catalog) throw ApiError.invalid('No Store', 'checkout reads the store first: wait for status "ready"')
       const mine = (seq.current += 1)
       const id = offering !== null && typeof offering === 'object' ? offering[STORE_FIELD.id] : offering
       setWork({ checking: id ?? null, checkoutError: null })
       try {
-        const result = await checkoutWith(client, { catalog, offering, successUrl, cancelUrl, coupon })
+        const result = await checkoutWith(client, { catalog, offering, successUrl, cancelUrl, coupon, inPage, locale })
         if (live.current && seq.current === mine) setWork(QUIET)
         if (result.url && navigate) globalThis.location?.assign?.(result.url)
         return result

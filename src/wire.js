@@ -1244,7 +1244,7 @@ export const GRANT = {
  * | route | takes | answers |
  * |---|---|---|
  * | `GET /store` | `?entity=<uuid>` keeps the offerings that sell that one record | `{ catalog_uuid, info: { name, currency, description? }, offerings, payments_ready }` |
- * | `POST /checkout` | `{ catalog_uuid, offering_id, success_url, cancel_url, coupon? }` — the first four required, the two addresses absolute | `{ checkout_url }`: the payment page to send the buyer to, or `null` when the buyer already holds what it sells — a one-off at `price: 0` is taken at once, with no payment and whatever `payments_ready` says |
+ * | `POST /checkout` | `{ catalog_uuid, offering_id, success_url, cancel_url, coupon?, collection?, locale? }` — the first four required, the two addresses absolute | `{ checkout_url }`: the payment page to send the buyer to, or `null` when the buyer already holds what it sells — a one-off at `price: 0` is taken at once, with no payment and whatever `payments_ready` says. With `collection: 'in_page'`, a priced offering answers `{ collection: { mode, provider, client_secret, publishable_key }, quote: { amount_due_cents, discount_cents, currency } }` instead, and no `checkout_url` key: the provider's form is mounted in the page (`./payment.js`) |
  * | `GET /entitlements/me` | — | `{ entitlements: [{ entity: { uuid, model_uuid, model_name, brief, disabled }, sources, since }] }`: active only, one row per record, `sources` each way it is held (`purchase`, `subscription`, `comp`), `since` the earliest |
  * | `GET /entitlements/{uuid}?model=` | `after` (the last page's `next`), `limit` (50 by default, at most 200) | `{ holders: [{ account, sources, since }], next }`, oldest account first; `account` a person, `null` once the account is gone; `next` null on the last page |
  * | `POST /billing/coupon/validate` | `{ code, for: 'store' }`, `code` as the buyer typed it, case not mattering; `for: 'store'` checks the code for the signed-in buyer, as the store's checkout does, whatever the workspace (without it, the acting workspace's payer: the platform plan's) | `{ valid, discount?, reason? }`: a code that cannot apply is still `200`, `valid: false` and `reason` one of `COUPON_CAUSE`. A body without `code` is `400` with no `reason`; `""` is `valid: false, reason: 'not_found'` (since 2026-11-18, *the backend's statement*) |
@@ -1305,6 +1305,25 @@ export const STORE_FIELD = {
   /** A checkout's answer: where to send the buyer, or `null` — they hold it already. */
   checkoutUrl: 'checkout_url',
   /**
+   * Paying in the page, since 2026-11-19, *the backend's statement*: the checkout's body takes
+   * `collection: 'in_page'` and `locale`, the page's language, which the backend passes to the
+   * provider when it knows it, else `auto` — a locale never fails a purchase. A backend that
+   * does not know `collection` ignores it and answers `checkout_url`, as before. A free one-off
+   * answers `checkout_url: null` either way.
+   */
+  collection: 'collection',
+  inPage: 'in_page',
+  locale: 'locale',
+  /** The in-page answer's `collection`: how to mount the provider's form. */
+  mode: 'mode',
+  provider: 'provider',
+  clientSecret: 'client_secret',
+  publishableKey: 'publishable_key',
+  /** The provider's checkout page, embedded, from `client_secret`. */
+  embeddedCheckout: 'embedded_checkout',
+  /** The in-page answer's `quote`: what the provider will charge, in cents, the discount applied. */
+  quote: 'quote',
+  /**
    * A coupon's preview: `{ code }` → `{ valid, discount?, reason? }`. `discount` is `{ type:
    * 'percent' | 'amount', value, currency?, duration: 'once' | 'repeating' | 'forever',
    * duration_in_months? }` — `currency` on an amount; `duration` how long it discounts a
@@ -1359,6 +1378,9 @@ export const COUPON_CAUSE = Object.freeze([
   'no_discount',
   'wrong_currency',
 ])
+
+/** The payment providers an in-page checkout names (`collection.provider`), 2026-11-19. */
+export const PAYMENT_PROVIDER = Object.freeze({ stripe: 'stripe' })
 
 export const STORE_REASON = {
   noStore: 'no_store',

@@ -105,7 +105,7 @@ describe('the store, through the client', () => {
       }
     })
     const answer = await checkout({ catalog: CATALOG, offering: { id: 13 }, coupon: 'WELCOME10' })
-    expect(answer).toEqual({ url: 'https://pay.example/session/1', held: false })
+    expect(answer).toEqual({ url: 'https://pay.example/session/1', held: false, payment: null })
     expect(sent).toEqual({
       catalog_uuid: CATALOG,
       offering_id: 13,
@@ -135,7 +135,7 @@ describe('the store, through the client', () => {
     const key = client.cacheKey(storeSpec())
     await client.load(key, () => client.readStore(), storeSpec())
     expect(client.website.dataStore.has(key)).toBe(true)
-    expect(await checkout({ catalog: CATALOG, offering: 14 })).toEqual({ url: null, held: true })
+    expect(await checkout({ catalog: CATALOG, offering: 14 })).toEqual({ url: null, held: true, payment: null })
     expect(client.website.dataStore.has(key)).toBe(false)
   })
 
@@ -225,7 +225,7 @@ describe('useStore, against the mock', () => {
     await act(async () => {
       answer = await result.current.shop.checkout(result.current.shop.offerings[1])
     })
-    expect(answer).toEqual({ url: null, held: true })
+    expect(answer).toEqual({ url: null, held: true, payment: null })
     await waitFor(() => expect(result.current.shop.offerings.find((o) => o.id === 14)?.owned).toBe(true))
     await waitFor(() => expect(result.current.held.status).toBe('ready'))
     expect(result.current.held.entitlements.map((e) => e.entity.uuid)).toEqual([FREE])
@@ -277,8 +277,20 @@ describe('useStore, against the mock', () => {
     expect(refused).toMatchObject({ kind: 'rule', status: 409, extensions: { reason: 'payments_not_ready' } })
     expect(result.current.checkoutError).toBe(refused)
     await act(async () => {
-      expect(await result.current.checkout(14)).toEqual({ url: null, held: true })
+      expect(await result.current.checkout(14)).toEqual({ url: null, held: true, payment: null })
     })
+  })
+
+  it('in the page, the mock answers its own payment page, as a backend that does not pay in the page does', async () => {
+    stack({ signedInAs: 'bo' })
+    const { result } = renderHook(() => useStore())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    let answer
+    await act(async () => {
+      answer = await result.current.checkout(13, { inPage: true, navigate: false })
+    })
+    expect(answer.payment).toBeNull()
+    expect(answer.url).toMatch(/\/local\/checkout\/store\//)
   })
 
   it('a code the store does not know refuses the checkout, naming why — and opens nothing', async () => {
