@@ -1,10 +1,13 @@
 # @uniweb/api
 
-The client a foundation uses to talk to **its site's `backend` service** — sign-in, the
-site's members, the content they create, what the site sells them, and their inbox.
+The SDK for a site's **Application Engine**, which a Uniweb site turns on as its
+`backend` service. Sign-in and the session, the site's members, the entries they create and
+who may read them, forms and uploads, what the site sells them, and their inbox are React
+hooks. Your foundation writes no routes, tokens or fetch code: the SDK holds the engine's API,
+and the engine's address comes from the site's host.
 
 You import it the way you import `@uniweb/kit`. It is bundled into your foundation,
-tree-shaken, and **inert on a site that has no `backend` service**: nothing throws, no request
+tree-shaken, and **inert on a site that has no engine**: nothing throws, no request
 leaves, and your components render the version of themselves that does not need one.
 
 ```bash
@@ -263,11 +266,11 @@ function AdminMode() {
   If the identity that comes back is not this account's, `error.extensions.reason` is
   `'oauth_step_up_not_linked'`.
 
-Elevating does not open the backend's administration — the Admin link does.
+Elevating does not open the Solution Owner Console — the Admin link does.
 
-**The Admin link** — some of the site's members administer its backend, the operator
-among them. For them, `adminHref` is the address that takes them to the backend's
-administration, already signed in; for everyone else it is `null`, so draw the link
+**The Admin link** — some of the site's members administer its engine, the operator
+among them. For them, `adminHref` is the address that takes them to the Solution Owner
+Console, the engine's own administration, already signed in; for everyone else it is `null`, so draw the link
 only when it is set:
 
 ```jsx
@@ -750,8 +753,8 @@ Outside React: `grantAccess`, `revokeAccess`, `listAccess`, `listAccessCandidate
 
 ## Selling: the store, a checkout, and what members hold
 
-A site's backend can sell: the site's owner connects their payment account and sets the
-store's offerings in the backend's administration, and the site draws them. A purchase
+A site's engine can sell: the site's owner connects their payment account and sets the
+store's offerings in the Solution Owner Console, and the site draws them. A purchase
 gives the buyer read access to what an offering sells — a course — and, through it, to
 what its references marked `sold_with` point to — the course's lessons, read with
 `useEntity({ schema, uuid, via: course.uuid })`. A record bought lists for its buyer with
@@ -1053,8 +1056,8 @@ trying your page; the messages are in `mock.outbox` too. To try an invitation, s
 and claiming it — or signing up with that address and confirming it — leaves the
 invitation waiting. An offer to an address a seeded account holds waits for that account
 from the start.
-The operator's Admin link answers too, landing on a page of the mock's own — the backend's
-administration is not part of it. State is in memory: restart to reset — or, for a demo's
+The operator's Admin link answers too, landing on a page of the mock's own — the Solution Owner
+Console is not part of it. State is in memory: restart to reset — or, for a demo's
 "start over", `getClient().request('POST', '/_mock/reset')` makes it the seed's again; no
 backend answers that route.
 
@@ -1134,6 +1137,10 @@ names that frontend's origin, where the mail's links land:
 npx uniweb-api-mock --port 8787 --site http://localhost:3000
 ```
 
+The mock is for building with no engine at hand. For exactly what production does, the
+Docker Developer Edition runs the real Application Engine and its database on your machine,
+and the `uniweb` CLI publishes a site to it as it does to Uniweb.
+
 ## Outside React
 
 `@uniweb/api/client` carries the same operations as plain functions and imports no
@@ -1152,8 +1159,8 @@ access to an entry, `listAccess`, `listAccessCandidates`, `grantAccess`, `revoke
 
 ## A member's feedback
 
-A signed-in member can send the people who run the site's backend what they think, or what
-went wrong; they read it in the backend's administration, and there is nothing to read back.
+A signed-in member can send the people who run the site what they think, or what went
+wrong; they read it in the Solution Owner Console, and there is nothing to read back.
 
 ```jsx
 const { send, status } = useFeedback()
