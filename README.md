@@ -54,8 +54,9 @@ function Account() {
 }
 ```
 
-`viewer` is flat — `viewer.uuid`, `viewer.username`, `viewer.handle`, and `viewer.roles`,
-a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and on a site a
+`viewer` is flat — the signed-in account's fields as the engine sends them (`viewer.uuid`,
+`viewer.username`, `viewer.handle`; a field the engine doesn't send isn't there, so read
+before you prefill a form from one), and `viewer.roles`, a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and on a site a
 session holds the account's roles as a reader's until it is elevated.** A site runs
 your foundation's code with the signed-in member's session, so an administrator signed
 in on it reads what their role reaches — the operator reads every member's content —
