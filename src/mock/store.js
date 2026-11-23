@@ -2211,7 +2211,8 @@ export class MockStore {
    */
   changeSubscription(id, cancel) {
     const sub = this.subscriptions.find((x) => String(x.id) === String(id) && x.account_id === this.account?.id && x.status === 'active')
-    if (!sub) return refuse(404, 'Not Found', `subscription ${id} not found`)
+    // Measured by backend, 2026-11-23 (backend `197686bc`): the not-found body every entity route sends.
+    if (!sub) return refuse(404, 'Not Found', `subscription ${id} not found`, { kind: 'subscription', key: String(id) })
     sub.cancel_at_period_end = cancel
     return { body: subscriptionView(sub) }
   }

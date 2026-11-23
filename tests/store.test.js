@@ -620,6 +620,19 @@ describe('a member cancels and resumes their own subscription', () => {
     expect(row.subscriptions[0]).toMatchObject({ status: 'active', cancel_at_period_end: false, current_period_end: expect.stringMatching(/Z$/) })
   })
 
+  it('the mock’s refusal is the backend’s, byte for byte', async () => {
+    const { client } = stack({ seed: subscribed, signedInAs: 'bo' })
+    const sent = client.fetchFn
+    let body
+    client.fetchFn = vi.fn(async (url, init) => {
+      const res = await sent(url, init)
+      body = await res.clone().json()
+      return res
+    })
+    await expect(client.cancelSubscription(77)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    expect(body).toEqual({ status: 404, title: 'Not Found', detail: 'subscription 77 not found', kind: 'subscription', key: '77' })
+  })
+
   it('posts to the subscription’s own route, with no body', async () => {
     const { client } = stack({ seed: subscribed, signedInAs: 'bo' })
     const { id } = (await client.listEntitlements())[0].subscriptions[0]
