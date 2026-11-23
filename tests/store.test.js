@@ -2,7 +2,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 import { createUniweb } from '@uniweb/core'
-import { useStore, useCoupon, useEntitlements, useHolders, readStore, checkout, previewCoupon, couponReason, listHolders, offeringState, readEntity, signIn } from '../src/index.js'
+import { useStore, useCoupon, useEntitlements, useHolders, readStore, checkout, previewCoupon, couponReason, listHolders, offeringState, readEntity, signIn, cancelSubscription, resumeSubscription } from '../src/index.js'
 import { getClient } from '../src/client.js'
 import { createMockBackend } from '../src/mock/index.js'
 import { storeSpec } from '../src/store.js'
@@ -540,5 +540,92 @@ describe('signing in reads the store for who is now looking', () => {
       await signIn({ username: 'cy', password: 'cy' })
     })
     await waitFor(() => expect(result.current.offerings[0]?.owned).toBe(true))
+  })
+})
+
+describe('a member cancels and resumes their own subscription', () => {
+  const MEMBERSHIP_END = '2027-01-01T00:00:00Z'
+  const subscribed = {
+    ...SEED,
+    store: { ...SEED.store, offerings: [...SEED.store.offerings, { id: 15, entry: FREE, price: 1500, charge_kind: 'recurring', recurring_interval: 'month' }] },
+    entitlements: [
+      { username: 'bo', entity: COURSE, source: 'subscription', current_period_end: MEMBERSHIP_END },
+      { username: 'cy', entity: COURSE, source: 'subscription' },
+      { username: 'cy', entity: COURSE, source: 'comp' },
+    ],
+  }
+
+  it('⭐ the row lists its subscription; a cancel sets when access ends, a resume takes it back', async () => {
+    stack({ seed: subscribed, signedInAs: 'bo' })
+    const { result } = renderHook(() => useEntitlements())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    const [row] = result.current.entitlements
+    expect(row.subscriptions).toEqual([{ id: expect.any(Number), status: 'active', current_period_end: MEMBERSHIP_END, cancel_at_period_end: false }])
+    expect(row).not.toHaveProperty('ends_at')
+    const { id } = row.subscriptions[0]
+
+    let answer
+    await act(async () => { answer = await result.current.cancelSubscription(id) })
+    expect(answer).toEqual({ id, status: 'active', current_period_end: MEMBERSHIP_END, cancel_at_period_end: true })
+    await waitFor(() => expect(result.current.entitlements[0]?.ends_at).toBe(MEMBERSHIP_END))
+    await act(async () => { answer = await result.current.cancelSubscription(id) })
+    expect(answer.cancel_at_period_end).toBe(true)
+
+    await act(async () => { answer = await result.current.resumeSubscription(id) })
+    expect(answer.cancel_at_period_end).toBe(false)
+    await waitFor(() => expect(result.current.entitlements[0]).not.toHaveProperty('ends_at'))
+    expect(result.current.entitlements[0].sources).toEqual(['subscription'])
+  })
+
+  it('held another way too, a cancelled subscription leaves the record held: no ends_at', async () => {
+    stack({ seed: subscribed, signedInAs: 'cy' })
+    const { result } = renderHook(() => useEntitlements())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    const { id } = result.current.entitlements[0].subscriptions[0]
+    await act(async () => { await result.current.cancelSubscription(id) })
+    await waitFor(() => expect(result.current.entitlements[0].subscriptions[0].cancel_at_period_end).toBe(true))
+    expect(result.current.entitlements[0]).not.toHaveProperty('ends_at')
+  })
+
+  it('a record held only by purchase lists no subscriptions', async () => {
+    stack({ seed: { ...SEED, entitlements: [{ username: 'bo', entity: COURSE }] }, signedInAs: 'bo' })
+    const { result } = renderHook(() => useEntitlements())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    expect(result.current.entitlements[0]).not.toHaveProperty('subscriptions')
+  })
+
+  it('⭐ another member’s subscription is absent, never forbidden; signed out is auth', async () => {
+    const { client } = stack({ seed: subscribed, signedInAs: 'cy' })
+    const cys = (await client.listEntitlements())[0].subscriptions[0].id
+    stack({ seed: subscribed, signedInAs: 'bo' })
+    await expect(cancelSubscription(cys)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    await expect(resumeSubscription(cys)).rejects.toMatchObject({ kind: 'absent', status: 404 })
+    await expect(resumeSubscription('')).rejects.toMatchObject({ kind: 'invalid' })
+    stack({ seed: subscribed })
+    await expect(cancelSubscription(cys)).rejects.toMatchObject({ kind: 'auth' })
+  })
+
+  it('a completed checkout for an offering that is not a one-off begins a subscription', async () => {
+    const { mock } = stack({ seed: subscribed, signedInAs: 'ada' })
+    const { result } = renderHook(() => useStore())
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    const monthly = result.current.offerings.find((o) => o.id === 15)
+    let answer
+    await act(async () => { answer = await result.current.checkout(monthly, { navigate: false }) })
+    await mock.fetch(new Request(`${answer.url}/complete`))
+    const held = renderHook(() => useEntitlements())
+    await waitFor(() => expect(held.result.current.status).toBe('ready'))
+    const row = held.result.current.entitlements.find((r) => r.entity.uuid === FREE)
+    expect(row.sources).toEqual(['subscription'])
+    expect(row.subscriptions[0]).toMatchObject({ status: 'active', cancel_at_period_end: false, current_period_end: expect.stringMatching(/Z$/) })
+  })
+
+  it('posts to the subscription’s own route, with no body', async () => {
+    const { client } = stack({ seed: subscribed, signedInAs: 'bo' })
+    const { id } = (await client.listEntitlements())[0].subscriptions[0]
+    await client.cancelSubscription(id)
+    await client.resumeSubscription(id)
+    const posts = client.fetchFn.mock.calls.filter(([, init]) => init?.method === 'POST').map(([url, init]) => [parse(String(url)).pathname, init.body ?? null])
+    expect(posts).toEqual([[`/_api/store/subscriptions/${id}/cancel`, null], [`/_api/store/subscriptions/${id}/resume`, null]])
   })
 })

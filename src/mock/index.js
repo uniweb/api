@@ -963,6 +963,13 @@ export function createMockBackend({
       if (!store.account) return unauthorized()
       return json(200, store.heldList())
     }
+    const changing = method === 'POST' ? /^\/store\/subscriptions\/([^/]+)\/(cancel|resume)$/.exec(path) : null
+    if (changing) {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      return answer(store.changeSubscription(decodeURIComponent(changing[1]), changing[2] === 'cancel'))
+    }
     const holdersOf = path.startsWith('/entitlements/') && path !== STORE.held ? path.slice('/entitlements/'.length) : null
     if (holdersOf && !holdersOf.includes('/') && method === 'GET') {
       const bad = unexpected(q, [PARAM.model, PARAM.after, PARAM.limit])

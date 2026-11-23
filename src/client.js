@@ -39,7 +39,7 @@ import {
   leaveAccessWith,
 } from './access.js'
 import { listUnitsWith } from './units.js'
-import { readStoreWith, checkoutWith, previewCouponWith, listEntitlementsWith, listHoldersWith } from './store.js'
+import { readStoreWith, checkoutWith, previewCouponWith, listEntitlementsWith, listHoldersWith, cancelSubscriptionWith, resumeSubscriptionWith } from './store.js'
 import { readMayCreateWith, mayDo } from './may.js'
 import {
   listUnitRolesWith,
@@ -769,6 +769,16 @@ export class ApiClient {
   /** What the signed-in account holds (`./store.js`). */
   listEntitlements(options) {
     return listEntitlementsWith(this, options)
+  }
+
+  /** End one of the viewer's subscriptions when its period ends — the subscription (`./store.js`). */
+  cancelSubscription(id) {
+    return cancelSubscriptionWith(this, id)
+  }
+
+  /** Take a subscription's cancel back while its period runs — the subscription (`./store.js`). */
+  resumeSubscription(id) {
+    return resumeSubscriptionWith(this, id)
   }
 
   /** Who holds a record — a page, and the next one's cursor (`./store.js`). */
@@ -1777,6 +1787,10 @@ export const checkout = async (args) => checkoutWith(required(), args)
 export const previewCoupon = async (args) => previewCouponWith(required(), args)
 /** @see ApiClient#listEntitlements — on any instance, an older copy's too */
 export const listEntitlements = async (options) => listEntitlementsWith(required(), options)
+/** @see ApiClient#cancelSubscription — on any instance, an older copy's too */
+export const cancelSubscription = async (id) => cancelSubscriptionWith(required(), id)
+/** @see ApiClient#resumeSubscription — on any instance, an older copy's too */
+export const resumeSubscription = async (id) => resumeSubscriptionWith(required(), id)
 /** @see ApiClient#listHolders — on any instance, an older copy's too */
 export const listHolders = async (args) => listHoldersWith(required(), withTypeName(args, 'listHolders'))
 /** @see ApiClient#listNotifications — on any instance, an older copy's too */

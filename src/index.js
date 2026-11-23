@@ -80,6 +80,8 @@ export {
   offeringState,
   couponReason,
   listEntitlements,
+  cancelSubscription,
+  resumeSubscription,
   listHolders,
   listNotifications,
   countNotifications,

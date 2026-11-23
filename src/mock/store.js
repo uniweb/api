@@ -84,8 +84,13 @@ import { uuidv7 } from '../uuid.js'
  * - **The inbox** (since 2026-11-14) — `seed.notifications`: each account's rows, and one more
  *   for a person whenever an entry is given to them (`entity_shared`, as the backend sends it).
  *
+ * - **A member's subscription** (since 2026-11-23) — a checkout completed for an offering that
+ *   isn't a one-off, or a seeded `subscription` entitlement, begins one. What the member holds
+ *   lists it, with `ends_at` once it is set to cancel, and the member cancels it at the period's
+ *   end or resumes it.
+ *
  * ⛔ **What it does not model**: a package of several records in one offering, a subscription
- * renewing or lapsing, a refund, paying in the page (`collection: 'in_page'` is ignored, as a
+ * renewing or lapsing (its period never ends here), a refund, paying in the page (`collection: 'in_page'` is ignored, as a
  * backend that cannot do it ignores it, and the mock's own payment page answers), what a
  * coupon takes off at the payment (a code the seed lists
  * previews as seeded and applies, any other is `not_found`), second factors —
@@ -237,6 +242,26 @@ function makeClock() {
   }
 }
 
+/** A subscription as the backend lists it: `current_period_end` only when there is one. */
+function subscriptionView(sub) {
+  return {
+    [STORE_FIELD.id]: sub.id,
+    [STORE_FIELD.status]: sub.status,
+    ...(sub.current_period_end ? { [STORE_FIELD.currentPeriodEnd]: sub.current_period_end } : {}),
+    [STORE_FIELD.cancelAtPeriodEnd]: sub.cancel_at_period_end,
+  }
+}
+
+/** When a period that starts now ends: a day, a week, a month (the default) or a year on. */
+function periodEnd(interval) {
+  const end = new Date()
+  if (interval === 'day') end.setUTCDate(end.getUTCDate() + 1)
+  else if (interval === 'week') end.setUTCDate(end.getUTCDate() + 7)
+  else if (interval === 'year') end.setUTCFullYear(end.getUTCFullYear() + 1)
+  else end.setUTCMonth(end.getUTCMonth() + 1)
+  return end.toISOString().replace(/\.\d{3}Z$/, 'Z')
+}
+
 /** A problem answer, as `{ problem }` — the router turns it into the response. */
 export const refuse = (status, title, detail, extensions = {}) => ({
   problem: { status, title, ...(detail ? { detail } : {}), ...extensions },
@@ -368,7 +393,7 @@ export class MockStore {
     this.clock = makeClock()
     /** Uploaded files, by the SHA-256 of their bytes: `{ bytes, type }` (`ASSETS`). */
     this.assets = new Map()
-    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT, offering: 0, notification: 0 }
+    this.ids = { account: 1, model: 0, section: 0, entity: 0, item: 0, invitation: 0, unit: SITE_UNIT, offering: 0, notification: 0, subscription: 0 }
     const founded = foundFrom(blueprint)
     /** Who may create an account: `open`, or `invite_only` (`SIGNUP`). */
     this.signup = founded.signup
@@ -467,6 +492,13 @@ export class MockStore {
     /** The inbox: every account's rows, as the backend keeps them — `{ id, recipient_account_id, kind, … }`. */
     this.notifications = []
     for (const n of seed.notifications || []) this.seedNotification(n)
+    /**
+     * Store subscriptions: `{ id, account_id, entity_uuid, status, current_period_end,
+     * cancel_at_period_end }`. One begins when a checkout for an offering that isn't a one-off
+     * completes, or from a seeded entitlement whose `source` is `subscription`. Its period never
+     * ends here: no renewal, no lapse.
+     */
+    this.subscriptions = []
     /** What accounts hold: `{ account_id, entity_uuid, sources: Set, since }`, one per account and record. */
     this.entitlements = []
     for (const e of seed.entitlements || []) this.seedEntitlement(e)
@@ -2143,13 +2175,45 @@ export class MockStore {
     }
   }
 
-  /** `seed.entitlements`: `{ username, entity, source? }` — a record an account holds, `source` `purchase` by default. */
-  seedEntitlement({ username, entity, source = 'purchase' } = {}) {
+  /**
+   * `seed.entitlements`: `{ username, entity, source?, current_period_end?, cancel_at_period_end? }`
+   * — a record an account holds, `source` `purchase` by default. `subscription` also begins a
+   * subscription that conveys it: renewing in a month unless `current_period_end` says when, and
+   * set to cancel when `cancel_at_period_end` is true.
+   */
+  seedEntitlement({ username, entity, source = 'purchase', current_period_end, cancel_at_period_end } = {}) {
     const account = this.accounts.find((a) => a.username === username)
     if (!account) throw new Error(`[uniweb/api mock] entitlements: '${username}' is not a seeded account`)
     const held = this.entities.get(entity)
     if (!held) throw new Error(`[uniweb/api mock] entitlements: ${entity} is no seeded entity's uuid`)
     this.entitle(account, held, source)
+    if (source === 'subscription') this.subscribe(account, held, { current_period_end, cancel_at_period_end })
+  }
+
+  /** Begin a store subscription that conveys `entity` to `account`. */
+  subscribe(account, entity, { interval = null, current_period_end, cancel_at_period_end = false } = {}) {
+    const sub = {
+      id: (this.ids.subscription += 1),
+      account_id: account.id,
+      entity_uuid: entity.uuid,
+      status: 'active',
+      current_period_end: current_period_end ?? periodEnd(interval),
+      cancel_at_period_end: cancel_at_period_end === true,
+    }
+    this.subscriptions.push(sub)
+    return sub
+  }
+
+  /**
+   * `POST /store/subscriptions/{id}/cancel` and `…/resume`: set the viewer's own live
+   * subscription to end when its period ends, or to renew again. Idempotent. Any other id is
+   * `404`, as on the backend: another member's is absent, never forbidden.
+   */
+  changeSubscription(id, cancel) {
+    const sub = this.subscriptions.find((x) => String(x.id) === String(id) && x.account_id === this.account?.id && x.status === 'active')
+    if (!sub) return refuse(404, 'Not Found', `subscription ${id} not found`)
+    sub.cancel_at_period_end = cancel
+    return { body: subscriptionView(sub) }
   }
 
   /** Hold a record — one row per account and record, every way it is held among its `sources`. */
@@ -2319,7 +2383,12 @@ export class MockStore {
     const pending = this.checkouts.get(token)
     if (!pending) return null
     this.checkouts.delete(token)
-    this.entitle(pending.account, pending.offering.entity, 'purchase')
+    const { offering } = pending
+    if (offering.charge_kind === STORE_FIELD.oneOff) this.entitle(pending.account, offering.entity, 'purchase')
+    else {
+      this.entitle(pending.account, offering.entity, 'subscription')
+      this.subscribe(pending.account, offering.entity, { interval: offering.recurring_interval })
+    }
     return pending.success_url
   }
 
@@ -2340,11 +2409,19 @@ export class MockStore {
       const entity = this.entities.get(e.entity_uuid)
       if (!entity) continue
       const model = this.model(entity.model)
-      rows.push({
+      const row = {
         entity: { uuid: entity.uuid, model_uuid: model.uuid, model_name: model.name, brief: this.brief(entity, null), disabled: false },
         sources: [...e.sources],
         since: e.since,
-      })
+      }
+      const subs = this.subscriptions.filter((x) => x.account_id === me.id && x.entity_uuid === entity.uuid && x.status === 'active')
+      if (subs.length) {
+        row[STORE_FIELD.subscriptions] = subs.map(subscriptionView)
+        // Ending only when every way it is held is: by subscription alone, each set to cancel.
+        const ending = e.sources.size === 1 && e.sources.has('subscription') && subs.every((x) => x.cancel_at_period_end && x.current_period_end)
+        if (ending) row[STORE_FIELD.endsAt] = subs.map((x) => x.current_period_end).sort().at(-1)
+      }
+      rows.push(row)
     }
     return { [STORE_FIELD.entitlements]: rows }
   }

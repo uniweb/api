@@ -860,6 +860,12 @@ function Buy({ uuid, href, words }) {
 - **`useEntitlements()`** — what the viewer holds, for a "My courses" page: each `{ entity,
   sources, since }`, `sources` every way it is held (`purchase`, `subscription`, `comp`).
   What is read through a held record — a course's lessons — is not listed.
+- **A member cancels a subscription on the site.** A record held by subscription also
+  carries `subscriptions`, each `{ id, status, current_period_end, cancel_at_period_end }`,
+  and `ends_at` once every way it is held is ending: the date access stops, for "Your
+  membership ends on …". `useEntitlements()` gives `cancelSubscription(id)`, which ends it when
+  the period paid for ends (access stays until then), and `resumeSubscription(id)`, which takes
+  that back while the period runs. Each answers the subscription and reads the list again.
 - **`useHolders({ schema, uuid })`** — who holds a record, for an instructor's roster: each
   `{ account, sources, since }`, oldest account first, `more()` reading the next page while
   `next` is not `null`. Only the record's owner, or someone given `admin` on it — an
@@ -867,7 +873,8 @@ function Buy({ uuid, href, words }) {
   reads the record is `forbidden`, so draw nothing.
 
 Outside React: `readStore`, `checkout({ catalog, offering, … })`, `offeringState`,
-`listEntitlements` and `listHolders({ schema, uuid, after, limit })` from
+`listEntitlements`, `cancelSubscription(id)`, `resumeSubscription(id)` and
+`listHolders({ schema, uuid, after, limit })` from
 `@uniweb/api/client`.
 
 ## The inbox

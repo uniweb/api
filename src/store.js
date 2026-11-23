@@ -220,6 +220,40 @@ export async function listHoldersWith(client, { schema, uuid, after, limit, sign
   }
 }
 
+/**
+ * Cancel a member's own subscription: it ends when the period paid for ends, and they keep
+ * what it gives until then. Answers the subscription, `cancel_at_period_end: true`, and reads
+ * what the viewer holds again, so a page shows `ends_at`. Calling it twice changes nothing.
+ *
+ * @param {object} client
+ * @param {number|string} id - a `subscriptions[].id` from what the viewer holds
+ * @returns {Promise<{ id: number, status: string, current_period_end?: string, cancel_at_period_end: boolean }>}
+ * @throws {ApiError} `absent` — not the viewer's live subscription · `auth` — nobody signed in
+ */
+export function cancelSubscriptionWith(client, id) {
+  return changeSubscription(client, id, STORE.cancelSubscription, 'cancelSubscription')
+}
+
+/**
+ * Take a cancel back while the period still runs, so the subscription renews again. Answers
+ * the subscription, `cancel_at_period_end: false`, and reads what the viewer holds again.
+ *
+ * @param {object} client
+ * @param {number|string} id - a `subscriptions[].id` from what the viewer holds
+ * @returns {Promise<{ id: number, status: string, current_period_end?: string, cancel_at_period_end: boolean }>}
+ * @throws {ApiError} `absent` — not the viewer's live subscription · `auth` — nobody signed in
+ */
+export function resumeSubscriptionWith(client, id) {
+  return changeSubscription(client, id, STORE.resumeSubscription, 'resumeSubscription')
+}
+
+async function changeSubscription(client, id, route, name) {
+  if (id == null || id === '') throw ApiError.invalid('No Subscription', `${name} needs a subscription's id, from what the viewer holds`)
+  const answer = await client.request('POST', route(id))
+  client.invalidate?.((spec) => spec?.endpoint === STORE.held)
+  return answer
+}
+
 /** Whether a refusal says the site sells nothing — the ordinary state of most sites. */
 export const isNoStore = (error) => error?.extensions?.reason === STORE_REASON.noStore
 

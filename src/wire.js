@@ -1245,7 +1245,8 @@ export const GRANT = {
  * |---|---|---|
  * | `GET /store` | `?entity=<uuid>` keeps the offerings that sell that one record | `{ catalog_uuid, info: { name, currency, description? }, offerings, payments_ready }` |
  * | `POST /checkout` | `{ catalog_uuid, offering_id, success_url, cancel_url, coupon?, collection?, locale? }` — the first four required, the two addresses absolute | `{ checkout_url }`: the payment page to send the buyer to, or `null` when the buyer already holds what it sells — a one-off at `price: 0` is taken at once, with no payment and whatever `payments_ready` says. With `collection: 'in_page'`, a priced offering answers `{ collection: { mode, provider, client_secret, publishable_key }, quote: { amount_due_cents, discount_cents, currency } }` instead, and no `checkout_url` key: the provider's form is mounted in the page (`./payment.js`) |
- * | `GET /entitlements/me` | — | `{ entitlements: [{ entity: { uuid, model_uuid, model_name, brief, disabled }, sources, since }] }`: active only, one row per record, `sources` each way it is held (`purchase`, `subscription`, `comp`), `since` the earliest |
+ * | `GET /entitlements/me` | — | `{ entitlements: [{ entity: { uuid, model_uuid, model_name, brief, disabled }, sources, since }] }`: active only, one row per record, `sources` each way it is held (`purchase`, `subscription`, `comp`), `since` the earliest; a row held by subscription also `subscriptions` and, when every way it is held is ending, `ends_at` |
+ * | `POST /store/subscriptions/{id}/cancel`, `…/resume` | — | `{ id, status, current_period_end, cancel_at_period_end }`: the member's own subscription, to end at the period's end or to renew again; idempotent; `404` for an id that is not the caller's live store subscription |
  * | `GET /entitlements/{uuid}?model=` | `after` (the last page's `next`), `limit` (50 by default, at most 200) | `{ holders: [{ account, sources, since }], next }`, oldest account first; `account` a person, `null` once the account is gone; `next` null on the last page |
  * | `POST /billing/coupon/validate` | `{ code, for: 'store' }`, `code` as the buyer typed it, case not mattering; `for: 'store'` checks the code for the signed-in buyer, as the store's checkout does, whatever the workspace (without it, the acting workspace's payer: the platform plan's) | `{ valid, discount?, reason? }`: a code that cannot apply is still `200`, `valid: false` and `reason` one of `COUPON_CAUSE`. A body without `code` is `400` with no `reason`; `""` is `valid: false, reason: 'not_found'` (since 2026-11-18, *the backend's statement*) |
  *
@@ -1280,6 +1281,16 @@ export const STORE = {
   held: '/entitlements/me',
   holders: (uuid) => `/entitlements/${segment(uuid)}`,
   coupon: '/billing/coupon/validate',
+  /**
+   * A member's own subscription, by a `subscriptions[].id` from `held`: `POST`, no body, both
+   * answering the subscription (`{ id, status, current_period_end, cancel_at_period_end }`),
+   * both idempotent. `cancel` always ends it when the period paid for ends, and access stays
+   * until then; `resume` takes a cancel back while the period runs. `404` for any id that is not
+   * the caller's live store subscription, `401` signed out. Since 2026-11-23, *the backend's
+   * statement* (backend `96bfea82`, the store contract's rev K §3b).
+   */
+  cancelSubscription: (id) => `/store/subscriptions/${segment(id)}/cancel`,
+  resumeSubscription: (id) => `/store/subscriptions/${segment(id)}/resume`,
 }
 
 /** The store's bodies and answers (`STORE`). MEASURED by backend, 2026-10-20. */
@@ -1338,6 +1349,19 @@ export const STORE_FIELD = {
   reason: 'reason',
   /** What I hold, and who holds a record. */
   entitlements: 'entitlements',
+  /**
+   * A held row's subscriptions, on a record held by subscription (since 2026-11-23, *the
+   * backend's statement*): `subscriptions` the caller's live ones that convey it, each `{ id,
+   * status, current_period_end?, cancel_at_period_end }`, absent on a record held only by
+   * purchase or comp; `current_period_end` absent when the provider gave none. `ends_at` only
+   * when every way the record is held is ending (by subscription alone, each set to cancel):
+   * the latest end.
+   */
+  subscriptions: 'subscriptions',
+  endsAt: 'ends_at',
+  status: 'status',
+  currentPeriodEnd: 'current_period_end',
+  cancelAtPeriodEnd: 'cancel_at_period_end',
   holders: 'holders',
   next: 'next',
   after: 'after',
