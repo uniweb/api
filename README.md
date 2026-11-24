@@ -55,8 +55,10 @@ function Account() {
 ```
 
 `viewer` is flat — the signed-in account's fields as the engine sends them (`viewer.uuid`,
-`viewer.username`, `viewer.handle`; a field the engine doesn't send isn't there, so read
-before you prefill a form from one), and `viewer.roles`, a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and on a site a
+`viewer.username`, `viewer.handle`, and `viewer.email` and `viewer.display_name` when the
+account has them; a field the engine doesn't send isn't there, so read before you prefill a form
+from one). To greet someone, show `display_name`, then `handle`: `username` is an identifier, not
+a name, and `viewer.roles`, a list of `{ role, scope_unit_id }`. ⭐ **Roles describe the session, and on a site a
 session holds the account's roles as a reader's until it is elevated.** A site runs
 your foundation's code with the signed-in member's session, so an administrator signed
 in on it reads what their role reaches — the operator reads every member's content —
@@ -315,8 +317,9 @@ reaches — the operator's reaches every member's; other members' are private un
 site's service was set up to let members read each other's. `scope: 'mine'` lists only
 the viewer's own.
 
-A record is a summary: `record.brief` holds the fields of the Model's brief section. It
-carries no items — read the entity for those. `hasMore` is true when a page came back
+A record is a summary: `record.brief` holds the fields of the Model's brief section, and
+`record.created_at` and `record.updated_at` say when it was made and last changed (RFC 3339
+instants, on every record). It carries no items — read the entity for those. `hasMore` is true when a page came back
 full (`limit`, default 50); `matched` counts the records in this answer, not a total.
 `all: true` reads the whole list in one request.
 

@@ -921,3 +921,36 @@ describe('signedInAs', () => {
     expect(() => createMockBackend({ seed: { ...seed, entities: [{ uuid: 'track-main', model: '@/course' }] } })).toThrow(/not a UUID/)
   })
 })
+
+describe('the viewer\'s own address and name, and when a row was made (backend §3.19)', () => {
+  const seed = {
+    ...DEFAULT_SEED,
+    accounts: [
+      { username: 'organiser', password: 'organiser', operator: true, email: 'run@studio.test', displayName: 'Ada Lovelace' },
+      { username: 'attendee', password: 'attendee' },
+    ],
+  }
+
+  it('carries `email` and `display_name` on the viewer when the account has them', async () => {
+    const { client } = stack({ seed })
+    await signIn(client, 'organiser')
+    expect(client.session.viewer).toMatchObject({ email: 'run@studio.test', display_name: 'Ada Lovelace' })
+  })
+
+  it('leaves `display_name` out when the account has no name on its card', async () => {
+    const { client } = stack({ seed })
+    await signIn(client, 'attendee')
+    expect('display_name' in client.session.viewer).toBe(false)
+    expect(client.session.viewer.email).toBe('attendee@example.test')
+  })
+
+  it('dates every list row: `created_at` and `updated_at`, RFC 3339', async () => {
+    const { client } = stack({ seed })
+    await signIn(client, 'organiser')
+    const { records } = await client.listEntities({ schema: '@/track' })
+    for (const r of records) {
+      expect(Number.isNaN(Date.parse(r.created_at))).toBe(false)
+      expect(Number.isNaN(Date.parse(r.updated_at))).toBe(false)
+    }
+  })
+})

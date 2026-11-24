@@ -31,7 +31,8 @@ const DISABLED = Object.freeze({ status: 'absent', records: NONE, matched: 0, ha
  * *access* as absence of *content*.
  *
  * A record is the entity's summary — `record.brief` holds the brief section's
- * fields, beside `uuid`, `owner_id` and `via` — and carries no items; read one
+ * fields, beside `uuid`, `owner_id`, `via`, and `created_at` and `updated_at`, when it was made
+ * and last changed — and carries no items; read one
  * entity for those. ⚠️ `matched` counts the records in this answer, not a total:
  * `hasMore` is true when the page came back full.
  *

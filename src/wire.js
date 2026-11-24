@@ -558,6 +558,12 @@ export const TOTP = {
 /**
  * The viewer, as `/auth/me` answers. **MEASURED.**
  *
+ * `account` is `{ uuid, username, handle }`, with **`email`**, the caller's own address, and
+ * **`display_name`**, the name on the caller's card, each only when the account has one. This is
+ * the one account shape that carries `email`. `username` is an internal identifier, not a name to
+ * show: show `display_name`, then `handle`. The viewer carries them flat. *(Stated by backend,
+ * `api-package-contract` §3.19, 2026-11-24; asserted by its `serve_auth` test.)*
+ *
  * `roles` is a list of `{ role, scope_unit_id }` — `role` one of `system_admin`,
  * `unit_admin`, `content_editor`, `content_reader`, `user`; the operator's is
  * `{ role: 'system_admin', scope_unit_id: null }` (MEASURED 2026-09-18). ⭐ **They
@@ -847,6 +853,9 @@ export const CREATE = {
  * A row: `{ model_uuid, model_name, via, id, uuid, model_id, owner_id, unit_id,
  * sort_date, brief, disabled, created_by, created_at, updated_at }`. A list is
  * brief-only — `brief` is the entity's summary, and there are no items on a row.
+ * `created_at` and `updated_at`, RFC 3339 instants, are on every row whatever the Model's
+ * `sort_date`, which is `null` for a Model that names no date field *(promised by backend,
+ * `api-package-contract` §3.19, 2026-11-24; rows always carried them)*.
  *
  * ⛔ **`matched` counts the rows in THIS answer** — the page, when paging (a
  * `limit=1` over two entities answers `matched: 1`). It is the total only for

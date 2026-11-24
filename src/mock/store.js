@@ -341,7 +341,8 @@ function projectJson(value, locales) {
 export class MockStore {
   /**
    * @param {object} seed
-   * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, operator? }`.
+   * @param {object[]} [seed.accounts] - `{ username, password, email?, handle?, displayName?, operator? }`;
+   *   `displayName` is the name on the account's card, which `/auth/me` answers as `display_name`.
    *   Seeded accounts are verified. (`units: [...]` non-empty, the older spelling,
    *   also marks the operator.)
    * @param {object} [seed.schemas] - `{ '@scope/name': { sections?, append_only?, grantable?, i18n? } }`.
@@ -540,6 +541,8 @@ export class MockStore {
       password: a.password,
       email: a.email ?? `${a.username}@example.test`,
       handle: a.handle ?? a.username,
+      // The name on the account's card (`@uniweb/account-card`), which the mock seeds rather than makes.
+      displayName: typeof a.displayName === 'string' && a.displayName !== '' ? a.displayName : null,
       operator: a.operator ?? (Array.isArray(a.units) && a.units.length > 0),
       verified,
       // A unit's administrator needs a second factor (`UNIT_ADMIN`); the mock checks none, but holds
@@ -623,7 +626,13 @@ export class MockStore {
     const elevated = this.elevated
     const roles = account.operator ? [elevated ? { ...OPERATOR_ROLE } : { ...OPERATOR_ROLE, role: 'content_reader' }] : []
     return {
-      account: this.identity(account),
+      // ⭐ The one account shape that carries `email`, and the card's `display_name`: each only
+      // when the account has one (backend's `api-package-contract` §3.19, 2026-11-24).
+      account: {
+        ...this.identity(account),
+        ...(account.email ? { email: account.email } : {}),
+        ...(account.displayName ? { display_name: account.displayName } : {}),
+      },
       roles,
       // A request that names no workspace — as this package's never do — lands in the
       // home org, which every account belongs to. Both null would mean a non-member.
