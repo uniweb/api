@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useKept } from './kept.js'
 import { getClient } from '../client.js'
 import { hookTypeName } from '../types.js'
 
@@ -64,6 +65,8 @@ export function useEntity(ref) {
     () => (key ? store.get(key) : null),
   )
 
+  // Read again (the session elevated, or `refresh()`), the last answer stays until the new one lands.
+  const kept = useKept(key, entry)
   const [error, setError] = useState(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -90,6 +93,7 @@ export function useEntity(ref) {
   if (!active) return { ...DISABLED, refresh }
   if (entry) return { status: entry.data.status, entity: entry.data.entity, error: null, refresh }
   if (error) return { status: 'error', entity: null, error, refresh }
+  if (kept) return { status: kept.data.status, entity: kept.data.entity, error: null, refresh }
   return { status: 'loading', entity: null, error: null, refresh }
 }
 

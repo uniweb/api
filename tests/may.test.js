@@ -182,4 +182,34 @@ describe('useMayCreate', () => {
     )
     expect(result.current.may).toEqual({ '@/vehicle': 'now' })
   })
+
+  it('⭐ keeps its last answer while it reads again, never `loading` — a screen gated on it stays', async () => {
+    const { client } = stack()
+    await as(client, 'owner')
+    const seen = []
+    const { result } = renderHook(() => {
+      const r = useMayCreate({ schemas: ['@/vehicle'] })
+      seen.push(r.status)
+      return r
+    })
+    await waitFor(() => expect(result.current.status).toBe('ready'))
+    const from = seen.length
+    const sessions = []
+    const stop = client.subscribe(() => sessions.push(client.session.status))
+    await act(() => client.elevate({ password: 'owner' }))
+    stop()
+    // The session itself is asked again in place: it stays `authenticated` throughout.
+    expect(sessions.filter((s) => s !== 'authenticated')).toEqual([])
+    await waitFor(() => expect(result.current.may).toEqual({ '@/vehicle': 'now' }))
+    expect(seen.slice(from)).not.toContain('loading')
+  })
+
+  it('starts from nothing for another viewer: what one was answered is not the other\'s', async () => {
+    const { client } = stack()
+    await as(client, 'mia')
+    const { result } = renderHook(() => useMayCreate({ schemas: ['@/vehicle'] }))
+    await waitFor(() => expect(result.current.may).toEqual({ '@/vehicle': 'no' }))
+    await act(() => as(client, 'sally'))
+    await waitFor(() => expect(result.current.may).toEqual({ '@/vehicle': 'now' }))
+  })
 })

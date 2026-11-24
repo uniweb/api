@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { useKept } from './kept.js'
 import { getClient } from '../client.js'
 import { hookTypeName } from '../types.js'
 
@@ -86,6 +87,8 @@ export function useRecords(query) {
     () => (key ? store.get(key) : null),
   )
 
+  // Read again (the session elevated, or `refresh()`), the last answer stays until the new one lands.
+  const kept = useKept(key, entry)
   const [error, setError] = useState(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -112,6 +115,7 @@ export function useRecords(query) {
   if (!active) return { ...DISABLED, refresh }
   if (entry) return { status: 'ready', ...entry.data, error: null, refresh }
   if (error) return { status: 'error', records: NONE, matched: 0, hasMore: false, error, refresh }
+  if (kept) return { status: 'ready', ...kept.data, error: null, refresh }
   return { status: 'loading', records: NONE, matched: 0, hasMore: false, error: null, refresh }
 }
 

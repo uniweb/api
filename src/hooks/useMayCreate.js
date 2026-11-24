@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useKept } from './kept.js'
 import { getClient } from '../client.js'
 import { maySpec, readMayCreateWith } from '../may.js'
 import { hookTypeName } from '../types.js'
@@ -22,7 +23,8 @@ const noSnapshot = () => null
  * - **`status`** — `'absent'` with no backend or nobody signed in: nobody may create, so draw
  *   nothing; `'loading'`, `'ready'`, `'error'`.
  * - Read again by itself after the session elevates, lowers, or its elevation runs out — and
- *   by `refresh()`, after a create is refused. A hint, not a guard: the create still decides.
+ *   by `refresh()`, after a create is refused — keeping its last answer, never `loading`,
+ *   until the new one lands. A hint, not a guard: the create still decides.
  *
  * On an entry, ask what the viewer may do to it with `mayDo(entry, 'edit')`.
  *
@@ -70,6 +72,8 @@ export function useMayCreate({ schemas = [] } = {}) {
     () => (key ? cache.get(key) : null),
   )
 
+  // Read again (the session elevated, or `refresh()`), the last answer stays until the new one lands.
+  const kept = useKept(key, entry)
   const [error, setError] = useState(null)
   const [attempt, setAttempt] = useState(0)
 
@@ -87,7 +91,7 @@ export function useMayCreate({ schemas = [] } = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [client, key, entry, attempt])
 
-  const answers = entry?.data ?? null
+  const answers = entry?.data ?? (error ? null : kept?.data) ?? null
   const may = useMemo(
     () => (answers ? Object.fromEntries(named.map((n) => [n.given, answers[n.schema] ?? null])) : NONE),
     [answers, named],
