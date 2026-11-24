@@ -454,7 +454,8 @@ await programme.batch([...])          // one transaction: all of them, or none
 ```
 
 `item.id` is the `id` of an item on a read. Name a section as the Model does — the
-package resolves it to what the backend's item route takes.
+package resolves it to what the backend's item route takes. A schema written with flat `fields:` has
+one section, named `brief`: `create(data, { section: 'brief' })`.
 
 - **Concurrency is handled.** Every write carries the version of the item the viewer
   last saw — from a read or from the previous write — and the response updates it. You
