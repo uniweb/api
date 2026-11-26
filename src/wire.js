@@ -377,7 +377,8 @@ export const HANDOFF_REFUSAL = Object.freeze({
 export const AUTH_BODY = {
   login: ['username', 'password'],
   challenge: ['challenge_token', 'code'],
-  register: ['email', 'password', 'username?'],
+  register: ['email', 'password', 'username?', 'display_name?'],
+  accountName: ['display_name'],
   verifyRequest: ['username', 'password'],
   resetRequest: ['email'],
   resetConfirm: ['token', 'new_password', 'code?'],
@@ -611,6 +612,22 @@ export const VIEWER = {
   capabilities: 'capabilities',
   adminApp: 'admin_app',
   elevation: ELEVATION.me,
+}
+
+/**
+ * The signed-in person's own account. **Stated by backend, 2026-11-26 (`30ca9798`).**
+ *
+ * `PUT /account/name { display_name }` sets the caller's name, the one `/auth/me` answers as
+ * `account.display_name` and every roster carries as the person's `brief.display_name`. It works
+ * however the person signed up, so it is both a sign-up step and what a "my account" screen
+ * calls. `200 { display_name }`, trimmed; `400` for an empty name or one over `nameMax`
+ * characters. `POST /auth/register` takes the same optional `display_name`, checked before the
+ * account is made, so a refused name makes no account.
+ */
+export const ACCOUNT = {
+  name: '/account/name',
+  displayName: 'display_name',
+  nameMax: 100,
 }
 
 /**

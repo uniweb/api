@@ -24,6 +24,11 @@ const noop = async () => NONE
  * administration admits, `null` for everyone else, so draw the link only when it is
  * set. ⛔ Navigate to it, never `fetch` it (`adminHrefOf` in `../client.js`).
  *
+ * `setName(name)` sets the signed-in person's own name, the `viewer.display_name` rosters show
+ * them by — however they signed up, so it serves a sign-up's next step and a "my account"
+ * screen. It answers the name as stored and throws `kind: 'invalid'` for an empty one or one
+ * over 100 characters.
+ *
  * Reads the shared snapshot through `useSyncExternalStore`, so every copy of
  * this package on the page sees one session, and the first render on the
  * server matches the first render in the browser.
@@ -36,6 +41,7 @@ const noop = async () => NONE
  *   adminHref: string | null,
  *   signOut: () => Promise<void>,
  *   refresh: () => Promise<object>,
+ *   setName: (name: string) => Promise<string>,
  * }}
  */
 export function useSession() {
@@ -52,6 +58,7 @@ export function useSession() {
 
   const signOut = useCallback(() => (client ? client.signOut() : noop()), [client])
   const refresh = useCallback(() => (client ? client.refresh() : noop()), [client])
+  const setName = useCallback((name) => (client ? client.setName(name) : Promise.reject(new Error('no backend: there is nobody to name'))), [client])
 
   return {
     status: session.status,
@@ -61,6 +68,7 @@ export function useSession() {
     adminHref: adminHrefOf(client, session),
     signOut,
     refresh,
+    setName,
   }
 }
 

@@ -27,6 +27,7 @@ import {
   FEEDBACK,
   UNIT_ADMIN,
   ASSETS,
+  ACCOUNT,
 } from '../wire.js'
 import { MockStore, isUuid, refuse, EMAIL_SIGN_IN, SITE_UNIT } from './store.js'
 import { DEFAULT_SEED, DEFAULT_BLUEPRINT } from './seed.js'
@@ -473,7 +474,7 @@ export function createMockBackend({
       if (path === AUTH.register && method === 'POST') {
         const b = await body(request)
         // `username` is optional since 2026-10-25: without one the account is named for its address.
-        const shape = '{"email": ..., "password": ..., "username": ...}'
+        const shape = '{"email": ..., "password": ..., "username": ..., "display_name": ...}'
         if (b && b.username != null && typeof b.username !== 'string') return badRequest(`expected \`${shape}\`: invalid type for \`username\``)
         return fields(b, ['email', 'password'], shape) ?? answer(store.register(b))
       }
@@ -485,6 +486,15 @@ export function createMockBackend({
         const b = await body(request)
         return fields(b, ['token', 'new_password'], '{"token": ..., "new_password": ...}') ?? answer(store.confirmReset(b))
       }
+    }
+
+    // ── The signed-in person's own account ──────────────────────────────────
+    if (path === ACCOUNT.name && method === 'PUT') {
+      const bad = unexpected(q, [])
+      if (bad) return bad
+      if (!store.account) return unauthorized()
+      const b = await body(request)
+      return fields(b, [ACCOUNT.displayName], '{"display_name": ...}') ?? answer(store.setName(b[ACCOUNT.displayName]))
     }
 
     // ── Offers ──────────────────────────────────────────────────────────────

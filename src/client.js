@@ -17,7 +17,7 @@ import { ApiError } from './errors.js'
 import { isUuid } from './uuid.js'
 import { typeName, withTypeName } from './types.js'
 import { composeUrl, isCrossOrigin, readBody, UNSAFE } from './http.js'
-import { AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
+import { ACCOUNT, AUTH, ROUTES, PARAM, FIELD, LIST, OP, GUARDED_OPS, CREATE, READ, SCHEMA, SECTION_ITEMS, PAGE, TOTP, VIEWER } from './wire.js'
 import { Ledger } from './ledger.js'
 import { readLanguages, readsEveryLanguage, isLanguageMap, mergeInLanguage, checkLanguage } from './languages.js'
 import { verifyEmailWith, claimOfferWith } from './mailed-links.js'
@@ -625,7 +625,9 @@ export class ApiClient {
   }
 
   /**
-   * Sign up — `{ username, email, password }`, passed through unchanged.
+   * Sign up — `{ email, password, username?, display_name? }`, passed through unchanged.
+   * `display_name` is the person's name, as rosters and `viewer.display_name` show it; a
+   * refused one (empty, or over 100 characters) is a `400` and makes no account.
    *
    * Answers `202 { status: 'verification_required', email }`, and the SAME answer
    * when the address is already taken, so it never confirms who has an account.
@@ -638,6 +640,26 @@ export class ApiClient {
     // and the verification that makes the account comes later, often in another browser.
     report('conversion', 'sign_up')
     return answer
+  }
+
+  /**
+   * Set the signed-in person's own name — the one `viewer.display_name` holds and every roster
+   * shows them by. It works however they signed up, so it serves a sign-up's next step and a
+   * "my account" screen alike. Answers the name as stored (trimmed), and the viewer carries it
+   * at once.
+   *
+   * Throws `kind: 'invalid'` for an empty name or one over 100 characters, and `kind: 'auth'`
+   * when nobody is signed in.
+   *
+   * @param {string} name
+   * @returns {Promise<string>}
+   */
+  async setName(name) {
+    const answer = await this.request('PUT', ACCOUNT.name, { body: { [ACCOUNT.displayName]: name } })
+    const stored = typeof answer?.[ACCOUNT.displayName] === 'string' ? answer[ACCOUNT.displayName] : String(name).trim()
+    const viewer = this._session.viewer
+    if (viewer) this.setSession({ ...this._session, viewer: Object.freeze({ ...viewer, display_name: stored }) })
+    return stored
   }
 
   /** Ask for a password reset — `{ email }`. `202` whether or not the address is known. */

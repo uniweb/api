@@ -1,4 +1,4 @@
-import { ACCOUNT_REASON, CLAIM, FEEDBACK, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON, UNIT_ADMIN } from '../wire.js'
+import { ACCOUNT, ACCOUNT_REASON, CLAIM, FEEDBACK, FIELD, GRANT, INVITATION, LINK, OP, PROBLEM, SIGNUP, STORE_FIELD, STORE_REASON, UNIT_ADMIN } from '../wire.js'
 import { checkItemWrite, storedItemData, OUTCOME } from './schema-shape.js'
 import { fieldRow, rulesOf, otherDataOf, parseOptions, kindOf, isList } from './definition.js'
 import { uuidv7 } from '../uuid.js'
@@ -733,7 +733,7 @@ export class MockStore {
     return handle
   }
 
-  register({ username, email, password }) {
+  register({ username, email, password, display_name: displayName }) {
     // ⭐ By invitation only, an address nobody invited is refused, and nothing is created. An
     // invitation is an offer to the address (`seed.offers`), mailed or claimed.
     if (this.signup === SIGNUP.inviteOnly && !this.invited(email)) {
@@ -741,6 +741,9 @@ export class MockStore {
     }
     const short = this.passwordRefusal(password)
     if (short) return short
+    // A name is checked before the account is made, so a refused one makes none.
+    const name = displayName == null ? null : this.nameRefusal(displayName)
+    if (name?.problem) return name
     const named = typeof username === 'string' && username !== ''
     if (named && this.accounts.some((a) => a.username === username)) {
       return refuse(409, 'Conflict', `account username already exists: ${JSON.stringify(username)}`, {
@@ -754,13 +757,33 @@ export class MockStore {
     // Without a username the account is named for its address: its username internal, its
     // handle from the address (`api-package-contract.md` §3.10).
     const account = this.addAccount(
-      { username: named ? username : newUuid(), handle: named ? undefined : this.handleFor(email), email, password },
+      { username: named ? username : newUuid(), handle: named ? undefined : this.handleFor(email), email, password, displayName: name },
       { verified: false },
     )
     const token = newUuid()
     this.pending.verify.set(token, account)
     this.outbox.push({ to: email, subject: 'Confirm your email address', token, link: linkTo(LINK.verify, token) })
     return { status: 202, body: { status: 'verification_required', email } }
+  }
+
+  /**
+   * A name as `PUT /account/name` and a sign-up take it: trimmed, then refused when empty or
+   * over `ACCOUNT.nameMax` characters. Answers the name, or the refusal.
+   */
+  nameRefusal(value) {
+    const name = typeof value === 'string' ? value.trim() : ''
+    if (!name) return refuse(400, 'Validation', 'display_name must not be empty')
+    if ([...name].length > ACCOUNT.nameMax) return refuse(400, 'Validation', `display_name must be at most ${ACCOUNT.nameMax} characters`)
+    return name
+  }
+
+  /** `PUT /account/name` — the signed-in person's own name. */
+  setName(value) {
+    if (!this.account) return refuse(401, 'Unauthorized', 'authentication required')
+    const name = this.nameRefusal(value)
+    if (name?.problem) return name
+    this.account.displayName = name
+    return { body: { [ACCOUNT.displayName]: name } }
   }
 
   verify(token) {
@@ -2015,7 +2038,7 @@ export class MockStore {
 
   /** A person, as the grant routes name one. */
   person(account) {
-    return { account_id: account.id, uuid: account.uuid, handle: account.handle, brief: null }
+    return { account_id: account.id, uuid: account.uuid, handle: account.handle, brief: account.displayName ? { display_name: account.displayName } : null }
   }
 
   /** Someone who may read the entry and not administer it — `403`, `op: 'grant'` (MEASURED). */

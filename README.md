@@ -71,7 +71,9 @@ below) reads the backend's own answer.
 
 **Signing up** — `useSignUp().signUp({ email, password })` answers
 `{ status: 'verification_required', email }`, the same answer for an address already in
-use. `username` is optional: without one, the account is named for its address. The
+use. `username` is optional: without one, the account is named for its address. Ask for the
+person's name here too, as `display_name`: it is what rosters show them by, and a refused one
+(empty, or over 100 characters) is refused before any account is made. The
 account cannot sign in until the address is confirmed from the email the backend sends —
 its link lands on your site (below); until then `signIn` fails with
 `error.kind === 'unverified'`, and `useSignIn().resendVerification({ username, password })`
@@ -79,6 +81,13 @@ mails the link again, with the same answer whatever happened. `canSignUp` (like
 `canSignIn`) says only that the site has a backend, not that sign-up is open.
 
 A sign-in can name the account by its username, its `@handle` or its address.
+
+**A member's name** lives on their account, not in a type of yours: `viewer.display_name` for
+the person signed in, and `brief.display_name` for each person a roster lists (a record's
+holders, a team, who it is shared with). `useSession().setName('Ada Lovelace')` sets their own,
+however they signed up (by password, emailed code, mailed link or provider), so it serves the
+step after a sign-up that asked for none and a "my account" screen alike. It answers the name
+as stored, trimmed, and the viewer carries it at once.
 
 **What the page offers** — `useSignInOptions()` reads what the site's owner set. It is
 read once per page and shared; `status` is `'absent'` with no backend. The answer comes as
