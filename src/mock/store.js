@@ -187,7 +187,13 @@ function foundFrom(blueprint) {
   }
   const teams = new Map()
   for (const [id, team] of Object.entries(blueprint.teams ?? {})) {
-    teams.set(id, { id, label: team?.label ?? id, members: new Set() })
+    // A team with a condition (`joins: { holds: [types] }`) has, besides whoever is put in it, everyone
+    // holding a record of those types, bought or by subscription (`MockStore#inTeam`).
+    const holds = team?.joins?.holds ?? []
+    if (!Array.isArray(holds) || holds.some((t) => typeof t !== 'string')) {
+      throw new Error(`[uniweb/api mock] blueprint: teams.${id}.joins.holds is a list of types — got ${JSON.stringify(holds)}`)
+    }
+    teams.set(id, { id, label: team?.label ?? id, members: new Set(), holds })
   }
   const access = blueprint.access ?? {}
   for (const [type, line] of Object.entries(access)) {
@@ -565,7 +571,24 @@ export class MockStore {
 
   /** The teams an account is in, by id. */
   teamsOf(account) {
-    return account ? [...this.teams.values()].filter((t) => t.members.has(account.id)).map((t) => t.id) : []
+    return account ? [...this.teams.values()].filter((t) => this.inTeam(t, account)).map((t) => t.id) : []
+  }
+
+  /**
+   * Whether an account is in a team: put in it (the seed's `teams`), or meeting its condition — it
+   * holds a record of a type the team's `joins.holds` lists, bought or by subscription. A comp
+   * counts for no condition, as on the backend. Either reason alone keeps them in.
+   */
+  inTeam(team, account) {
+    if (!team || !account) return false
+    if (team.members.has(account.id)) return true
+    if (!team.holds.length) return false
+    return this.entitlements.some(
+      (e) =>
+        e.account_id === account.id &&
+        (e.sources.has('purchase') || e.sources.has('subscription')) &&
+        team.holds.includes(this.entities.get(e.entity_uuid)?.model),
+    )
   }
 
   /**
@@ -579,7 +602,7 @@ export class MockStore {
     if (me.operator === true) return true
     const add = this.lines[model.name]?.add
     if (add === 'open') return true
-    return Array.isArray(add) && add.some((id) => this.teams.get(id)?.members.has(me.id))
+    return Array.isArray(add) && add.some((id) => this.inTeam(this.teams.get(id), me))
   }
 
   /** A create of a closed type, by someone it does not admit — `403`, `op: 'use_model'` (MEASURED). */
@@ -2196,6 +2219,10 @@ export class MockStore {
         charge_kind: o.charge_kind ?? STORE_FIELD.oneOff,
         recurring_interval: o.recurring_interval ?? null,
         promo: o.promo ?? null,
+        // The teams whose members may buy it, by the ids the blueprint gives them (the backend holds
+        // their uuids); none, anyone signed in. And the owner's public words for who may.
+        buyableBy: this.buyableBy(o),
+        whoMayBuy: typeof o.who_may_buy === 'string' && o.who_may_buy ? o.who_may_buy : null,
         entity,
       }
     })
@@ -2317,6 +2344,9 @@ export class MockStore {
       ...(o.promo ? { promo: o.promo } : {}),
       entry: { uuid: o.entity.uuid, model_name: model.name, brief: this.brief(o.entity, null) },
       owned: this.holds(o.entity),
+      [STORE_FIELD.canBuy]: this.mayBuy(o),
+      ...(this.mayBuy(o) ? {} : { [STORE_FIELD.canBuyReason]: STORE_REASON.notEligible }),
+      ...(o.whoMayBuy ? { [STORE_FIELD.whoMayBuy]: o.whoMayBuy } : {}),
     }
   }
 
@@ -2364,6 +2394,21 @@ export class MockStore {
     return { body: { [STORE_FIELD.valid]: true, ...(discount ? { [STORE_FIELD.discount]: discount } : {}) } }
   }
 
+  /** A seeded offering's `buyable_by`: team ids of the blueprint's, checked. */
+  buyableBy(o) {
+    const ids = o.buyable_by ?? []
+    if (!Array.isArray(ids)) throw new Error('[uniweb/api mock] store: an offering\'s buyable_by is a list of team ids')
+    for (const id of ids) {
+      if (!this.teams.has(id)) throw new Error(`[uniweb/api mock] store: an offering is buyable_by '${id}', which is not one of the blueprint's teams`)
+    }
+    return ids
+  }
+
+  /** Whether the viewer may buy an offering: anyone signed in, or a member of a team it names. */
+  mayBuy(o, account = this.account) {
+    return !o.buyableBy.length || o.buyableBy.some((id) => this.inTeam(this.teams.get(id), account))
+  }
+
   /** `GET /store` — `{ catalog_uuid, info, offerings, payments_ready }`, or `404 no_store`. */
   storeAnswer({ entity = null } = {}) {
     if (!this.shop) return refuse(404, 'Not Found', 'this site has no store', { reason: STORE_REASON.noStore })
@@ -2389,6 +2434,10 @@ export class MockStore {
     if (b[STORE_FIELD.catalog] !== this.shop.catalog_uuid) return notForSale()
     const offering = this.shop.offerings.find((o) => o.id === b[STORE_FIELD.offering])
     if (!offering) return notForSale()
+    // Before the free path, as on the backend, so a price-0 offering is limited too.
+    if (!this.mayBuy(offering)) {
+      return refuse(403, 'Forbidden', 'this offering is sold only to some members', { reason: STORE_REASON.notEligible })
+    }
     if (offering.charge_kind === STORE_FIELD.oneOff && offering.price === 0) {
       this.entitle(this.account, offering.entity, 'purchase')
       return { body: { [STORE_FIELD.checkoutUrl]: null } }

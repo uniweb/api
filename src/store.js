@@ -59,6 +59,7 @@ export async function readStoreWith(client, { entity, signal } = {}) {
  */
 export function offeringState(offering, store) {
   if (offering?.[STORE_FIELD.owned] === true) return 'owned'
+  if (offering?.[STORE_FIELD.canBuy] === false) return 'not-eligible'
   if (offering?.[STORE_FIELD.chargeKind] === STORE_FIELD.oneOff && offering?.[STORE_FIELD.price] === 0) return 'take'
   if (store?.[STORE_FIELD.paymentsReady] !== true) return 'not-ready'
   return 'buy'

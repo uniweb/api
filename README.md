@@ -791,6 +791,8 @@ function Buy({ uuid, href, words }) {
       return <a href={href}>{words.open}</a>
     case 'take':
       return <button onClick={() => checkout(offering)}>{words.free}</button>
+    case 'not-eligible':
+      return offering.who_may_buy ? <span>{offering.who_may_buy}</span> : null
     case 'not-ready':
       return null                                             // the owner has not connected payments
     default:
@@ -809,15 +811,18 @@ function Buy({ uuid, href, words }) {
   viewer. `entity` keeps only the offerings that sell that record. `none` on a site that
   sells nothing — the ordinary case, so draw nothing. `absent` with no backend or nobody
   signed in, since the store is a signed-in member's to read.
-- **`offeringState(offering, store)`** — what to draw from that one read: `owned`, `take`
-  (a one-off at `price: 0`, held at once with no payment), `not-ready` (the owner has not
-  connected payments), or `buy`.
+- **`offeringState(offering, store)`** — what to draw from that one read: `owned`,
+  `not-eligible` (the owner sells it only to some teams' members, and the viewer is in none;
+  show `offering.who_may_buy`, the owner's own words such as "Members only", when there are
+  some — it never names a team), `take` (a one-off at `price: 0`, held at once with no
+  payment), `not-ready` (the owner has not connected payments), or `buy`. Each offering
+  carries `can_buy`, and `can_buy_reason: 'not_eligible'` when it is `false`.
 - **`checkout(offering, { successUrl, cancelUrl, coupon, navigate })`** — opens the payment
   page and, by default, sends the buyer there; both addresses are this page unless you
   give others. It answers `{ url, held }`. A free one-off answers `{ url: null, held: true }`
   at once, and everything the viewer has read reads again. A refusal names why in
   `error.extensions.reason`: `payments_not_ready`, `coupon_not_applicable` (with
-  `extensions.cause`: `not_found`, `expired`, …), `not_for_sale`. `checking` is the
+  `extensions.cause`: `not_found`, `expired`, …), `not_for_sale`, `not_eligible`. `checking` is the
   offering's id while one is out, and `checkoutError` the last refusal.
 - **`useCoupon()`** — a code the buyer types before paying: `check(code)` previews it
   with the rules a checkout applies, and `coupon` holds the answer, `{ code, valid,

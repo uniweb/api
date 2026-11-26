@@ -197,8 +197,8 @@ describe('useStore, against the mock', () => {
     expect(store.catalog_uuid).toBe(CATALOG)
     expect(paymentsReady).toBe(true)
     expect(offerings).toEqual([
-      { id: 13, price: 4900, currency: 'CAD', charge_kind: 'one_off', entry: { uuid: COURSE, model_name: '@acme/course', brief: { title: 'Night Diving Pro', lessons: [LESSON] } }, owned: false },
-      { id: 14, price: 0, currency: 'CAD', charge_kind: 'one_off', entry: { uuid: FREE, model_name: '@acme/course', brief: { title: 'A first dive' } }, owned: false },
+      { id: 13, price: 4900, currency: 'CAD', charge_kind: 'one_off', entry: { uuid: COURSE, model_name: '@acme/course', brief: { title: 'Night Diving Pro', lessons: [LESSON] } }, owned: false, can_buy: true },
+      { id: 14, price: 0, currency: 'CAD', charge_kind: 'one_off', entry: { uuid: FREE, model_name: '@acme/course', brief: { title: 'A first dive' } }, owned: false, can_buy: true },
     ])
     expect(calls(client, '/store')).toBe(1)
   })

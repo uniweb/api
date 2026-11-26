@@ -1331,6 +1331,19 @@ export const STORE_FIELD = {
   currency: 'currency',
   entry: 'entry',
   owned: 'owned',
+  /**
+   * Whether the signed-in person may buy the offering: `false` when its owner sells it only to
+   * some teams' members and they are in none, with `canBuyReason` saying so (`not_eligible`).
+   * `true` where the owner limits nobody. *The backend's statement, 2026-11-26* (groups by
+   * condition); a backend before it sends no `can_buy`, which reads as allowed.
+   */
+  canBuy: 'can_buy',
+  canBuyReason: 'can_buy_reason',
+  /**
+   * The owner's own words for who may buy an offering ("Members only"), when they wrote some —
+   * public, as its price is, so the store and the public catalog both carry it. It names no team.
+   */
+  whoMayBuy: 'who_may_buy',
   /** How an offering charges — `one_off`, or a subscription's kind. A one-off at `price: 0` is taken at once. */
   chargeKind: 'charge_kind',
   oneOff: 'one_off',
@@ -1438,6 +1451,8 @@ export const STORE_REASON = {
   notReady: 'payments_not_ready',
   notForSale: 'not_for_sale',
   coupon: 'coupon_not_applicable',
+  /** The offering is sold only to some teams' members, and the buyer is in none (`403`). */
+  notEligible: 'not_eligible',
 }
 
 /**
